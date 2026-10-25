@@ -22,7 +22,7 @@ mod otlp;
 mod redact;
 mod transcript;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use otlp::{Built, build, trace_body};
 use redact::Redactor;
@@ -83,11 +83,21 @@ enum Cmd {
         /// Share of finished tool calls that must carry readable payloads.
         #[arg(long, default_value_t = 0.95)]
         payload_pass_ratio: f64,
+        /// How many recent events to scan for the newest AI interaction.
+        #[arg(long, default_value_t = 50)]
+        scan_events: usize,
     },
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+/// Errors print as one plain line (no backtrace): this tool is run by people, not CI only.
+fn main() {
+    if let Err(e) = run(Cli::parse()) {
+        eprintln!("error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::IngestClaude {
             paths,
@@ -159,6 +169,7 @@ fn main() -> Result<()> {
             ingest_lag_secs,
             stale_hours,
             payload_pass_ratio,
+            scan_events,
         } => {
             let key = ["RAINDROP_QUERY_KEY", "RAINDROP_QUERY_API_KEY"]
                 .iter()
@@ -170,19 +181,36 @@ fn main() -> Result<()> {
             };
             let base = std::env::var("RAINDROP_QUERY_URL")
                 .unwrap_or_else(|_| "https://query.raindrop.ai/v1".into());
+            // Default: the newest AI interaction among recent events. Plain telemetry
+            // (no prompt, response or tool calls) is valid Raindrop data but has nothing to check.
             let id = match event {
                 Some(id) => id,
                 None => {
-                    let list = api::get(&base, "events?limit=1", &key, &project)?;
-                    match list["data"][0]["id"].as_str() {
-                        Some(id) => id.to_string(),
-                        None => bail!(
+                    let list = api::get(
+                        &base,
+                        &format!("events?limit={scan_events}"),
+                        &key,
+                        &project,
+                    )?;
+                    let rows = list["data"].as_array().cloned().unwrap_or_default();
+                    if rows.is_empty() {
+                        bail!(
                             "project {project} has no events yet. Send one first, e.g. `rroflow-raindrop ingest-claude ~/.claude/projects --project {project} --payloads`"
+                        );
+                    }
+                    match rows.iter().find(|r| doctor::is_ai_interaction(r)) {
+                        Some(r) => r["id"].as_str().unwrap_or_default().to_string(),
+                        None => bail!(
+                            "the newest {} events in project {project} are plain telemetry (e.g. `{}`), with no AI interaction to check. Pass --event <id> to check one anyway",
+                            rows.len(),
+                            rows[0]["event_name"].as_str().unwrap_or("event")
                         ),
                     }
                 }
             };
-            let ev = api::get(&base, &format!("events/{id}"), &key, &project)?["data"].take();
+            let ev = api::get(&base, &format!("events/{id}"), &key, &project)
+                .with_context(|| format!("event {id} in project {project} (the project is selected by --project / RAINDROP_PROJECT)"))?["data"]
+                .take();
             let spans = api::get(
                 &base,
                 &format!("traces?event_id={id}&limit={}", doctor::TRACE_PAGE_MAX),

@@ -21,6 +21,8 @@ pub(crate) enum Verdict {
     Pending,
     Warn,
     Fail,
+    /// Does not apply to this event (e.g. an AI check on a plain telemetry event).
+    Skip,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,7 +101,7 @@ fn check(
         verdict,
         finding,
         repair: match verdict {
-            Verdict::Pass | Verdict::Pending => None,
+            Verdict::Pass | Verdict::Pending | Verdict::Skip => None,
             _ => repair,
         },
     }
@@ -425,7 +427,7 @@ fn freshness(event: &Value, now: DateTime<Utc>, lim: &Limits) -> Check {
             "data.fresh",
             "Fresh data",
             Verdict::Warn,
-            format!("the newest event is {age} old"),
+            format!("this event is {age} old; nothing newer was checked"),
             Some("Nothing new is arriving: check that the capture hook or schedule is still running.".into()),
         )
     } else {
@@ -433,7 +435,7 @@ fn freshness(event: &Value, now: DateTime<Utc>, lim: &Limits) -> Check {
             "data.fresh",
             "Fresh data",
             Verdict::Pass,
-            format!("newest event {age} ago"),
+            format!("event from {age} ago"),
             None,
         )
     }
@@ -449,6 +451,17 @@ pub(crate) fn human_age(d: chrono::Duration) -> String {
     }
 }
 
+/// True when the event records an AI interaction rather than plain telemetry.
+/// Raindrop accepts both; only interactions have a prompt, a response or tool calls.
+pub(crate) fn is_ai_interaction(event: &Value) -> bool {
+    !s(event, "user_input").is_empty()
+        || !s(event, "assistant_output").is_empty()
+        || !s(event, "model").is_empty()
+        || event["tool_calls"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty())
+}
+
 /// Run every check, in the order a person would fix them.
 pub(crate) fn run(
     event: &Value,
@@ -458,6 +471,26 @@ pub(crate) fn run(
     red: &Redactor,
 ) -> Vec<Check> {
     let producer = Producer::of(event);
+    if !is_ai_interaction(event) {
+        let na = |id, title| {
+            check(
+                id,
+                title,
+                Verdict::Skip,
+                "plain telemetry event, not an AI interaction".into(),
+                None,
+            )
+        };
+        return vec![
+            no_secrets(event, spans, red),
+            na("input.clean", "Clean user message"),
+            na("output.present", "Assistant response"),
+            na("tools.traced", "Tools in the trace"),
+            na("tools.payloads", "Tool inputs and outputs"),
+            na("model.tokens", "Model and tokens"),
+            freshness(event, now, lim),
+        ];
+    }
     vec![
         no_secrets(event, spans, red),
         clean_input(event),
@@ -520,6 +553,7 @@ pub(crate) fn render(header: &str, checks: &[Check]) -> String {
         let mark = match c.verdict {
             Verdict::Pass => "ok  ",
             Verdict::Pending => "wait",
+            Verdict::Skip => "n/a ",
             Verdict::Warn => "warn",
             Verdict::Fail => "FAIL",
         };
@@ -536,7 +570,10 @@ pub(crate) fn render(header: &str, checks: &[Check]) -> String {
         .count();
     out.push('\n');
     out.push_str(&match (fails, warns, pend) {
-        (0, 0, 0) => format!("All {} checks passed.\n", checks.len()),
+        (0, 0, 0) => {
+            let run = checks.iter().filter(|c| c.verdict != Verdict::Skip).count();
+            format!("All {run} applicable checks passed.\n")
+        }
         (0, 0, p) => format!("No problems found; {p} check(s) are waiting on ingestion. Run again in a few minutes.\n"),
         (f, w, _) => format!("{f} failed, {w} to review. Paste the prompt below into your coding agent.\n"),
     });
@@ -679,6 +716,17 @@ mod tests {
         let c = cs.iter().find(|c| c.id == "tools.traced").unwrap();
         assert_eq!(c.verdict, Verdict::Warn);
         assert!(c.finding.starts_with("1 tool call(s) are listed twice"));
+    }
+
+    #[test]
+    fn plain_telemetry_skips_ai_checks_instead_of_failing() {
+        let ev = json!({"id": "t", "event_name": "workspace_sync", "timestamp": "2026-10-25T14:50:00Z",
+            "user_input": "", "assistant_output": "", "tool_calls": [], "properties": {}});
+        let cs = run(&ev, &[], now(), &lim(), &red());
+        assert_eq!(verdict(&cs, "input.clean"), Verdict::Skip);
+        assert_eq!(verdict(&cs, "secrets.absent"), Verdict::Pass);
+        assert_eq!(exit_code(&cs), 0);
+        assert!(render("t", &cs).contains("All 2 applicable checks passed."));
     }
 
     #[test]

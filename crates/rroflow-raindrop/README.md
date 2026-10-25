@@ -49,7 +49,14 @@ rroflow-raindrop doctor --project claude-code --event <id> --json           # on
 | Tools in the trace (`tools.traced`) | Every tool call on the event has a named span, and none is listed twice. A gap within `--ingest-lag-secs` of receipt counts as *wait*, not failure. |
 | Tool inputs and outputs (`tools.payloads`) | At least `--payload-pass-ratio` of finished tool calls carry input plus output, or an error. |
 | Model and tokens (`model.tokens`) | Model name and token counts are present. |
-| Fresh data (`data.fresh`) | The newest event is younger than `--stale-hours`. |
+| Fresh data (`data.fresh`) | The checked event is younger than `--stale-hours`. |
+
+By default `doctor` checks the newest **AI interaction** among the last `--scan-events` (50) events. Plain telemetry events (no prompt, response or tool calls) are valid Raindrop data; checked explicitly with `--event`, their AI checks show `n/a` instead of failing. Errors print as one line.
+
+Validated on 2026-10-25 against events written by three different producers:
+- `claude-code` (this tool): 6 ok, 1 warn. The warn was the duplicate-span finding.
+- `rrflow-hydradb` (HydraDB brain harness): 6 ok, 1 warn. No model name on the event, true for every event in that project.
+- `default` (vibeguard harness): 5 ok, 2 warn. No token counts; data 12 days old.
 
 Any warning or failure prints a **repair prompt** to paste into your coding agent. It quotes the findings as untrusted data and names the exact flag when the event came from this tool. Exit code: `0` nothing failed, `1` a check failed, `2` a secret reached Raindrop (rotate it).
 
