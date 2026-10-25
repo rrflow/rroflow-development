@@ -46,6 +46,15 @@ Verified on 2026-10-24 against a transcript containing both live Raindrop keys: 
 
 Raindrop's own server-side PII guard also runs, and it rewrote the term "RROFLOW" as `[PERSON_NAME]` in inputs. Allowlist project terms in Raindrop → Settings → PII redaction.
 
+## Behaviour verified against the live API (2026-10-25)
+
+- **Re-sending upserts.** Raindrop replaces an event with the same `event_id` and merges spans by span id. Because ids are deterministic, re-running with `--payloads` upgrades existing events in place without duplicating them. Observed: same event, `received_at` advanced, spans 21 → 39.
+- **Ingestion lag is about 3–5 minutes** before the event can be read back.
+- **`--payloads` matters for signals, not just onboarding.** Raindrop's generated classifiers skip any turn with no output and no tool input/output/error text before calling the model. Tool payloads arrive as span `input` / `output` (`traceloop.entity.input` / `traceloop.entity.output`).
+- **Run it per turn, not as a batch.** Claude Code rewrites the session transcript when it compacts context, so turns before the compaction are gone from the file. Run it from a Claude Code `Stop` hook with `--since`, or on a short schedule.
+- **Context-compaction summaries are not prompts.** A turn opened by a compaction summary takes the original prompt's text when it is still in the file. Otherwise it is marked `[continued after context compaction]`, and either way it is tagged `properties.compacted = true`.
+- **Reading back through the Query API.** The project is selected by the `X-Raindrop-Project-Id` header. A `?project=` query parameter is silently ignored and falls back to the default project.
+
 ## Verified
 
 On 2026-10-24, one real session (10 main turns and 4 subagent turns, 488 spans) was sent to project `claude-code`. It was read back through the Query API: 467 tool calls, 11 tool errors, plus model and token counts.

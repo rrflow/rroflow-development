@@ -156,6 +156,8 @@ struct Turn {
     branch: String,
     version: String,
     entrypoint: String,
+    /// Set when the turn resumes after a context-compaction summary.
+    compacted: bool,
 }
 
 fn text_of(content: &Value) -> Option<String> {
@@ -184,6 +186,8 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut turns: Vec<Turn> = Vec::new();
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
+    // promptId -> prompt text, so a compaction summary can point back at the prompt it continues.
+    let mut prompts: HashMap<String, String> = HashMap::new();
     for line in raw.lines() {
         let Ok(d) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -207,6 +211,20 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
                     if is_meta || text.is_empty() || harness {
                         continue;
                     }
+                    // A compaction summary is harness text, not a prompt: the turn it opens
+                    // continues the prompt named in summarizedTurnPromptUuids.
+                    let compacted = d["isCompactSummary"].as_bool().unwrap_or(false);
+                    let text = if compacted {
+                        d["summarizedTurnPromptUuids"][0]
+                            .as_str()
+                            .and_then(|id| prompts.get(id).cloned())
+                            .unwrap_or_else(|| "[continued after context compaction]".into())
+                    } else {
+                        if let Some(id) = d["promptId"].as_str() {
+                            prompts.insert(id.to_string(), text.clone());
+                        }
+                        text
+                    };
                     turns.push(Turn {
                         key: format!(
                             "{}:{}",
@@ -221,6 +239,7 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
                         branch: d["gitBranch"].as_str().unwrap_or("").to_string(),
                         version: d["version"].as_str().unwrap_or("").to_string(),
                         entrypoint: d["entrypoint"].as_str().unwrap_or("").to_string(),
+                        compacted,
                         ..Default::default()
                     });
                 } else if let Some(blocks) = msg["content"].as_array() {
@@ -318,6 +337,7 @@ fn build(t: &Turn, user: &str, workspace: Option<&str>, payloads: bool, r: &Reda
         "git_branch": t.branch,
         "claude_code_version": t.version,
         "entrypoint": t.entrypoint,
+        "compacted": t.compacted,
         "tool_calls": t.tools.len(),
         "tool_errors": errors,
         "tool_names": tool_names.join(","),
@@ -527,5 +547,18 @@ mod tests {
             build(&t, "u", None, false, &r).event["event_id"],
             build(&t, "u", None, false, &r).event["event_id"]
         );
+    }
+    #[test]
+    fn compaction_summary_continues_the_original_prompt() {
+        let lines = [
+            r#"{"type":"user","promptId":"p1","sessionId":"s","timestamp":"2026-10-25T00:00:00Z","message":{"content":"build the adapter"}}"#,
+            r#"{"type":"user","promptId":"p2","sessionId":"s","timestamp":"2026-10-25T01:00:00Z","isCompactSummary":true,"summarizedTurnPromptUuids":["p1"],"message":{"content":"This session is being continued from a previous conversation..."}}"#,
+        ];
+        let path = std::env::temp_dir().join("rroflow-raindrop-compact-test.jsonl");
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let turns = parse_transcript(&path).unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].input, "build the adapter");
+        assert!(turns[1].compacted && !turns[0].compacted);
     }
 }
