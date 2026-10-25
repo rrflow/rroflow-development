@@ -44,7 +44,7 @@ Before anything is sent, these are replaced with `[REDACTED]`:
 
 Verified on 2026-10-24 against a transcript containing both live Raindrop keys: neither key appeared in the dumped payloads.
 
-Raindrop's own server-side PII guard also runs, and it rewrote the term "RROFLOW" as `[PERSON_NAME]` in inputs. Allowlist project terms in Raindrop → Settings → PII redaction.
+Raindrop's own server-side PII guard also runs, and it rewrote "RROFLOW" and "Claude" as `[PERSON_NAME]`. On our plan, Settings → PII redaction reports "This section isn't available for your organization", so these terms can't be allowlisted. Signals still work, but expect product names in inputs to be masked.
 
 ## Behaviour verified against the live API (2026-10-25)
 
