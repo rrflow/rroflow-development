@@ -52,7 +52,7 @@ Raindrop's own server-side PII guard also runs, and it rewrote the term "RROFLOW
 - **Ingestion lag is about 3–5 minutes** before the event can be read back.
 - **`--payloads` matters for signals, not just onboarding.** Raindrop's generated classifiers skip any turn with no output and no tool input/output/error text before calling the model. Tool payloads arrive as span `input` / `output` (`traceloop.entity.input` / `traceloop.entity.output`).
 - **Run it per turn, not as a batch.** Claude Code rewrites the session transcript when it compacts context, so turns before the compaction are gone from the file. Run it from a Claude Code `Stop` hook with `--since`, or on a short schedule.
-- **Context-compaction summaries are not prompts.** A turn opened by a compaction summary takes the original prompt's text when it is still in the file. Otherwise it is marked `[continued after context compaction]`, and either way it is tagged `properties.compacted = true`.
+- **Context-compaction summaries are not prompts.** A turn opened by a compaction summary takes the original prompt's text when it is still in the file. Otherwise it takes the latest `last-prompt` record, and only as a last resort is it marked `[continued after context compaction]`, and either way it is tagged `properties.compacted = true`.
 - **Reading back through the Query API.** The project is selected by the `X-Raindrop-Project-Id` header. A `?project=` query parameter is silently ignored and falls back to the default project.
 
 ## Verified

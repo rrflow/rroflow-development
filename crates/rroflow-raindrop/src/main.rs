@@ -188,7 +188,29 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
     // promptId -> prompt text, so a compaction summary can point back at the prompt it continues.
     let mut prompts: HashMap<String, String> = HashMap::new();
-    for line in raw.lines() {
+    // Claude Code writes `last-prompt` records; they survive compaction when the prompt itself
+    // does not, and they may be written after the summary, so collect them first.
+    let last_prompts: Vec<(usize, String)> = raw
+        .lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let d = serde_json::from_str::<Value>(l).ok()?;
+            (d["type"] == "last-prompt")
+                .then(|| d["lastPrompt"].as_str().map(str::to_string))
+                .flatten()
+                .filter(|p| !p.trim().is_empty())
+                .map(|p| (i, p))
+        })
+        .collect();
+    let last_prompt_near = |line: usize| -> Option<String> {
+        last_prompts
+            .iter()
+            .rev()
+            .find(|(i, _)| *i < line)
+            .or_else(|| last_prompts.iter().find(|(i, _)| *i > line))
+            .map(|(_, p)| p.clone())
+    };
+    for (line_no, line) in raw.lines().enumerate() {
         let Ok(d) = serde_json::from_str::<Value>(line) else {
             continue;
         };
@@ -218,6 +240,7 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
                         d["summarizedTurnPromptUuids"][0]
                             .as_str()
                             .and_then(|id| prompts.get(id).cloned())
+                            .or_else(|| last_prompt_near(line_no))
                             .unwrap_or_else(|| "[continued after context compaction]".into())
                     } else {
                         if let Some(id) = d["promptId"].as_str() {
@@ -467,6 +490,10 @@ fn main() -> Result<()> {
             let since_ns = since.as_deref().and_then(ts_nanos);
             let red = Redactor::new();
             let (mut sent, mut spans_sent) = (0usize, 0usize);
+            // One run, one dump: start the file empty, then append per transcript.
+            if let Some(d) = &dump {
+                std::fs::File::create(d)?;
+            }
             for file in collect(&paths) {
                 let turns = parse_transcript(&file)?;
                 let built: Vec<Built> = turns
@@ -560,5 +587,17 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[1].input, "build the adapter");
         assert!(turns[1].compacted && !turns[0].compacted);
+    }
+    #[test]
+    fn compaction_falls_back_to_last_prompt_record() {
+        // Claude Code writes the last-prompt record after the summary.
+        let lines = [
+            r#"{"type":"user","promptId":"p2","sessionId":"s","timestamp":"2026-10-25T01:00:00Z","isCompactSummary":true,"summarizedTurnPromptUuids":["gone"],"message":{"content":"This session is being continued..."}}"#,
+            r#"{"type":"last-prompt","lastPrompt":"absorb raindrop","sessionId":"s"}"#,
+        ];
+        let path = std::env::temp_dir().join("rroflow-raindrop-compact-fallback-test.jsonl");
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let turns = parse_transcript(&path).unwrap();
+        assert_eq!(turns[0].input, "absorb raindrop");
     }
 }
