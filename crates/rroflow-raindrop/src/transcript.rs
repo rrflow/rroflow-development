@@ -57,6 +57,10 @@ pub(crate) struct Turn {
     pub(crate) entrypoint: String,
     /// Set when the turn resumes after a context-compaction summary.
     pub(crate) compacted: bool,
+    /// Which coding agent wrote the transcript: `claude-code` or `codex`.
+    pub(crate) agent: &'static str,
+    /// Model provider, used as `gen_ai.system` (e.g. `anthropic`, `openai`).
+    pub(crate) provider: String,
 }
 
 fn text_of(content: &Value) -> Option<String> {
@@ -81,8 +85,8 @@ fn text_of(content: &Value) -> Option<String> {
     }
 }
 
-pub(crate) fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
-    let raw = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+pub(crate) fn parse_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
+    let raw = read_text(path)?;
     let mut turns: Vec<Turn> = Vec::new();
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
     // promptId -> prompt text, so a compaction summary can point back at the prompt it continues.
@@ -155,6 +159,8 @@ pub(crate) fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
                         version: d["version"].as_str().unwrap_or("").to_string(),
                         entrypoint: d["entrypoint"].as_str().unwrap_or("").to_string(),
                         compacted,
+                        agent: "claude-code",
+                        provider: "anthropic".into(),
                         ..Default::default()
                     });
                 } else if let Some(blocks) = msg["content"].as_array() {
@@ -214,6 +220,30 @@ pub(crate) fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
     Ok(turns)
 }
 
+/// A `.jsonl` transcript, or a `.jsonl.zst` one (Codex compresses older rollouts).
+fn is_transcript(p: &std::path::Path) -> bool {
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")
+}
+
+/// Read a transcript as text, decompressing `.zst` files.
+pub(crate) fn read_text(path: &std::path::Path) -> Result<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).with_context(|| format!("read {}", path.display()))?;
+    let mut text = String::new();
+    if path.extension().is_some_and(|e| e == "zst") {
+        let mut dec = ruzstd::decoding::StreamingDecoder::new(std::io::BufReader::new(file))
+            .map_err(|e| anyhow::anyhow!("decompress {}: {e}", path.display()))?;
+        dec.read_to_string(&mut text)
+            .with_context(|| format!("decompress {}", path.display()))?;
+    } else {
+        std::io::BufReader::new(file)
+            .read_to_string(&mut text)
+            .with_context(|| format!("read {}", path.display()))?;
+    }
+    Ok(text)
+}
+
 /// Expand files and directories into the `.jsonl` transcripts they contain, sorted.
 pub(crate) fn collect(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -224,7 +254,7 @@ pub(crate) fn collect(paths: &[PathBuf]) -> Vec<PathBuf> {
                 sub.sort();
                 out.extend(collect(&sub));
             }
-        } else if p.extension().is_some_and(|e| e == "jsonl") {
+        } else if is_transcript(p) {
             out.push(p.clone());
         }
     }

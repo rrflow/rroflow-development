@@ -120,8 +120,12 @@ fn clean_input(event: &Value) -> Check {
         Some("the user message is a context-compaction summary, not a prompt")
     } else if HARNESS_PREFIXES.iter().any(|p| input.starts_with(p))
         || input.starts_with("<system-reminder>")
+        || input.starts_with("<environment_context>")
+        || input.starts_with("<user_instructions>")
     {
-        Some("the user message is harness text (notification, command or reminder)")
+        Some(
+            "the user message is harness text (notification, command, reminder or injected context)",
+        )
     } else if input.starts_with("[{") || input.starts_with("{\"role\"") {
         Some("the user message looks like a serialized transcript")
     } else {
@@ -649,6 +653,7 @@ mod tests {
     fn harness_and_compaction_inputs_fail() {
         for bad in [
             "<task-notification><task-id>1</task-id>",
+            "<environment_context>\n<cwd>/work</cwd>\n</environment_context>",
             COMPACTION_MARKER,
             "This session is being continued from a previous conversation that ran out of context.",
             "",

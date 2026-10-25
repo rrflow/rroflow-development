@@ -37,11 +37,25 @@ pub(crate) fn get(base: &str, path_and_query: &str, key: &str, project: &str) ->
         {
             Ok(mut resp) => return Ok(resp.body_mut().read_json::<Value>()?),
             Err(ureq::Error::StatusCode(code)) if code != 429 && code < 500 => {
-                bail!("{path_and_query} rejected with HTTP {code}")
+                bail!(
+                    "{path_and_query} rejected with HTTP {code}{}",
+                    read_hint(code, project)
+                )
             }
             Err(e) => last = e.to_string(),
         }
         std::thread::sleep(std::time::Duration::from_millis(500 * (1 << attempt)));
     }
     bail!("{path_and_query} failed after 3 attempts: {last}")
+}
+
+/// Plain-language cause for a refused read, from what was observed on the live API.
+fn read_hint(code: u16, project: &str) -> String {
+    match code {
+        401 => ". The Query API key was not accepted: use a Query API key (Settings → API keys), not the write key".into(),
+        403 => format!(
+            ". Project `{project}` may have data but not be created yet: open Raindrop → Settings → Projects → \"Projects with data, not yet created\" and click Create project. Otherwise the key has no access to it"
+        ),
+        _ => String::new(),
+    }
 }
