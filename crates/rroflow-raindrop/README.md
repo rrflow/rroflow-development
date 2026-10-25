@@ -32,6 +32,29 @@ Flags:
 
 A new slug's data appears under Raindrop → Settings → Projects → "Projects with data, not yet created" until you click **Create project**.
 
+## Check what Raindrop actually stored: `doctor`
+
+```bash
+infisical run --env dev -- rroflow-raindrop doctor --project claude-code   # newest event
+rroflow-raindrop doctor --project claude-code --event <id> --json           # one event, machine-readable
+```
+
+`doctor` reads one event and its trace back through the Query API (`RAINDROP_QUERY_KEY`) and runs seven checks. They are deterministic and make no model call:
+
+| Check | Passes when |
+|---|---|
+| No secrets sent (`secrets.absent`) | Nothing in the stored input, output, error payloads or span payloads matches a redaction pattern or a configured key. Findings name the field, never the value. |
+| Clean user message (`input.clean`) | The input is the person's prompt, not harness text, a compaction summary or a serialized transcript. |
+| Assistant response (`output.present`) | The response text is present. |
+| Tools in the trace (`tools.traced`) | Every tool call on the event has a named span, and none is listed twice. A gap within `--ingest-lag-secs` of receipt counts as *wait*, not failure. |
+| Tool inputs and outputs (`tools.payloads`) | At least `--payload-pass-ratio` of finished tool calls carry input plus output, or an error. |
+| Model and tokens (`model.tokens`) | Model name and token counts are present. |
+| Fresh data (`data.fresh`) | The newest event is younger than `--stale-hours`. |
+
+Any warning or failure prints a **repair prompt** to paste into your coding agent. It quotes the findings as untrusted data and names the exact flag when the event came from this tool. Exit code: `0` nothing failed, `1` a check failed, `2` a secret reached Raindrop (rotate it).
+
+First live run (2026-10-25) found a Raindrop behaviour this tool now avoids. A span sent while its tool call was still running (`UNSET`) and sent again when finished is kept **twice** in the event's `tool_calls`, though only once in the trace. Ingest now sends only finished tool calls; `properties.tool_calls_unfinished` counts the rest, and the next run sends them.
+
 ## Redaction (always on)
 
 Before anything is sent, these are replaced with `[REDACTED]`:
