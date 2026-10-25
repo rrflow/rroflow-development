@@ -72,15 +72,31 @@ impl Redactor {
             r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
             r"\b[a-f0-9]{48,}\b",
         ];
-        let mut literals: Vec<String> = ["RAINDROP_WRITE_KEY", "RAINDROP_QUERY_KEY", "RAINDROP_QUERY_API_KEY"]
-            .iter()
-            .filter_map(|k| std::env::var(k).ok())
-            .collect();
+        let mut literals: Vec<String> = [
+            "RAINDROP_WRITE_KEY",
+            "RAINDROP_QUERY_KEY",
+            "RAINDROP_QUERY_API_KEY",
+        ]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .collect();
         if let Ok(extra) = std::env::var("RROFLOW_REDACT") {
-            literals.extend(extra.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from));
+            literals.extend(
+                extra
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+            );
         }
         literals.retain(|s| s.len() >= 8);
-        Self { patterns: pats.iter().map(|p| Regex::new(p).expect("valid regex")).collect(), literals }
+        Self {
+            patterns: pats
+                .iter()
+                .map(|p| Regex::new(p).expect("valid regex"))
+                .collect(),
+            literals,
+        }
     }
     fn apply(&self, s: &str) -> String {
         let mut out = s.to_string();
@@ -108,7 +124,9 @@ fn strip_reminders(s: &str) -> String {
 }
 
 fn ts_nanos(ts: &str) -> Option<i128> {
-    chrono::DateTime::parse_from_rfc3339(ts).ok().map(|d| d.timestamp_nanos_opt().unwrap_or(0) as i128)
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .ok()
+        .map(|d| d.timestamp_nanos_opt().unwrap_or(0) as i128)
 }
 
 #[derive(Default)]
@@ -147,8 +165,16 @@ fn text_of(content: &Value) -> Option<String> {
             if blocks.iter().any(|b| b["type"] == "tool_result") {
                 return None;
             }
-            let t: Vec<&str> = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
-            if t.is_empty() { None } else { Some(t.join("\n")) }
+            let t: Vec<&str> = blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+                .collect();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.join("\n"))
+            }
         }
         _ => None,
     }
@@ -159,7 +185,9 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
     let mut turns: Vec<Turn> = Vec::new();
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
     for line in raw.lines() {
-        let Ok(d) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(d) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         let ty = d["type"].as_str().unwrap_or("");
         let ts = d["timestamp"].as_str().unwrap_or("").to_string();
         let msg = &d["message"];
@@ -168,9 +196,14 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
                 let is_meta = d["isMeta"].as_bool().unwrap_or(false);
                 if let Some(text) = text_of(&msg["content"]) {
                     let text = strip_reminders(&text);
-                    let harness = ["<task-notification>", "<local-command-", "<command-name>", "<command-message>"]
-                        .iter()
-                        .any(|p| text.starts_with(p));
+                    let harness = [
+                        "<task-notification>",
+                        "<local-command-",
+                        "<command-name>",
+                        "<command-message>",
+                    ]
+                    .iter()
+                    .any(|p| text.starts_with(p));
                     if is_meta || text.is_empty() || harness {
                         continue;
                     }
@@ -195,16 +228,16 @@ fn parse_transcript(path: &PathBuf) -> Result<Vec<Turn>> {
                     let Some(t) = turns.last_mut() else { continue };
                     for b in blocks.iter().filter(|b| b["type"] == "tool_result") {
                         let id = b["tool_use_id"].as_str().unwrap_or("");
-                        if let Some(&(ti, k)) = open.get(id) {
-                            if ti + 1 == n {
-                                let tool = &mut t.tools[k];
-                                tool.end = Some(ts.clone());
-                                tool.error = b["is_error"].as_bool().unwrap_or(false);
-                                tool.output = match &b["content"] {
-                                    Value::String(s) => s.clone(),
-                                    v => text_of(v).unwrap_or_else(|| v.to_string()),
-                                };
-                            }
+                        if let Some(&(ti, k)) = open.get(id)
+                            && ti + 1 == n
+                        {
+                            let tool = &mut t.tools[k];
+                            tool.end = Some(ts.clone());
+                            tool.error = b["is_error"].as_bool().unwrap_or(false);
+                            tool.output = match &b["content"] {
+                                Value::String(s) => s.clone(),
+                                v => text_of(v).unwrap_or_else(|| v.to_string()),
+                            };
                         }
                         if !ts.is_empty() {
                             t.end = ts.clone();
@@ -257,7 +290,9 @@ fn attr(k: &str, v: Value) -> Value {
         Value::Number(n) if n.is_i64() || n.is_u64() => json!({"intValue": n.to_string()}),
         Value::Number(n) => json!({"doubleValue": n}),
         Value::Bool(b) => json!({"boolValue": b}),
-        other => json!({"stringValue": other.as_str().map(String::from).unwrap_or_else(|| other.to_string())}),
+        other => {
+            json!({"stringValue": other.as_str().map(String::from).unwrap_or_else(|| other.to_string())})
+        }
     };
     json!({"key": k, "value": val})
 }
@@ -320,13 +355,24 @@ fn build(t: &Turn, user: &str, workspace: Option<&str>, payloads: bool, r: &Reda
         let s = ts_nanos(&tool.start).unwrap_or(start);
         let e = tool.end.as_deref().and_then(ts_nanos).unwrap_or(s).max(s);
         let mut attrs = vec![
-            assoc("event_id", &event_id), attr("ai.operationId", json!("ai.toolCall")),
-            attr("traceloop.span.kind", json!("tool")), attr("traceloop.entity.name", json!(tool.name)),
-            attr("traceloop.entity.duration_ms", json!(((e - s) / 1_000_000) as i64)),
+            assoc("event_id", &event_id),
+            attr("ai.operationId", json!("ai.toolCall")),
+            attr("traceloop.span.kind", json!("tool")),
+            attr("traceloop.entity.name", json!(tool.name)),
+            attr(
+                "traceloop.entity.duration_ms",
+                json!(((e - s) / 1_000_000) as i64),
+            ),
         ];
         if payloads {
-            attrs.push(attr("traceloop.entity.input", json!(r.apply(&truncate(&tool.input, 2_000)))));
-            attrs.push(attr("traceloop.entity.output", json!(r.apply(&truncate(&tool.output, 2_000)))));
+            attrs.push(attr(
+                "traceloop.entity.input",
+                json!(r.apply(&truncate(&tool.input, 2_000))),
+            ));
+            attrs.push(attr(
+                "traceloop.entity.output",
+                json!(r.apply(&truncate(&tool.output, 2_000))),
+            ));
         }
         let status = if tool.end.is_none() {
             json!({"code": 0})
@@ -353,7 +399,9 @@ fn post(base: &str, path: &str, key: &str, project: &str, body: &Value) -> Resul
             .send_json(body)
         {
             Ok(resp) => return Ok(resp.status().as_u16()),
-            Err(ureq::Error::StatusCode(code)) if code != 429 && code < 500 => bail!("{path} rejected with HTTP {code}"),
+            Err(ureq::Error::StatusCode(code)) if code != 429 && code < 500 => {
+                bail!("{path} rejected with HTTP {code}")
+            }
             Err(e) => last = e.to_string(),
         }
         std::thread::sleep(std::time::Duration::from_millis(500 * (1 << attempt)));
@@ -380,12 +428,22 @@ fn collect(paths: &[PathBuf]) -> Vec<PathBuf> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::IngestClaude { paths, project, user, workspace, payloads, dry_run, dump, since } => {
+        Cmd::IngestClaude {
+            paths,
+            project,
+            user,
+            workspace,
+            payloads,
+            dry_run,
+            dump,
+            since,
+        } => {
             let key = std::env::var("RAINDROP_WRITE_KEY").unwrap_or_default();
             if key.is_empty() && !dry_run {
                 bail!("RAINDROP_WRITE_KEY is not set (use --dry-run to only parse)");
             }
-            let base = std::env::var("RAINDROP_API_URL").unwrap_or_else(|_| "https://api.raindrop.ai/v1".into());
+            let base = std::env::var("RAINDROP_API_URL")
+                .unwrap_or_else(|_| "https://api.raindrop.ai/v1".into());
             let since_ns = since.as_deref().and_then(ts_nanos);
             let red = Redactor::new();
             let (mut sent, mut spans_sent) = (0usize, 0usize);
@@ -397,10 +455,18 @@ fn main() -> Result<()> {
                     .map(|t| build(t, &user, workspace.as_deref(), payloads, &red))
                     .collect();
                 let nspans: usize = built.iter().map(|b| b.spans.len()).sum();
-                println!("{}: {} turns, {} spans", file.display(), built.len(), nspans);
+                println!(
+                    "{}: {} turns, {} spans",
+                    file.display(),
+                    built.len(),
+                    nspans
+                );
                 if let Some(d) = &dump {
                     use std::io::Write;
-                    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(d)?;
+                    let mut f = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(d)?;
                     for b in &built {
                         writeln!(f, "{}", json!({"event": b.event, "spans": b.spans}))?;
                     }
@@ -434,14 +500,32 @@ mod tests {
     use super::*;
     #[test]
     fn redacts_known_secret_shapes() {
-        let r = Redactor { patterns: Redactor::new().patterns, literals: vec!["25b1106c-d759-49c9".into()] };
-        let s = r.apply("Authorization: Bearer abcdefghijklmnop key=25b1106c-d759-49c9 sk-ABCDEFGHIJKLMNOPQRST");
-        assert!(!s.contains("abcdefghijklmnop") && !s.contains("25b1106c") && !s.contains("sk-ABC"), "{s}");
+        let r = Redactor {
+            patterns: Redactor::new().patterns,
+            literals: vec!["25b1106c-d759-49c9".into()],
+        };
+        let s = r.apply(
+            "Authorization: Bearer abcdefghijklmnop key=25b1106c-d759-49c9 sk-ABCDEFGHIJKLMNOPQRST",
+        );
+        assert!(
+            !s.contains("abcdefghijklmnop") && !s.contains("25b1106c") && !s.contains("sk-ABC"),
+            "{s}"
+        );
     }
     #[test]
     fn event_ids_are_deterministic() {
-        let t = Turn { session: "s".into(), key: "k".into(), start: "2026-10-24T00:00:00Z".into(), end: "2026-10-24T00:00:01Z".into(), input: "hi".into(), ..Default::default() };
+        let t = Turn {
+            session: "s".into(),
+            key: "k".into(),
+            start: "2026-10-24T00:00:00Z".into(),
+            end: "2026-10-24T00:00:01Z".into(),
+            input: "hi".into(),
+            ..Default::default()
+        };
         let r = Redactor::new();
-        assert_eq!(build(&t, "u", None, false, &r).event["event_id"], build(&t, "u", None, false, &r).event["event_id"]);
+        assert_eq!(
+            build(&t, "u", None, false, &r).event["event_id"],
+            build(&t, "u", None, false, &r).event["event_id"]
+        );
     }
 }
