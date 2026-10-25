@@ -74,6 +74,22 @@ fn failed(output: &str) -> bool {
         .ok()
         .and_then(|v| v["metadata"]["exit_code"].as_i64())
         .is_some_and(|n| n != 0)
+        // The scripted `exec` tool (observed in Codex 0.164 rollouts) wraps each inner command's
+        // result as JSON inside its text output: `{"chunk_id":…,"exit_code":1,…}`.
+        || EMBEDDED_EXIT
+            .captures_iter(output)
+            .any(|c| c[1].parse::<i64>().is_ok_and(|n| n != 0))
+}
+
+static EMBEDDED_EXIT: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r#""exit_code"\s*:\s*(-?\d+)"#).unwrap());
+
+/// Milliseconds encoded in a UUIDv7 (Codex thread and turn ids), or `None` for other ids.
+fn uuid7_ms(id: &str) -> Option<u64> {
+    let hex: String = id.chars().filter(|c| *c != '-').take(12).collect();
+    (hex.len() == 12 && id.len() >= 15 && &id[14..15] == "7")
+        .then(|| u64::from_str_radix(&hex, 16).ok())
+        .flatten()
 }
 
 #[derive(Default)]
@@ -85,6 +101,7 @@ struct Session {
     originator: String,
     provider: String,
     model: Option<String>,
+    subagent: Option<String>,
 }
 
 pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
@@ -99,6 +116,11 @@ pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
     // call_id -> (turn index, tool index)
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
     let mut ordinal = 0usize;
+    // A forked (subagent) rollout starts with its own session_meta, then a copy of the parent's
+    // session_meta and history. That copy is the parent's work, already in the parent's own
+    // rollout, so it is skipped until the child's first own turn.
+    let mut seen_meta = false;
+    let mut inherited = false;
 
     let new_turn = |turns: &mut Vec<Turn>, s: &Session, key: String, ts: &str| {
         turns.push(Turn {
@@ -113,6 +135,7 @@ pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
             entrypoint: s.originator.clone(),
             agent: "codex",
             provider: s.provider.clone(),
+            subagent: s.subagent.clone(),
             ..Default::default()
         });
     };
@@ -123,8 +146,34 @@ pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
         };
         let ts = d["timestamp"].as_str().unwrap_or("").to_string();
         let p = &d["payload"];
-        match d["type"].as_str().unwrap_or("") {
+        let kind = d["type"].as_str().unwrap_or("");
+        if inherited {
+            let child_turn = kind == "event_msg"
+                && matches!(p["type"].as_str(), Some("task_started" | "turn_started"))
+                && match (p["turn_id"].as_str().and_then(uuid7_ms), uuid7_ms(&s.id)) {
+                    (Some(turn), Some(thread)) => turn >= thread,
+                    _ => false,
+                };
+            let marker = (kind == "event_msg" && p["type"] == "thread_settings_applied")
+                || (kind == "response_item"
+                    && p["role"] == "developer"
+                    && text_items(&p["content"], &["input_text"])
+                        .starts_with("You are now a newly spawned child agent"));
+            if marker || child_turn {
+                inherited = false;
+            }
+            if !child_turn {
+                continue;
+            }
+        }
+        match kind {
+            "session_meta" if seen_meta => {
+                // The parent's meta: inherited history follows.
+                inherited = true;
+            }
             "session_meta" => {
+                seen_meta = true;
+                s.subagent = p["agent_path"].as_str().map(str::to_string);
                 s.id = p["id"].as_str().unwrap_or("").to_string();
                 s.cwd = p["cwd"].as_str().unwrap_or("").to_string();
                 s.version = p["cli_version"].as_str().unwrap_or("").to_string();
@@ -153,6 +202,15 @@ pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
                     };
                     new_turn(&mut turns, &s, key, &ts);
                     closed = false;
+                }
+                "turn_aborted" => {
+                    if let Some(t) = turns.last_mut().filter(|_| !closed) {
+                        t.aborted = true;
+                        if !ts.is_empty() {
+                            t.end = ts.clone();
+                        }
+                    }
+                    closed = true;
                 }
                 "task_complete" | "turn_complete" => {
                     if let Some(t) = turns.last_mut() {
@@ -219,6 +277,24 @@ pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
                                 text,
                                 &new_turn,
                             );
+                        }
+                    }
+                    // A task handed to this (sub)agent by another agent.
+                    "agent_message" => {
+                        let text = text_items(&p["content"], &["input_text", "text"])
+                            .trim()
+                            .to_string();
+                        if set_prompt(
+                            &mut turns,
+                            &mut closed,
+                            &mut ordinal,
+                            &s,
+                            &ts,
+                            text,
+                            &new_turn,
+                        ) && let Some(t) = turns.last_mut()
+                        {
+                            t.prompt_author = p["author"].as_str().map(str::to_string);
                         }
                     }
                     "message" if p["role"] == "assistant" => {
@@ -301,9 +377,9 @@ fn set_prompt(
     ts: &str,
     text: String,
     new_turn: &impl Fn(&mut Vec<Turn>, &Session, String, &str),
-) {
+) -> bool {
     if text.is_empty() {
-        return;
+        return false;
     }
     let answered = turns
         .last()
@@ -316,7 +392,9 @@ fn set_prompt(
     let t = turns.last_mut().expect("a turn was just ensured");
     if t.input.is_empty() {
         t.input = text;
+        return true;
     }
+    false
 }
 
 #[cfg(test)]
@@ -394,6 +472,40 @@ mod tests {
         assert!(turns[1].tools[0].end.is_none());
     }
 
+    /// Structure observed in real Codex 0.164 subagent rollouts (content replaced): the child's
+    /// own meta, then the parent's meta and inherited history, then the child's own turns,
+    /// whose prompts arrive as `agent_message` from the parent.
+    #[test]
+    fn forked_subagent_skips_inherited_parent_history() {
+        let path = write(
+            "codex-fork.jsonl",
+            &[
+                r#"{"timestamp":"2026-10-25T23:46:46.563Z","type":"session_meta","payload":{"id":"01a17575-a412-7fe1-b5bc-2aa506a6aeec","session_id":"01a17157-64d6-7751-9e49-9ce3cf718b8d","forked_from_id":"01a17157-64d6-7751-9e49-9ce3cf718b8d","agent_path":"/root/review","cwd":"/w","originator":"codex_vscode","cli_version":"0.164.0","model_provider":"openai"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.563Z","type":"session_meta","payload":{"id":"01a17157-64d6-7751-9e49-9ce3cf718b8d","session_id":"01a17157-64d6-7751-9e49-9ce3cf718b8d","cwd":"/w","originator":"codex_vscode","cli_version":"0.164.0"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.600Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01a17157-66d6-7541-9902-ded33c93a291"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.600Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"parent prompt"}]}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.600Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"01a17157-66d6-7541-9902-ded33c93a291"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.698Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01a17575-1868-73e3-a324-572af06b6619"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.698Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"yes"}]}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.699Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"01a17575-1868-73e3-a324-572af06b6619"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.699Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"You are now a newly spawned child agent."}]}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:46.862Z","type":"event_msg","payload":{"type":"task_started","turn_id":"01a17575-a5b0-7123-964a-df7c48c97d76"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:49.254Z","type":"response_item","payload":{"type":"agent_message","author":"/root","recipient":"/root/review","content":[{"type":"input_text","text":"Message Type: NEW_TASK\nTask name: /root/review"}]}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:52.507Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"…","call_id":"c1"}}"#,
+                r#"{"timestamp":"2026-10-25T23:46:56.735Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":[{"type":"input_text","text":"Script completed\nWall time 4.6 seconds\nOutput:\n"},{"type":"input_text","text":"{\"chunk_id\":\"a\",\"exit_code\":1,\"output\":\"no match\"}"}]}}"#,
+                r#"{"timestamp":"2026-10-25T23:47:38.277Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"01a17575-a5b0-7123-964a-df7c48c97d76"}}"#,
+            ],
+        );
+        let turns = parse_rollout(&path).unwrap();
+        assert_eq!(turns.len(), 1, "only the child's own turn");
+        let t = &turns[0];
+        assert_eq!(t.session, "01a17575-a412-7fe1-b5bc-2aa506a6aeec");
+        assert_eq!(t.key, "01a17575-a5b0-7123-964a-df7c48c97d76");
+        assert_eq!(t.prompt_author.as_deref(), Some("/root"));
+        assert_eq!(t.subagent.as_deref(), Some("/root/review"));
+        assert!(t.tools[0].error, "embedded exit_code 1");
+    }
+
     #[test]
     fn compressed_rollouts_are_read() {
         let plain = [
@@ -417,5 +529,11 @@ mod tests {
         assert!(!failed("Exit code: 0\nWall time: 0.1 seconds"));
         assert!(failed(r#"{"output":"x","metadata":{"exit_code":2}}"#));
         assert!(!failed("plain output"));
+        assert!(!failed(
+            r#"Script completed\n{"chunk_id":"a","exit_code":0}"#
+        ));
+        assert!(failed(
+            r#"Script completed\n{"chunk_id":"a","exit_code":0}\n{"exit_code":2}"#
+        ));
     }
 }

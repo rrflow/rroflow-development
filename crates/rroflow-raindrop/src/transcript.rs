@@ -61,6 +61,13 @@ pub(crate) struct Turn {
     pub(crate) agent: &'static str,
     /// Model provider, used as `gen_ai.system` (e.g. `anthropic`, `openai`).
     pub(crate) provider: String,
+    /// Set when the prompt came from another agent (a parent handing a subagent a task),
+    /// not a person: the sender's agent path, e.g. `/root`.
+    pub(crate) prompt_author: Option<String>,
+    /// The subagent this transcript belongs to, e.g. `/root/storage_plan_review`.
+    pub(crate) subagent: Option<String>,
+    /// The turn was interrupted (Codex `turn_aborted`).
+    pub(crate) aborted: bool,
 }
 
 fn text_of(content: &Value) -> Option<String> {

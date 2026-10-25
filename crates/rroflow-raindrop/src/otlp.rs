@@ -71,6 +71,16 @@ pub(crate) fn build(
     if let Some(w) = workspace {
         props["workspace"] = json!(w);
     }
+    // Set only when present, so transcripts without them keep their exact payloads.
+    if let Some(a) = &t.prompt_author {
+        props["prompt_author"] = json!(a);
+    }
+    if let Some(sa) = &t.subagent {
+        props["subagent"] = json!(sa);
+    }
+    if t.aborted {
+        props["aborted"] = json!(true);
+    }
     let mut ai = json!({"input": r.apply(&truncate(&t.input, 20_000)), "convo_id": t.session});
     if !output.is_empty() {
         ai["output"] = json!(output);
