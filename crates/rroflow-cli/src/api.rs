@@ -84,3 +84,28 @@ pub(crate) fn post_rroflow(base: &str, key: &str, body: &Value) -> Result<u16> {
     }
     bail!("rroflow ingest at {url} failed after 3 attempts: {last}")
 }
+
+/// GET a devspace resource from the rroflow ingest (for example `/v1/signals/settings`).
+pub(crate) fn get_rroflow(base: &str, key: &str, path: &str) -> Result<Value> {
+    let url = format!("{}{path}", base.trim_end_matches('/'));
+    let mut last = String::new();
+    for attempt in 0..3 {
+        match ureq::get(&url)
+            .header("Authorization", &format!("Bearer {key}"))
+            .call()
+        {
+            Ok(mut resp) => return Ok(resp.body_mut().read_json::<Value>()?),
+            Err(ureq::Error::StatusCode(401)) => {
+                bail!(
+                    "rroflow ingest refused the key (HTTP 401): check RROFLOW_INGEST_KEY for your devspace"
+                )
+            }
+            Err(ureq::Error::StatusCode(code)) if code != 429 && code < 500 => {
+                bail!("rroflow ingest answered {path} with HTTP {code}")
+            }
+            Err(e) => last = e.to_string(),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500 * (1 << attempt)));
+    }
+    bail!("rroflow ingest at {url} failed after 3 attempts: {last}")
+}

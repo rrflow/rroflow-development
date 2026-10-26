@@ -1,26 +1,36 @@
 //! rroflow-ingest: the rroflow.ai service that receives `rroflow.turn/v1` records from
 //! collectors and files them into the sender's devspace.
 //!
-//! - **Tenancy:** a devspace is the user's Shippin.cloud space. The ingest key decides the
-//!   devspace; a client cannot name another one. Keys are stored only as SHA-256 hashes.
+//! - **Tenancy:** a devspace is one person's space on rroflow.ai, owned by their Nomen
+//!   account and attachable to their Shippin.cloud tenant. The credential decides the
+//!   devspace; a client cannot name another one. Ingest keys are stored only as SHA-256
+//!   hashes.
 //! - **Idempotence:** records upsert by `event_id`, so re-sending replaces, never duplicates.
 //! - **Privacy:** the service never logs record content; content arrives only when the
 //!   user opted in on the collector.
-//! - **Store:** [`TurnStore`] is the seam. [`JsonlStore`] (append-only JSONL per devspace,
-//!   indexed in memory) is the interim implementation until decision D-4 picks the store.
+//! - **Store:** [`Store`]: Postgres when `database_url` is set, else JSONL files.
+//! - **Signals:** the catalogue is public at `GET /v1/signals`; each devspace keeps its own
+//!   choices (on/off, thresholds) at `/v1/signals/settings`, which collectors read before
+//!   evaluating.
+
+pub mod pg;
+pub mod store;
+
+pub use pg::PgStore;
+pub use store::{JsonlStore, Store, Summary, TurnFilter, Upserted};
 
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use rroflow_core::signals::{CATALOGUE, Category, SignalConfig};
 use rroflow_core::{SCHEMA, TurnRecord};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, Write};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Service configuration (TOML). Every value is configuration; defaults are in [`Config::default`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -28,7 +38,13 @@ use std::sync::{Arc, Mutex};
 pub struct Config {
     /// Address to listen on.
     pub listen: String,
-    /// Root directory for devspace data.
+    /// Postgres connection URL. When set, data lives in Postgres; when not, in JSONL files
+    /// under `data_dir`. `RROFLOW_DATABASE_URL` overrides it, so a password never has to sit
+    /// in the file (on one host, prefer a Unix socket with peer authentication).
+    pub database_url: Option<String>,
+    /// Largest Postgres connection pool.
+    pub db_max_connections: u32,
+    /// Root directory for JSONL devspace data (used only without `database_url`).
     pub data_dir: PathBuf,
     /// Most records accepted per request.
     pub max_batch: usize,
@@ -42,6 +58,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             listen: "127.0.0.1:8787".into(),
+            database_url: None,
+            db_max_connections: 10,
             data_dir: PathBuf::from("data"),
             max_batch: 500,
             max_body_bytes: 16 * 1024 * 1024,
@@ -50,9 +68,22 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// Open the store this config names.
+    pub async fn open_store(&self) -> anyhow::Result<Store> {
+        let store = match &self.database_url {
+            Some(url) => Store::Postgres(PgStore::connect(url, self.db_max_connections).await?),
+            None => Store::Jsonl(JsonlStore::open(self.data_dir.clone())?),
+        };
+        let ids: Vec<String> = self.devspace.iter().map(|d| d.id.clone()).collect();
+        store.ensure_devspaces(&ids).await?;
+        Ok(store)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Devspace {
-    /// The Shippin.cloud devspace id this data belongs to.
+    /// The devspace id this data belongs to.
     pub id: String,
     /// SHA-256 (hex) of each ingest key that writes to this devspace.
     pub key_sha256: Vec<String>,
@@ -63,8 +94,8 @@ pub fn hash_key(key: &str) -> String {
     hex::encode(Sha256::digest(key.as_bytes()))
 }
 
-/// Characters allowed in a devspace id (it becomes a directory name).
-fn valid_devspace_id(id: &str) -> bool {
+/// Characters allowed in a devspace id (it becomes a directory name and a database key).
+pub fn valid_devspace_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id
@@ -72,149 +103,16 @@ fn valid_devspace_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Counts returned by an upsert.
-#[derive(Debug, Default, PartialEq, Eq, Serialize)]
-pub struct Upserted {
-    pub new: usize,
-    pub replaced: usize,
-}
-
-/// Where turns live. One implementation per storage decision (D-4).
-pub trait TurnStore: Send + Sync {
-    fn upsert(&self, devspace: &str, recs: &[TurnRecord]) -> anyhow::Result<Upserted>;
-    /// Newest first.
-    fn list(&self, devspace: &str, limit: usize, signal: Option<&str>) -> Vec<TurnRecord>;
-    fn summary(&self, devspace: &str) -> Summary;
-}
-
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct Summary {
-    pub turns: usize,
-    pub by_agent: BTreeMap<String, usize>,
-    pub by_project: BTreeMap<String, usize>,
-    pub signals: BTreeMap<String, usize>,
-    pub tool_calls: usize,
-    pub tool_errors: usize,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_read_tokens: u64,
-    /// Turns whose usage the provider did not report (counted, never priced as zero).
-    pub turns_without_usage: usize,
-}
-
-/// Append-only JSONL per devspace (`<data_dir>/<devspace>/turns.jsonl`), indexed in memory.
-/// The last line for an `event_id` wins, so a re-send replaces the earlier record.
-pub struct JsonlStore {
-    root: PathBuf,
-    index: Mutex<HashMap<String, HashMap<String, TurnRecord>>>,
-}
-
-impl JsonlStore {
-    /// Open the store and load every devspace's records.
-    pub fn open(root: PathBuf) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(&root)?;
-        let mut index: HashMap<String, HashMap<String, TurnRecord>> = HashMap::new();
-        for entry in std::fs::read_dir(&root)? {
-            let entry = entry?;
-            let file = entry.path().join("turns.jsonl");
-            if !file.is_file() {
-                continue;
-            }
-            let ds = entry.file_name().to_string_lossy().to_string();
-            let map = index.entry(ds).or_default();
-            for line in std::io::BufReader::new(std::fs::File::open(&file)?).lines() {
-                if let Ok(rec) = serde_json::from_str::<TurnRecord>(&line?) {
-                    map.insert(rec.event_id.clone(), rec);
-                }
-            }
-        }
-        Ok(Self {
-            root,
-            index: Mutex::new(index),
-        })
-    }
-}
-
-impl TurnStore for JsonlStore {
-    fn upsert(&self, devspace: &str, recs: &[TurnRecord]) -> anyhow::Result<Upserted> {
-        let dir = self.root.join(devspace);
-        std::fs::create_dir_all(&dir)?;
-        let mut index = self.index.lock().expect("store lock");
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("turns.jsonl"))?;
-        let map = index.entry(devspace.to_string()).or_default();
-        let mut out = Upserted::default();
-        for rec in recs {
-            writeln!(f, "{}", serde_json::to_string(rec)?)?;
-            if map.insert(rec.event_id.clone(), rec.clone()).is_some() {
-                out.replaced += 1;
-            } else {
-                out.new += 1;
-            }
-        }
-        f.flush()?;
-        Ok(out)
-    }
-
-    fn list(&self, devspace: &str, limit: usize, signal: Option<&str>) -> Vec<TurnRecord> {
-        let index = self.index.lock().expect("store lock");
-        let mut v: Vec<TurnRecord> = index
-            .get(devspace)
-            .map(|m| {
-                m.values()
-                    .filter(|r| signal.is_none_or(|s| r.signals.iter().any(|h| h.signal == s)))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        v.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-        v.truncate(limit);
-        v
-    }
-
-    fn summary(&self, devspace: &str) -> Summary {
-        let index = self.index.lock().expect("store lock");
-        let mut s = Summary::default();
-        for r in index.get(devspace).into_iter().flat_map(|m| m.values()) {
-            s.turns += 1;
-            *s.by_agent.entry(r.agent.clone()).or_default() += 1;
-            *s.by_project
-                .entry(r.project.clone().unwrap_or_else(|| "(none)".into()))
-                .or_default() += 1;
-            for h in &r.signals {
-                *s.signals.entry(h.signal.clone()).or_default() += 1;
-            }
-            s.tool_calls += r.tools.len();
-            s.tool_errors += r
-                .tools
-                .iter()
-                .filter(|t| t.status == rroflow_core::ToolStatus::Error)
-                .count();
-            match (r.usage.input_tokens, r.usage.output_tokens) {
-                (Some(i), Some(o)) => {
-                    s.input_tokens += i;
-                    s.output_tokens += o;
-                    s.cache_read_tokens += r.usage.cache_read_tokens.unwrap_or(0);
-                }
-                _ => s.turns_without_usage += 1,
-            }
-        }
-        s
-    }
-}
-
 /// Shared state: key-hash → devspace, the store, limits.
 #[derive(Clone)]
 pub struct AppState {
     keys: Arc<HashMap<String, String>>,
-    store: Arc<dyn TurnStore>,
+    store: Arc<Store>,
     max_batch: usize,
 }
 
 impl AppState {
-    pub fn new(cfg: &Config, store: Arc<dyn TurnStore>) -> anyhow::Result<Self> {
+    pub fn new(cfg: &Config, store: Arc<Store>) -> anyhow::Result<Self> {
         let mut keys = HashMap::new();
         for d in &cfg.devspace {
             anyhow::ensure!(
@@ -277,9 +175,31 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Log a store failure (never record content) and answer 500.
+fn internal(e: anyhow::Error) -> ApiError {
+    eprintln!("store error: {e:#}");
+    ApiError::Internal
+}
+
 #[derive(Deserialize)]
 pub struct TurnsBody {
     pub turns: Vec<TurnRecord>,
+}
+
+/// Check one record before it is stored. Returns the problem in plain words.
+fn check_record(r: &TurnRecord) -> Result<(), String> {
+    if r.schema != SCHEMA {
+        return Err(format!("schema {:?} is not {SCHEMA}", r.schema));
+    }
+    if r.event_id.is_empty() {
+        return Err("event_id is empty".into());
+    }
+    for (field, v) in [("started_at", &r.started_at), ("ended_at", &r.ended_at)] {
+        if !v.is_empty() && pg::timestamp(v).is_none() {
+            return Err(format!("{field} {v:?} is not an RFC 3339 timestamp"));
+        }
+    }
+    Ok(())
 }
 
 async fn post_turns(
@@ -296,22 +216,13 @@ async fn post_turns(
         )));
     }
     for (i, r) in body.turns.iter().enumerate() {
-        if r.schema != SCHEMA {
-            return Err(ApiError::BadRequest(format!(
-                "turns[{i}]: schema {:?} is not {SCHEMA}",
-                r.schema
-            )));
-        }
-        if r.event_id.is_empty() {
-            return Err(ApiError::BadRequest(format!(
-                "turns[{i}]: event_id is empty"
-            )));
-        }
+        check_record(r).map_err(|m| ApiError::BadRequest(format!("turns[{i}]: {m}")))?;
     }
     let up = st
         .store
         .upsert(&devspace, &body.turns)
-        .map_err(|_| ApiError::Internal)?;
+        .await
+        .map_err(internal)?;
     Ok(Json(serde_json::json!({
         "devspace": devspace,
         "accepted": body.turns.len(),
@@ -323,6 +234,7 @@ async fn post_turns(
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub limit: Option<usize>,
+    pub agent: Option<String>,
     pub signal: Option<String>,
 }
 
@@ -336,9 +248,71 @@ async fn get_turns(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let devspace = st.devspace(&headers)?;
     let limit = q.limit.unwrap_or(50).min(LIST_MAX);
-    let turns = st.store.list(&devspace, limit, q.signal.as_deref());
+    let turns = st
+        .store
+        .list(
+            &devspace,
+            limit,
+            &TurnFilter {
+                agent: q.agent.as_deref().filter(|a| !a.is_empty()),
+                signal: q.signal.as_deref().filter(|s| !s.is_empty()),
+            },
+        )
+        .await
+        .map_err(internal)?;
     Ok(Json(
         serde_json::json!({ "devspace": devspace, "turns": turns }),
+    ))
+}
+
+/// Schema id of the signal catalogue document.
+pub const SIGNALS_SCHEMA: &str = "rroflow.signals/v1";
+
+/// The signal catalogue, grouped: every category with its signals in catalogue order.
+fn catalogue() -> serde_json::Value {
+    serde_json::json!({
+        "schema": SIGNALS_SCHEMA,
+        "categories": Category::ALL
+            .iter()
+            .map(|c| serde_json::json!({
+                "id": c,
+                "label": c.label(),
+                "meaning": c.meaning(),
+                "signals": CATALOGUE.iter().filter(|s| s.category == *c).map(|s| s.id).collect::<Vec<_>>(),
+            }))
+            .collect::<Vec<_>>(),
+        "signals": CATALOGUE,
+    })
+}
+
+async fn get_signals() -> Json<serde_json::Value> {
+    Json(catalogue())
+}
+
+async fn get_signal_settings(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let devspace = st.devspace(&headers)?;
+    let settings = st.store.signal_config(&devspace).await.map_err(internal)?;
+    Ok(Json(
+        serde_json::json!({ "devspace": devspace, "settings": settings }),
+    ))
+}
+
+async fn put_signal_settings(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(cfg): Json<SignalConfig>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let devspace = st.devspace(&headers)?;
+    cfg.validate().map_err(ApiError::BadRequest)?;
+    st.store
+        .set_signal_config(&devspace, &cfg)
+        .await
+        .map_err(internal)?;
+    Ok(Json(
+        serde_json::json!({ "devspace": devspace, "settings": cfg }),
     ))
 }
 
@@ -347,18 +321,21 @@ async fn get_summary(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let devspace = st.devspace(&headers)?;
+    let (summary, settings) = tokio::try_join!(
+        st.store.summary(&devspace),
+        st.store.signal_config(&devspace)
+    )
+    .map_err(internal)?;
     Ok(Json(serde_json::json!({
         "devspace": devspace,
-        "summary": st.store.summary(&devspace),
-        "catalogue": rroflow_core::signals::CATALOGUE
-            .iter()
-            .map(|(id, v, meaning)| serde_json::json!({"signal": id, "rule_version": v, "meaning": meaning}))
-            .collect::<Vec<_>>(),
+        "summary": summary,
+        "catalogue": catalogue(),
+        "settings": settings,
     })))
 }
 
 /// The devspace dashboard: one self-contained page (no external scripts) that asks for the
-/// ingest key, keeps it in the tab's session storage, and reads `/v1/summary` and `/v1/turns`.
+/// ingest key, keeps it in the tab's session storage, and reads the API.
 async fn dashboard() -> impl IntoResponse {
     (
         [
@@ -374,11 +351,17 @@ async fn dashboard() -> impl IntoResponse {
     )
 }
 
-/// The HTTP surface: `GET /` (dashboard), `POST /v1/turns`, `GET /v1/turns`, `GET /v1/summary`, `GET /healthz`.
+/// The HTTP surface: `GET /` (dashboard), `POST|GET /v1/turns`, `GET /v1/summary`,
+/// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /healthz`.
 pub fn router(st: AppState, max_body_bytes: usize) -> Router {
     Router::new()
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
+        .route("/v1/signals", get(get_signals))
+        .route(
+            "/v1/signals/settings",
+            get(get_signal_settings).put(put_signal_settings),
+        )
         .route("/healthz", get(|| async { "ok" }))
         .route("/", get(dashboard))
         .layer(DefaultBodyLimit::max(max_body_bytes))
@@ -386,207 +369,4 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
-    use http_body_util::BodyExt;
-    use rroflow_core::{Termination, Usage};
-    use tower::ServiceExt;
-
-    fn rec(id: &str, signal: Option<&str>) -> TurnRecord {
-        TurnRecord {
-            schema: SCHEMA.into(),
-            event_id: id.into(),
-            agent: "codex".into(),
-            agent_version: "0.164.0".into(),
-            provider: "openai".into(),
-            model: Some("m".into()),
-            session_id: "s".into(),
-            turn_key: id.into(),
-            subagent: None,
-            prompt_author: None,
-            started_at: format!("2026-10-26T00:00:0{}Z", id.len() % 10),
-            ended_at: "2026-10-26T00:01:00Z".into(),
-            cwd: "/w".into(),
-            git_branch: "main".into(),
-            project: Some("shippinai".into()),
-            usage: Usage {
-                input_tokens: Some(100),
-                output_tokens: Some(10),
-                cache_read_tokens: Some(50),
-                cache_write_tokens: None,
-                input_includes_cache: true,
-            },
-            termination: Termination::Completed,
-            compacted: false,
-            tools: vec![],
-            tools_unfinished: 0,
-            content: None,
-            signals: signal
-                .map(|s| {
-                    vec![rroflow_core::SignalHit {
-                        signal: s.into(),
-                        rule_version: 1,
-                        severity: rroflow_core::Severity::Warn,
-                        summary: "x".into(),
-                        score: None,
-                        evidence: vec![],
-                    }]
-                })
-                .unwrap_or_default(),
-            collector: "test".into(),
-        }
-    }
-
-    fn app(dir: &std::path::Path) -> Router {
-        let cfg = Config {
-            devspace: vec![
-                Devspace {
-                    id: "jesse".into(),
-                    key_sha256: vec![hash_key("key-jesse")],
-                },
-                Devspace {
-                    id: "other".into(),
-                    key_sha256: vec![hash_key("key-other")],
-                },
-            ],
-            ..Config::default()
-        };
-        let store = Arc::new(JsonlStore::open(dir.to_path_buf()).unwrap());
-        router(AppState::new(&cfg, store).unwrap(), cfg.max_body_bytes)
-    }
-
-    async fn call(app: &Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
-        let resp = app.clone().oneshot(req).await.unwrap();
-        let code = resp.status();
-        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        (code, serde_json::from_slice(&bytes).unwrap_or_default())
-    }
-
-    fn post(key: &str, turns: &[TurnRecord]) -> Request<Body> {
-        Request::post("/v1/turns")
-            .header("authorization", format!("Bearer {key}"))
-            .header("content-type", "application/json")
-            .body(Body::from(
-                serde_json::to_vec(&serde_json::json!({ "turns": turns })).unwrap(),
-            ))
-            .unwrap()
-    }
-
-    fn get(key: &str, uri: &str) -> Request<Body> {
-        Request::get(uri)
-            .header("authorization", format!("Bearer {key}"))
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("rroflow-ingest-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        d
-    }
-
-    #[tokio::test]
-    async fn key_decides_the_devspace_and_resends_replace() {
-        let dir = tmp("devspace");
-        let app = app(&dir);
-        let (code, body) = call(
-            &app,
-            post(
-                "key-jesse",
-                &[rec("a", Some("blocked_handoff")), rec("bb", None)],
-            ),
-        )
-        .await;
-        assert_eq!(code, StatusCode::OK);
-        assert_eq!(
-            (body["devspace"].as_str(), body["new"].as_u64()),
-            (Some("jesse"), Some(2))
-        );
-        let (_, body) = call(
-            &app,
-            post("key-jesse", &[rec("a", Some("blocked_handoff"))]),
-        )
-        .await;
-        assert_eq!(body["replaced"], 1);
-        // Another devspace sees nothing of jesse's.
-        let (_, body) = call(&app, get("key-other", "/v1/turns")).await;
-        assert_eq!(body["turns"].as_array().unwrap().len(), 0);
-        let (_, body) = call(&app, get("key-jesse", "/v1/turns?signal=blocked_handoff")).await;
-        assert_eq!(body["turns"].as_array().unwrap().len(), 1);
-        let (_, body) = call(&app, get("key-jesse", "/v1/summary")).await;
-        assert_eq!(body["summary"]["turns"], 2);
-        assert_eq!(body["summary"]["signals"]["blocked_handoff"], 1);
-        // Data survives a restart (JSONL is the record; the index is rebuilt).
-        let app2 = self::app(&dir);
-        let (_, body) = call(&app2, get("key-jesse", "/v1/summary")).await;
-        assert_eq!(body["summary"]["turns"], 2);
-    }
-
-    #[tokio::test]
-    async fn dashboard_is_served_without_a_key_and_reads_only_with_one() {
-        let app = app(&tmp("dash"));
-        let resp = app
-            .clone()
-            .oneshot(Request::get("/").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        assert!(
-            resp.headers()["content-security-policy"]
-                .to_str()
-                .unwrap()
-                .contains("connect-src 'self'")
-        );
-        let html = resp.into_body().collect().await.unwrap().to_bytes();
-        assert!(std::str::from_utf8(&html).unwrap().contains("/v1/summary"));
-        let (code, _) = call(
-            &app,
-            Request::get("/v1/summary").body(Body::empty()).unwrap(),
-        )
-        .await;
-        assert_eq!(code, StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn unknown_key_and_wrong_schema_are_refused() {
-        let dir = tmp("refuse");
-        let app = app(&dir);
-        let (code, _) = call(&app, post("nope", &[rec("a", None)])).await;
-        assert_eq!(code, StatusCode::UNAUTHORIZED);
-        let mut bad = rec("a", None);
-        bad.schema = "something/v0".into();
-        let (code, body) = call(&app, post("key-jesse", &[bad])).await;
-        assert_eq!(code, StatusCode::BAD_REQUEST);
-        assert!(body["error"].as_str().unwrap().contains("schema"));
-    }
-
-    #[test]
-    fn config_rejects_unsafe_ids_and_shared_keys() {
-        let store: Arc<dyn TurnStore> = Arc::new(JsonlStore::open(tmp("cfg")).unwrap());
-        let bad = Config {
-            devspace: vec![Devspace {
-                id: "../etc".into(),
-                key_sha256: vec![],
-            }],
-            ..Config::default()
-        };
-        assert!(AppState::new(&bad, store.clone()).is_err());
-        let h = hash_key("k");
-        let shared = Config {
-            devspace: vec![
-                Devspace {
-                    id: "a".into(),
-                    key_sha256: vec![h.clone()],
-                },
-                Devspace {
-                    id: "b".into(),
-                    key_sha256: vec![h],
-                },
-            ],
-            ..Config::default()
-        };
-        assert!(AppState::new(&shared, store).is_err());
-    }
-}
+mod tests;

@@ -30,6 +30,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use otlp::{Built, build, trace_body};
 use redact::Redactor;
+use rroflow_core::signals::{CATALOGUE, Category, SignalConfig};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -169,6 +170,26 @@ fn ingest(args: IngestArgs, service: &str, parse: Parse) -> Result<()> {
     }
 }
 
+/// The devspace's signal choices (on/off, thresholds) from rroflow.ai, so signals are
+/// evaluated the way the devspace asked. Without an ingest URL and key (a dry run), the
+/// catalogue defaults apply.
+fn devspace_signal_settings(base: &str, key: &str) -> Result<SignalConfig> {
+    if base.is_empty() || key.is_empty() {
+        return Ok(SignalConfig::default());
+    }
+    let body = api::get_rroflow(base, key, "/v1/signals/settings")?;
+    let cfg: SignalConfig = serde_json::from_value(body["settings"].clone())
+        .context("read signal settings from rroflow ingest")?;
+    if !cfg.disabled.is_empty() || !cfg.options.is_empty() {
+        println!(
+            "devspace signal settings: {} off, {} tuned",
+            cfg.disabled.len(),
+            cfg.options.values().map(|m| m.len()).sum::<usize>()
+        );
+    }
+    Ok(cfg)
+}
+
 /// Most records per POST to the rroflow ingest.
 const RROFLOW_BATCH: usize = 100;
 
@@ -183,11 +204,18 @@ fn ingest_rroflow(args: IngestArgs, parse: Parse) -> Result<()> {
     }
     let keep = since_filter(args.since.as_deref());
     let red = Redactor::new();
+    let signals = devspace_signal_settings(&base, &key)?;
     let mut dump = open_dump(&args.dump)?;
     let (mut sent, mut hits) = (0usize, 0usize);
     for file in collect(&args.paths) {
         let turns: Vec<_> = parse(&file)?.into_iter().filter(|t| keep(t)).collect();
-        let recs = record::records(&turns, args.project.as_deref(), args.content, &red);
+        let recs = record::records(
+            &turns,
+            args.project.as_deref(),
+            args.content,
+            &red,
+            &signals,
+        );
         let n_hits: usize = recs.iter().map(|r| r.signals.len()).sum();
         hits += n_hits;
         println!(
@@ -304,7 +332,7 @@ fn report_signals(
     for file in collect(paths) {
         let turns: Vec<_> = parse(&file)?.into_iter().filter(|t| keep(t)).collect();
         turns_seen += turns.len();
-        for r in record::records(&turns, None, true, &red) {
+        for r in record::records(&turns, None, true, &red, &SignalConfig::default()) {
             for h in &r.signals {
                 *totals.entry(h.signal.clone()).or_default() += 1;
                 if details {
@@ -338,11 +366,23 @@ fn report_signals(
         }
     }
     println!("\n{turns_seen} turns checked");
-    for (id, version, meaning) in rroflow_core::signals::CATALOGUE {
-        println!(
-            "  {:>4}  {id} (v{version}): {meaning}",
-            totals.get(*id).copied().unwrap_or(0)
-        );
+    for cat in Category::ALL {
+        println!("\n{}: {}", cat.label(), cat.meaning());
+        for spec in CATALOGUE.iter().filter(|s| s.category == cat) {
+            println!(
+                "  {:>4}  {} (v{}): {}",
+                totals.get(spec.id).copied().unwrap_or(0),
+                spec.id,
+                spec.version,
+                spec.meaning
+            );
+            for o in spec.options {
+                println!(
+                    "          option {} = {} ({}..={}): {}",
+                    o.name, o.default, o.min, o.max, o.meaning
+                );
+            }
+        }
     }
     Ok(())
 }
