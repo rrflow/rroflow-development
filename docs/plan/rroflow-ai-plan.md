@@ -125,9 +125,9 @@ Hosted track, in parallel from increment 2 on the same event model:
 
 ## 9. Decisions (one per pass)
 
-- **D-1 Positioning statement.** "rroflow.ai — Sentry for your AI." This replaces the May 2026 "RRO sold to enterprise" framing for the public site. RRO-as-substrate can remain the enterprise tier.
+- **D-1 Positioning — answered 2026-10-25:** *RRFlow is the reasoning engine; RROFLOW (rroflow.ai) is Sentry for AI.* Two brands, one stack: rroflow.ai leads with capture, signals, spend and learning, and links to rrflow.ai for the engine. This replaces the May 2026 "RRO sold to enterprise" headline. Not canon until saved as an ADR.
 - **D-2 Order of surfaces — answered 2026-10-25: both in parallel.** The local-first collector and dashboard, and hosted rroflow.ai accounts with cloud ingest, are built as two tracks on one event model. Not canon until saved as an ADR. Consequence: the event model (increment 2) is the shared contract, and hosted ingest must honour the DevPulse laws: no provider keys held; content opt-in and scrubbed before upload.
-- **D-3 Site stack.** Reuse the rrflow.ai decision (Astro + Rust gateway, Remotion explainers) in `site/` of this repo, or a separate `rrflow/rroflow-site` repo.
+- **D-3 Site — answered 2026-10-25:** `site/` in this repo, using Astro static with islands, a Rust gateway as the only data client, and Remotion explainers. This is the same pattern as the rrflow.ai site. Not canon until saved as an ADR.
 - **D-4 Local store.** Parquet + DataFusion (devpulselabs, 2026-08) vs Turso vs RRFlow when ready. The live repos disagree.
 - **D-5 Term.** "Behaviour signal" for the learned classifier, because "signal" is already H-05 telemetry in RRFlow.
 
