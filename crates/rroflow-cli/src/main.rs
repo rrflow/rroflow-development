@@ -7,8 +7,9 @@
 //! - `--sink rroflow` (default): records to your devspace's rroflow.ai ingest. Content
 //!   (prompt, response and tool text) is sent only with `--content`; signal results and
 //!   metrics are always sent.
-//!   `RROFLOW_INGEST_URL` (your devspace ingest), `RROFLOW_INGEST_KEY` (decides which
-//!   devspace receives the data), `RROFLOW_PROJECT` (project within the devspace).
+//!   Sends as the account from `rroflow login` (Nomen, your Shippin account), or with
+//!   `RROFLOW_INGEST_KEY` on a headless machine; the credential decides the devspace.
+//!   `RROFLOW_INGEST_URL` overrides the ingest, `RROFLOW_PROJECT` names the project.
 //! - `--sink raindrop`: Raindrop events plus OTLP spans.
 //!   `RAINDROP_WRITE_KEY`, `RAINDROP_PROJECT`, `RAINDROP_USER_ID`, `RAINDROP_API_URL`.
 //!
@@ -18,6 +19,7 @@
 //! Ids are derived from transcript ids, so re-sending replaces and never duplicates.
 //! RROFLOW_REDACT adds literal secrets to the always-on redaction.
 
+mod account;
 mod api;
 mod codex;
 mod doctor;
@@ -113,6 +115,28 @@ enum Cmd {
         #[arg(long)]
         since: Option<String>,
     },
+    /// Sign in with your Shippin account (Nomen): shows a code and a URL to open on any device.
+    Login {
+        /// Nomen issuer.
+        #[arg(long, env = "RROFLOW_ISSUER", default_value = account::DEFAULT_ISSUER)]
+        issuer: String,
+        /// The rroflow CLI's application in Nomen.
+        #[arg(long, env = "RROFLOW_CLIENT_ID", default_value = account::DEFAULT_CLIENT_ID)]
+        client_id: String,
+        /// The rroflow project id in Nomen, asked for in the token's audience.
+        #[arg(long, env = "RROFLOW_NOMEN_PROJECT", default_value = account::DEFAULT_PROJECT_ID)]
+        project_id: String,
+        /// The rroflow.ai ingest this account sends to.
+        #[arg(long, env = "RROFLOW_INGEST_URL", default_value = account::DEFAULT_INGEST_URL)]
+        ingest_url: String,
+    },
+    /// Revoke this machine's tokens and forget the account.
+    Logout,
+    /// Who this machine sends as, and which devspace that opens.
+    Whoami {
+        #[arg(long)]
+        json: bool,
+    },
     /// Read back the newest event (or --event) and check what Raindrop stored.
     ///
     /// Exit code: 0 nothing failed, 1 a check failed, 2 a secret reached Raindrop.
@@ -171,13 +195,9 @@ fn ingest(args: IngestArgs, service: &str, parse: Parse) -> Result<()> {
 }
 
 /// The devspace's signal choices (on/off, thresholds) from rroflow.ai, so signals are
-/// evaluated the way the devspace asked. Without an ingest URL and key (a dry run), the
-/// catalogue defaults apply.
-fn devspace_signal_settings(base: &str, key: &str) -> Result<SignalConfig> {
-    if base.is_empty() || key.is_empty() {
-        return Ok(SignalConfig::default());
-    }
-    let body = api::get_rroflow(base, key, "/v1/signals/settings")?;
+/// evaluated the way the devspace asked.
+fn devspace_signal_settings(base: &str, token: &str) -> Result<SignalConfig> {
+    let body = api::get_rroflow(base, token, "/v1/signals/settings")?;
     let cfg: SignalConfig = serde_json::from_value(body["settings"].clone())
         .context("read signal settings from rroflow ingest")?;
     if !cfg.disabled.is_empty() || !cfg.options.is_empty() {
@@ -195,16 +215,25 @@ const RROFLOW_BATCH: usize = 100;
 
 fn ingest_rroflow(args: IngestArgs, parse: Parse) -> Result<()> {
     use std::io::Write;
-    let base = std::env::var("RROFLOW_INGEST_URL").unwrap_or_default();
-    let key = std::env::var("RROFLOW_INGEST_KEY").unwrap_or_default();
-    if !args.dry_run && (base.is_empty() || key.is_empty()) {
+    let sender = account::sender()?;
+    if !args.dry_run && sender.is_none() {
         bail!(
-            "RROFLOW_INGEST_URL and RROFLOW_INGEST_KEY must be set: they come from your devspace on rroflow.ai (use --dry-run to only parse, or --sink raindrop)"
+            "not signed in: run `rroflow login` (or set RROFLOW_INGEST_KEY on a headless machine); --dry-run only parses"
         );
     }
     let keep = since_filter(args.since.as_deref());
     let red = Redactor::new();
-    let signals = devspace_signal_settings(&base, &key)?;
+    let signals = match &sender {
+        Some(s) => match devspace_signal_settings(&s.base, &s.token) {
+            Ok(cfg) => cfg,
+            Err(e) if args.dry_run => {
+                eprintln!("note: using default signal settings ({e:#})");
+                SignalConfig::default()
+            }
+            Err(e) => return Err(e),
+        },
+        None => SignalConfig::default(),
+    };
     let mut dump = open_dump(&args.dump)?;
     let (mut sent, mut hits) = (0usize, 0usize);
     for file in collect(&args.paths) {
@@ -233,7 +262,8 @@ fn ingest_rroflow(args: IngestArgs, parse: Parse) -> Result<()> {
             continue;
         }
         for chunk in recs.chunks(RROFLOW_BATCH) {
-            api::post_rroflow(&base, &key, &json!({ "turns": chunk }))?;
+            let s = sender.as_ref().expect("checked above");
+            api::post_rroflow(&s.base, &s.token, &json!({ "turns": chunk }))?;
             sent += chunk.len();
         }
     }
@@ -241,7 +271,8 @@ fn ingest_rroflow(args: IngestArgs, parse: Parse) -> Result<()> {
         println!("dry run: {hits} signal hits found, nothing sent");
     } else {
         println!(
-            "sent {sent} turns ({hits} signal hits) to rroflow{}",
+            "sent {sent} turns ({hits} signal hits) to rroflow as {}{}",
+            sender.as_ref().map_or("", |s| s.via.as_str()),
             if args.content {
                 " with content"
             } else {
@@ -389,6 +420,14 @@ fn report_signals(
 
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
+        Cmd::Login {
+            issuer,
+            client_id,
+            project_id,
+            ingest_url,
+        } => account::login(&issuer, &client_id, Some(&project_id), &ingest_url)?,
+        Cmd::Logout => account::logout()?,
+        Cmd::Whoami { json } => account::whoami(json)?,
         Cmd::IngestClaude(args) => ingest(args, "claude-code", parse_transcript)?,
         Cmd::IngestCodex(args) => ingest(args, "codex", codex::parse_rollout)?,
         Cmd::Signals {
