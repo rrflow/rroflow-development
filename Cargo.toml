@@ -1,3 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/rroflow-raindrop"]
+members = ["crates/rroflow-core", "crates/rroflow-cli", "crates/rroflow-ingest"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/rrflow/rroflow-development"

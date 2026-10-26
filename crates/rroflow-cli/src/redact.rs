@@ -63,7 +63,7 @@ pub(crate) fn truncate(s: &str, max: usize) -> String {
         return s.to_string();
     }
     let cut: String = s.chars().take(max).collect();
-    format!("{cut}...[truncated by rroflow-raindrop]")
+    format!("{cut}...[truncated by rroflow]")
 }
 
 /// True when `s` still contains something the redactor would replace.

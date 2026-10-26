@@ -1,6 +1,45 @@
-# rroflow-raindrop
+# rroflow: the rroflow.ai collector
 
-Sends real coding-agent runs (Claude Code and Codex CLI) to Raindrop, so its classifiers and RROFLOW's work on the same traffic.
+Reads the session files your coding agents already write (Claude Code and Codex CLI), turns each prompt into one `rroflow.turn/v1` record, evaluates behaviour signals on your machine, and sends the records to **rroflow.ai** (your devspace) or to **Raindrop**. Previously named `rroflow-raindrop`.
+
+## Quick start
+
+```bash
+cargo install --git https://github.com/rrflow/rroflow-development rroflow
+
+# 1. See what your agents did. Runs locally and sends nothing.
+rroflow signals --agent claude ~/.claude/projects
+rroflow signals --agent codex  ~/.codex/sessions --details
+
+# 2. Send to your devspace on rroflow.ai. The key decides which devspace receives the data.
+export RROFLOW_INGEST_URL=https://<your devspace ingest>  RROFLOW_INGEST_KEY=<devspace key>
+rroflow ingest-claude ~/.claude/projects --project shippinai
+rroflow ingest-codex  ~/.codex/sessions  --project shippinai
+```
+
+**Content stays on your machine by default.** Signals run locally; only signal results, metrics (tokens, tool names and statuses, timings) and record ids are sent. Add `--content` to also send redacted prompt, response and tool text.
+
+## Behaviour signals v0
+
+| Signal | Fires when |
+|---|---|
+| `blocked_handoff` | a tool result shows a blocker (denied, 401/403, not signed in) and the agent hands the step back to you |
+| `tool_error_streak` | 3+ tool calls fail in a row |
+| `usage_limit_hit` (v2) | a usage, rate or credit limit appears in a failed tool call or the agent's answer |
+| `false_done` | the agent claims done while its last tool call failed or calls are still running |
+| `aborted_turn` | you interrupted the turn |
+| `context_loss` | the agent compacted its context |
+| `mood` | your prompt reads frustrated (-2) to pleased (+2); prompts from other agents are skipped |
+| `correction_spiral` | 3+ prompts in a row correct the agent |
+
+Measured 2026-10-26 on this repo's real sessions:
+- 10 Claude Code turns gave 5 hits, all correct, after two v1 false positives were fixed. `usage_limit_hit` had matched rate-limit text in successful code output (now v2: failed calls and answers only). `mood` had fired on a subagent prompt (Claude sidechain prompts are now marked as agent-authored).
+- 8 Codex subagent turns gave 0 hits. Their prompts come from agents, and their 5 failures are not consecutive.
+- That is a smoke test, not an evaluation (n is small).
+
+## Raindrop sink
+
+`--sink raindrop` sends Raindrop events plus OTLP spans, as before.
 
 `ingest-claude` reads Claude Code session transcripts (`~/.claude/projects/**/*.jsonl`) and sends:
 
@@ -15,7 +54,7 @@ Ids are derived from the transcript (session, agent and prompt ids), so running 
 `ingest-codex` reads Codex CLI session rollouts from `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (on Windows, `%USERPROFILE%\.codex\sessions`). Older rollouts that Codex has compressed to `.jsonl.zst` are decompressed in-process. It sends the same shapes as Claude Code: event `codex.turn`, one LLM span, and one span per finished tool call. It takes the same flags and environment variables.
 
 ```bash
-infisical run --env dev -- rroflow-raindrop ingest-codex ~/.codex/sessions --project shippinai --workspace shippinai --payloads
+infisical run --env dev -- rroflow ingest-codex --sink raindrop ~/.codex/sessions --project shippinai --workspace shippinai --payloads
 ```
 
 Both agents stamp `properties.agent` (`claude-code` or `codex`) and `properties.agent_version`, so one Raindrop project can hold both and a signal can be filtered by agent. Claude Code events also keep `claude_code_version`.
@@ -41,8 +80,8 @@ Not yet validated on a real rollout: it is tested on synthetic lines built from 
 | `RROFLOW_REDACT` | Extra literal secrets to redact, comma-separated | none |
 
 ```bash
-cargo install --git https://github.com/rrflow/rroflow-development rroflow-raindrop
-infisical run --env dev -- rroflow-raindrop ingest-claude ~/.claude/projects --project shippinai --workspace shippinai
+cargo install --git https://github.com/rrflow/rroflow-development rroflow
+infisical run --env dev -- rroflow ingest-claude --sink raindrop ~/.claude/projects --project shippinai --workspace shippinai
 ```
 
 Flags:
@@ -55,8 +94,8 @@ A new slug's data appears under Raindrop → Settings → Projects → "Projects
 ## Check what Raindrop actually stored: `doctor`
 
 ```bash
-infisical run --env dev -- rroflow-raindrop doctor --project claude-code   # newest event
-rroflow-raindrop doctor --project claude-code --event <id> --json           # one event, machine-readable
+infisical run --env dev -- rroflow doctor --project claude-code   # newest event
+rroflow doctor --project claude-code --event <id> --json           # one event, machine-readable
 ```
 
 `doctor` reads one event and its trace back through the Query API (`RAINDROP_QUERY_KEY`) and runs seven checks. They are deterministic and make no model call:

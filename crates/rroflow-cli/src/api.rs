@@ -59,3 +59,28 @@ fn read_hint(code: u16, project: &str) -> String {
         _ => String::new(),
     }
 }
+
+/// POST `rroflow.turn/v1` records to a devspace's rroflow ingest. The key decides the devspace.
+pub(crate) fn post_rroflow(base: &str, key: &str, body: &Value) -> Result<u16> {
+    let url = format!("{}/v1/turns", base.trim_end_matches('/'));
+    let mut last = String::new();
+    for attempt in 0..3 {
+        match ureq::post(&url)
+            .header("Authorization", &format!("Bearer {key}"))
+            .send_json(body)
+        {
+            Ok(resp) => return Ok(resp.status().as_u16()),
+            Err(ureq::Error::StatusCode(401)) => {
+                bail!(
+                    "rroflow ingest refused the key (HTTP 401): check RROFLOW_INGEST_KEY for your devspace"
+                )
+            }
+            Err(ureq::Error::StatusCode(code)) if code != 429 && code < 500 => {
+                bail!("rroflow ingest rejected the batch with HTTP {code}")
+            }
+            Err(e) => last = e.to_string(),
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500 * (1 << attempt)));
+    }
+    bail!("rroflow ingest at {url} failed after 3 attempts: {last}")
+}

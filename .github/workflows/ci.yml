@@ -19,4 +19,4 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
       - name: Parse a fixture transcript (no network)
-        run: cargo run --locked -p rroflow-raindrop -- ingest-claude crates/rroflow-raindrop/tests/fixtures --dry-run
+        run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
