@@ -256,6 +256,7 @@ pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
                     if let Some(t) = turns.last_mut() {
                         t.in_tokens += u["input_tokens"].as_u64().unwrap_or(0);
                         t.out_tokens += u["output_tokens"].as_u64().unwrap_or(0);
+                        t.cache_read += u["cached_input_tokens"].as_u64().unwrap_or(0);
                     }
                 }
                 _ => {}
@@ -438,7 +439,7 @@ mod tests {
         assert_eq!(t.input, "fix the failing test");
         assert_eq!(t.model.as_deref(), Some("gpt-5.3-codex"));
         assert_eq!(t.output, vec!["Fixed: the assertion used the wrong field."]);
-        assert_eq!((t.in_tokens, t.out_tokens), (5000, 200));
+        assert_eq!((t.in_tokens, t.out_tokens, t.cache_read), (5000, 200, 4000));
         assert_eq!(t.tools.len(), 2);
         assert!(t.tools[0].error, "exit code 101 is a failure");
         assert!(!t.tools[1].error, "metadata.exit_code 0 is a success");

@@ -24,6 +24,12 @@ fn attr(k: &str, v: Value) -> Value {
     json!({"key": k, "value": val})
 }
 
+/// Deterministic event id for a turn (UUIDv5 of session and turn key). Shared by every sink,
+/// so the same turn has the same id in Raindrop and in rroflow.ai.
+pub(crate) fn event_id(t: &Turn) -> String {
+    Uuid::new_v5(&NS, format!("{}:{}", t.session, t.key).as_bytes()).to_string()
+}
+
 pub(crate) struct Built {
     pub(crate) event: Value,
     pub(crate) spans: Vec<Value>,
@@ -36,7 +42,7 @@ pub(crate) fn build(
     payloads: bool,
     r: &Redactor,
 ) -> Built {
-    let event_id = Uuid::new_v5(&NS, format!("{}:{}", t.session, t.key).as_bytes()).to_string();
+    let event_id = event_id(t);
     let trace_id = hex_id(&format!("trace:{event_id}"), 16);
     let root = hex_id(&format!("root:{event_id}"), 8);
     // Only finished tool calls are sent. Raindrop keeps every version of a re-sent span in
@@ -62,7 +68,7 @@ pub(crate) fn build(
         "tool_calls_unfinished": t.tools.len() - finished.len(),
         "tool_errors": errors,
         "tool_names": tool_names.join(","),
-        "ingested_by": concat!("rroflow-raindrop/", env!("CARGO_PKG_VERSION")),
+        "ingested_by": concat!("rroflow/", env!("CARGO_PKG_VERSION")),
     });
     if t.agent == "claude-code" {
         // Kept for signals and filters written before `agent_version` existed.
@@ -148,7 +154,7 @@ pub(crate) fn build(
 pub(crate) fn trace_body(service: &str, spans: &[Value]) -> Value {
     json!({"resourceSpans": [{
         "resource": {"attributes": [attr("service.name", json!(service))]},
-        "scopeSpans": [{"scope": {"name": "rroflow-raindrop", "version": env!("CARGO_PKG_VERSION")}, "spans": spans}]
+        "scopeSpans": [{"scope": {"name": "rroflow", "version": env!("CARGO_PKG_VERSION")}, "spans": spans}]
     }]})
 }
 

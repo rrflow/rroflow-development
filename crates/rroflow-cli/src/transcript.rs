@@ -7,12 +7,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// User-message prefixes written by the harness, not typed by a person.
-pub(crate) const HARNESS_PREFIXES: [&str; 4] = [
+pub(crate) const HARNESS_PREFIXES: [&str; 5] = [
     "<task-notification>",
     "<local-command-",
     "<command-name>",
     "<command-message>",
+    "Caveat: The messages below were generated",
 ];
+
+/// Text Claude Code writes as a user message when the person interrupts a turn
+/// (the same marker DevPulse's transcript extractor drops: platform_devpulse
+/// docs/chat-modes/_raw/extract-prompts.js).
+pub(crate) const INTERRUPT_PREFIX: &str = "[Request interrupted by user";
 
 /// Input recorded when a compaction summary opens a turn and no prompt text survives.
 pub(crate) const COMPACTION_MARKER: &str = "[continued after context compaction]";
@@ -50,6 +56,10 @@ pub(crate) struct Turn {
     pub(crate) model: Option<String>,
     pub(crate) in_tokens: u64,
     pub(crate) out_tokens: u64,
+    /// Cached input read (Anthropic `cache_read_input_tokens`, OpenAI `cached_input_tokens`).
+    pub(crate) cache_read: u64,
+    /// Cache writes (Anthropic `cache_creation_input_tokens`).
+    pub(crate) cache_write: u64,
     pub(crate) tools: Vec<Tool>,
     pub(crate) cwd: String,
     pub(crate) branch: String,
@@ -132,6 +142,12 @@ pub(crate) fn parse_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
                 let is_meta = d["isMeta"].as_bool().unwrap_or(false);
                 if let Some(text) = text_of(&msg["content"]) {
                     let text = strip_reminders(&text);
+                    if text.starts_with(INTERRUPT_PREFIX) {
+                        if let Some(t) = turns.last_mut() {
+                            t.aborted = true;
+                        }
+                        continue;
+                    }
                     let harness = HARNESS_PREFIXES.iter().any(|p| text.starts_with(p));
                     if is_meta || text.is_empty() || harness {
                         continue;
@@ -166,6 +182,12 @@ pub(crate) fn parse_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
                         version: d["version"].as_str().unwrap_or("").to_string(),
                         entrypoint: d["entrypoint"].as_str().unwrap_or("").to_string(),
                         compacted,
+                        // A sidechain (subagent) transcript opens with the parent agent's
+                        // prompt, not a person's.
+                        prompt_author: d["isSidechain"]
+                            .as_bool()
+                            .unwrap_or(false)
+                            .then(|| "parent agent".to_string()),
                         agent: "claude-code",
                         provider: "anthropic".into(),
                         ..Default::default()
@@ -200,6 +222,12 @@ pub(crate) fn parse_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
                 }
                 t.in_tokens += msg["usage"]["input_tokens"].as_u64().unwrap_or(0);
                 t.out_tokens += msg["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                t.cache_read += msg["usage"]["cache_read_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
+                t.cache_write += msg["usage"]["cache_creation_input_tokens"]
+                    .as_u64()
+                    .unwrap_or(0);
                 if !ts.is_empty() {
                     t.end = ts.clone();
                 }
