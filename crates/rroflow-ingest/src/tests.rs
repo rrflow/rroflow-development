@@ -477,7 +477,6 @@ fn signed_in(issuer: &str, sub: &str) -> serde_json::Value {
 
 /// A Postgres-backed service with Nomen sign-in pointed at `fake`.
 async fn nomen_app(env: &mut Env, fake: &FakeNomen, dir: &std::path::Path) -> Router {
-    use std::os::unix::fs::PermissionsExt;
     let key = crate::test_keys::rsa();
     let path = dir.join("nomen-key.json");
     std::fs::write(
@@ -486,7 +485,11 @@ async fn nomen_app(env: &mut Env, fake: &FakeNomen, dir: &std::path::Path) -> Ro
             .to_string(),
     )
     .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     env.cfg.nomen = Some(NomenConfig {
         issuer: fake.issuer.clone(),
         audiences: vec![NOMEN_PROJECT.into()],
