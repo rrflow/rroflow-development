@@ -1,28 +1,32 @@
-# rroflow.ai: plan v0
+# rroflow.ai: plan v1
 
 Status: **proposal**. Decisions marked `D-n` are open until saved as ADRs.
-Date: 2026-10-25.
+Date: 2026-10-25 (v1: product split with rrflow.ai; powered by Shippin.cloud / shippin.ai; learning vision with status and sources).
 Grounded in:
 - the Raindrop absorption (live workspace capture, signal authoring, onboarding, settings)
 - the DevPulse research ledger (6 repos, 8 Drive docs, 2026-03 → 2026-10)
 - RROFLOW mechanism spec v0
 - this repo's working ingest (Claude Code + Codex → Raindrop, `doctor`)
 
-## 1. What rroflow.ai is
+## 1. The split: two products, one stack
 
-**Sentry for your AI.** It captures what your coding agents actually did and finds where they failed, stalled or wasted your money. Then it learns from your corrections what works, and proposes fixes you approve.
+| | **rrflow.ai: RRFlow** | **rroflow.ai: RROFLOW** |
+|---|---|---|
+| What it is | The reasoning engine: rrflowDB/rrflowKV, rrflowQL, prompt graphs, LFG kernel, SWAG controller | **Sentry for AI**, plus the **learning layer**: it captures what AI agents do, detects behaviour signals, and learns (supervised, unsupervised, recursive) what works |
+| Delivered by | Its own site and repo (`rrflow/rrflow-development`, `rrflow/site-development`), with Connectome as its UI | **Powered by Shippin.cloud / shippin.ai.** Accounts, subscriptions, hosting and the user's devspace come from Shippin, sharing the IdP/OIDC used by DevPulse and Shippin.cloud |
+| Repo | `rrflow/rrflow-development`. Engine-side RROFLOW code (promotion contract, learning tables) stays here | `rrflow/rroflow-development` (lab + site), moving to `rrflow/rroflow` at alpha |
+| Relationship | RRFlow is where a promoted improvement *lands*: a reversible engine change | RROFLOW produces the evidence and candidates. It monitors RRFlow-powered agents as one of its sources |
 
-| Sentry does | rroflow.ai does |
-|---|---|
-| Captures errors from your app | Captures every agent turn (Claude Code, Codex): prompt, tools, results, tokens, cost |
-| Groups them into issues | Groups failures into **behaviour signals**: blocked handoff, false "done", correction spiral, tool-error streak, usage-limit hit, wasted spend |
-| Shows the stack trace | Shows the evidence: the exact turn, tool span and output that matched, and why |
-| Alerts you | Tells you in plain words, with the repair to paste into your agent |
-| — | **Learns**: your labels teach it (supervised), recurring failure patterns surface by themselves (unsupervised), and every proposed improvement is tested before it is promoted and can be undone |
+**rroflow.ai in one line:** Sentry for your AI. It captures every agent turn, catches failures and wasted spend, shows the evidence, and learns from your corrections. Every learned change is tested before it goes live and can be undone.
 
-**For:** vibe coders first, people who build with AI agents and pay for subscriptions (DevPulse Tier 0: "highest economic exposure"). There is a drill-down for developers who want the raw spans.
+**For:** vibe coders first, people who build with AI agents and pay for subscriptions (DevPulse Tier 0: "highest economic exposure"). There is a drill-down for developers. What it protects: "the user's wallet and time" (DevPulse PHILOSOPHY, locked).
 
-**What it protects:** "The user's wallet and time are the scarce resources" (DevPulse PHILOSOPHY, locked).
+**Why Shippin.** A Shippin.cloud user already has an account, a subscription and a devspace. rroflow.ai becomes a capability of that subscription rather than another signup:
+- the collector installs with the devspace;
+- the hosted dashboard sits in the Shippin user panel;
+- billing rides the shippin.ai plan.
+
+The local-first collector still works without Shippin (D-2: both tracks).
 
 ### Why it beats Raindrop for this user
 
@@ -42,7 +46,7 @@ Grounded in:
   - `doctor`, with 7 deterministic checks, validated on three producers.
   - Redaction that is always on.
   - Raindrop as the first **sink**.
-  - PRs #1 and #2, CI green.
+  - PRs #1 and #2, merged 2026-10-25.
 - Live Raindrop findings that change the design:
   - Events upsert by `event_id`.
   - A span re-sent with a new status is listed twice.
@@ -50,7 +54,7 @@ Grounded in:
   - The Query API ignores `?project=`.
   - Unclaimed project slugs are hidden.
 - The DevPulse designs to adopt (section 4).
-- Local checkout: `D:\projects\rroflow.ai` (dabo), on `feat/codex`.
+- Local checkout: `D:\projects\rroflow.ai` (dabo), on `main`.
 
 ## 3. Product surfaces
 
@@ -72,20 +76,43 @@ Grounded in:
 - **Signals.** Per-domain enums with one stamped envelope `{domain, ms, type, …}` and a global `seq`. Signals fire after the write ("report truth, never intent"). A spec declares delivery, sinks and version: "a kind without a spec does not compile".
 - **Content.** Prompt and response text live in an opt-in, scrubbed store joined by hash. Metrics never need content.
 
-## 5. Learning loop: supervised, unsupervised, governed
+## 5. The vision rroflow.ai holds: recursive, supervised and unsupervised learning
 
-The pipeline: Capture → Signals (rules) → Evidence → Label → Candidate → Held-out eval → Promote (reversible) → Monitor.
+Status key: **built** = in this repo and verified on real data; **designed** = written down with a source; **vision** = direction, no design yet.
 
-- **Tier 1, rules** (regex/structural, µs). Example: "a tool was denied, then the assistant asked the user to act".
-- **Tier 2, similarity.** Embeddings plus per-signal classifiers trained on labels. New categories are new exemplars, not a retrain.
-- **Tier 3, model judge** for fuzzy cases only. It answers and *mints* a candidate tier-1 rule ("the slow path mints fast paths").
-- **Supervised.** Labels are MATCH/NOT MATCH on signal hits plus outcome labels ACCEPTED / EDITED / REJECTED / ABANDONED. EDITED is the best data, because the edit is the correction.
-- **Unsupervised.** Cluster unexplained failures (tool errors, aborts, long correction spirals) into candidate signals for a person to name. Cluster members are candidates, never labels.
-- **Governed promotion.**
-  - A candidate lands `is_active=false`. It is promoted only when the held-out interval supports the gain, and the held-out set is rotated once used (the vibeguard lesson).
-  - A human revert is a verdict on that revision, not a permanent block on the category.
-  - Promotion is an authorized, reversible engine change, per the RRFlow learning contract.
-- **No fine-tuning** until thousands of journaled examples exist ("training first freezes guesses").
+### The loop
+
+```
+capture ─▶ signals ─▶ evidence ─▶ labels ─▶ candidates ─▶ held-out eval ─▶ promote (reversible) ─▶ monitor
+   ▲                                                                                              │
+   └──────────────────────────── recursion: the promoted change is captured again ◀───────────────┘
+```
+
+| Stage | What happens | Status | Source |
+|---|---|---|---|
+| Capture | Every agent turn from Claude Code and Codex: prompt, tools, results, tokens; forked subagents; only finished spans | **built** | this repo (`ingest-*`, `doctor`) |
+| Signals, tier 1 | Deterministic rules over the capture, with evidence spans | designed | DevPulse classification compiler (Drive 2026-09-24); Raindrop's code classifier = deterministic gate + judge (captured 2026-10-25) |
+| Signals, tier 2 | Similarity: embeddings plus per-signal classifiers trained on labels. New categories are new exemplars, not a retrain | designed | LFG_NOTES_v3 §4 (2026-09-26) |
+| Signals, tier 3 | Model judge for fuzzy cases only. It answers and mints a candidate tier-1 rule ("the slow path mints fast paths") | designed | LFG_NOTES_v3; Raindrop "Triage writes policy rules + classifier" |
+| **Supervised** | Labels: MATCH / NOT MATCH on signal hits, plus outcome labels ACCEPTED / EDITED / REJECTED / ABANDONED. EDITED is the best data, because the edit is the correction | designed | DevPulse normalizer training spec; Raindrop MATCH/NOT MATCH review |
+| **Unsupervised** | Cluster unexplained failures (tool-error streaks, aborts, correction spirals) into candidate signals for a person to name. Cluster members are candidates, never labels | designed | mechanism spec R5b; Raindrop "Issues" and "Stumbles" |
+| Governed promotion | A candidate lands inactive. It is promoted only when the held-out interval supports the gain; the held-out set is rotated once used; a human revert is a verdict on one revision, not a ban on the category | designed | RRFlow learning contract; vibeguard lessons (live trace); DevPulse "nothing goes live on the model's say-so" |
+| **Recursive** | Three nested loops: (1) RROFLOW improves the **agents** (rules, prompts, hooks); (2) RROFLOW improves **its own signals**, since signal precision is itself measured and labelled; (3) promoted rules land in **RRFlow** (LFG tier-1 snapshot), whose answers are captured again | vision (1, 2) / designed (3) | mechanism spec; LFG snapshot swap via ArcSwap; RRFlow learning contract |
+| Monitor and roll back | Every promotion is watched against the signal it targeted. Regression triggers a revert proposal | designed | DevPulse incremental enforcement ladder (Drive 2026-09-18) |
+| Fine-tuning | Not before thousands of journaled examples ("training first freezes guesses") | rule | v2.1 Addendum A11 |
+
+### Concepts carried over, and where each came from
+
+| Concept | From DevPulse notes | From Raindrop |
+|---|---|---|
+| Event model | `AiEvent`: tokens are truth, cost is derived, `None` is never zero, Live vs Backfilled | events + OTLP spans; upsert by `event_id` |
+| Signals | per-domain signal doctrine; signals report truth, never intent; spec or it does not compile | signal types topic/regex/instrumented/code; presets on by default |
+| Mood | bidirectional ebb-and-flow scale (owner correction: not only negatives) | Frustration / Churn Intent presets (negative only) |
+| Failure taxonomy | CC-001…CC-014 (false completion ~30%, compaction loss, correction spirals) | Repeated Tool Call Failures, Capability Gaps |
+| Onboarding | a checklist that ticks only on real signals; "every line on screen actually happened" | N-of-5 checklist; trace review with a copyable repair prompt |
+| Honesty | a provider that declares "does not report usage" instead of showing zero | cost shown as a lower bound with unknowns counted |
+| Spend and subscriptions | per-provider usage adapters; subscription-only, never hold a key; backfill from existing sessions | none; this is our gap to fill |
+| Evaluation | fail-then-pass pairs are promotion evidence; proof by golden file | portable evaluator artifact (program + judge + pinned projection + hash) |
 
 ## 6. Signal set v0 (deterministic first)
 
@@ -105,6 +132,7 @@ The pipeline: Capture → Signals (rules) → Evidence → Label → Candidate �
 - **Rust-first.** Python only for ML training.
 - **Collector:** this crate, split into `rroflow-core` (event model, pricing, redaction), `rroflow-collect` (Claude and Codex parsers) and sinks (`rroflow-raindrop`, local store).
 - **Public site:** same pattern as the decided rrflow.ai site (Astro static + islands, plus a Rust gateway that is the only data client; source chip on every live panel; planned states labelled, never sample data). Explainers rendered with Remotion. Lives in `site/` in this repo (repo scope already decided: outward lab + site).
+- **Hosted track runs on Shippin.cloud.** `api.rroflow.ai` ingest and the hosted dashboard are deployed as Shippin.cloud services. Accounts and plans come from shippin.ai, and auth from the shared IdP. Endpoints are configuration, nothing hardcoded.
 - **Store:** open, see D-4.
 
 ## 8. Build order (one PR each; each builds on the last)
@@ -119,13 +147,13 @@ The pipeline: Capture → Signals (rules) → Evidence → Label → Candidate �
 7. **Unsupervised:** failure clustering that proposes candidate signals.
 8. **Live demo on rroflow.ai** from the public demo dataset through the gateway.
 Hosted track, in parallel from increment 2 on the same event model:
-- **H1.** rroflow.ai accounts and project keys; `api.rroflow.ai` ingest accepting the event model (OTLP + events), deduplicated by `event_id`, with the finished-span rule enforced server-side.
-- **H2.** Hosted dashboard: signals, evidence cards, spend and limits. It reuses the local dashboard's components.
+- **H1.** rroflow.ai on Shippin.cloud: Shippin accounts/IdP, project keys under the user's Shippin subscription; `api.rroflow.ai` ingest accepting the event model (OTLP + events), deduplicated by `event_id`, with the finished-span rule enforced server-side.
+- **H2.** Hosted dashboard inside the Shippin user panel: signals, evidence cards, spend and limits. It reuses the local dashboard's components.
 - **H3.** Sync: the local collector uploads opt-in, redacted projections; content stays local unless enabled.
 
 ## 9. Decisions (one per pass)
 
-- **D-1 Positioning — answered 2026-10-25:** *RRFlow is the reasoning engine; RROFLOW (rroflow.ai) is Sentry for AI.* Two brands, one stack: rroflow.ai leads with capture, signals, spend and learning, and links to rrflow.ai for the engine. This replaces the May 2026 "RRO sold to enterprise" headline. Not canon until saved as an ADR.
+- **D-1 Positioning — answered 2026-10-25:** *RRFlow (rrflow.ai) is the reasoning engine; RROFLOW (rroflow.ai) is Sentry for AI and holds the learning vision, powered by Shippin.cloud / shippin.ai.* rroflow.ai leads with capture, signals, spend and learning, and links to rrflow.ai for the engine. This replaces the May 2026 "RRO sold to enterprise" headline. Not canon until saved as an ADR.
 - **D-2 Order of surfaces — answered 2026-10-25: both in parallel.** The local-first collector and dashboard, and hosted rroflow.ai accounts with cloud ingest, are built as two tracks on one event model. Not canon until saved as an ADR. Consequence: the event model (increment 2) is the shared contract, and hosted ingest must honour the DevPulse laws: no provider keys held; content opt-in and scrubbed before upload.
 - **D-3 Site — answered 2026-10-25:** `site/` in this repo, using Astro static with islands, a Rust gateway as the only data client, and Remotion explainers. This is the same pattern as the rrflow.ai site. Not canon until saved as an ADR.
 - **D-4 Local store.** Parquet + DataFusion (devpulselabs, 2026-08) vs Turso vs RRFlow when ready. The live repos disagree.
