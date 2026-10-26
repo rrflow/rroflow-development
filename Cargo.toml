@@ -6,3 +6,12 @@ members = ["crates/rroflow-core", "crates/rroflow-cli", "crates/rroflow-ingest"]
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/rrflow/rroflow-development"
+
+# The profile that 'dist' will build with. Fat LTO and one codegen unit let the
+# optimizer see the whole program (smaller, faster binaries at a slower build);
+# symbols are stripped because the attested archive is what ships.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

@@ -27,3 +27,6 @@ uuid = { version = "1", features = ["v4", "v5"] }
 axum = "0.8.9"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+
+[package.metadata.dist]
+dist = true
