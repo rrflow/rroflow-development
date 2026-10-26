@@ -60,7 +60,10 @@ fn read_hint(code: u16, project: &str) -> String {
     }
 }
 
-/// POST `rroflow.turn/v1` records to a devspace's rroflow ingest. The key decides the devspace.
+/// What a refused rroflow credential means, in plain words.
+const REFUSED_CREDENTIAL: &str = "rroflow ingest refused the credential (HTTP 401): run `rroflow whoami`, then `rroflow login` (or check RROFLOW_INGEST_KEY)";
+
+/// POST `rroflow.turn/v1` records to a devspace's rroflow ingest. The credential decides the devspace.
 pub(crate) fn post_rroflow(base: &str, key: &str, body: &Value) -> Result<u16> {
     let url = format!("{}/v1/turns", base.trim_end_matches('/'));
     let mut last = String::new();
@@ -71,9 +74,7 @@ pub(crate) fn post_rroflow(base: &str, key: &str, body: &Value) -> Result<u16> {
         {
             Ok(resp) => return Ok(resp.status().as_u16()),
             Err(ureq::Error::StatusCode(401)) => {
-                bail!(
-                    "rroflow ingest refused the key (HTTP 401): check RROFLOW_INGEST_KEY for your devspace"
-                )
+                bail!(REFUSED_CREDENTIAL)
             }
             Err(ureq::Error::StatusCode(code)) if code != 429 && code < 500 => {
                 bail!("rroflow ingest rejected the batch with HTTP {code}")
@@ -96,9 +97,7 @@ pub(crate) fn get_rroflow(base: &str, key: &str, path: &str) -> Result<Value> {
         {
             Ok(mut resp) => return Ok(resp.body_mut().read_json::<Value>()?),
             Err(ureq::Error::StatusCode(401)) => {
-                bail!(
-                    "rroflow ingest refused the key (HTTP 401): check RROFLOW_INGEST_KEY for your devspace"
-                )
+                bail!(REFUSED_CREDENTIAL)
             }
             Err(ureq::Error::StatusCode(code)) if code != 429 && code < 500 => {
                 bail!("rroflow ingest answered {path} with HTTP {code}")

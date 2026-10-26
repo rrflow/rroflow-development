@@ -41,17 +41,22 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 
 1. **Built:** Postgres store with migrations, signal catalogue grouped with options, per-devspace settings, dashboard with Claude Code and Codex side by side, deploy script with Postgres for tx-infra-prod.
 2. **Built:** Nomen token introspection on the ingest (ported from the Devagotchi hub, same checks and caching); first sign-in creates the devspace for that `sub`; `rroflow-ingest claim` gives an existing key devspace to an account; Nomen down → 503 `issuer_unavailable`, keys keep working.
-3. `rroflow login` (device flow) and token refresh in the CLI.
+3. **Built:** `rroflow login` / `logout` / `whoami` (device flow ported from the Devagotchi CLI, refresh within 5 min of expiry, 7-day offline grace, tokens in `account.json` 0600). The collector sends as the signed-in account; `RROFLOW_INGEST_KEY` still wins for headless machines.
 4. Dashboard sign-in (authorization code + PKCE); key management in the page.
-5. `api.rroflow.ai` public: DNS A record to 23.156.136.173, TLS at a reverse proxy in front of `127.0.0.1:8787`.
+5. Public: `api.rroflow.ai` (API) and `app.rroflow.ai` (dashboard), both A records to 23.156.136.173, TLS at Caddy in front of `127.0.0.1:8787`. Both hosts reach the same service, so the dashboard's API calls are same-origin.
 6. Attach a devspace to a Shippin tenant (`shippin_tenant_id`), started from the Shippin console.
 
-## Inputs needed for steps 2–5
+## Nomen setup (created 2026-10-26, project `rroflow` in the Shippin Platform org)
 
-- A Nomen project for rroflow and its project id (the `aud`).
-- An API application in that project with private-key JWT, for introspection (key file installed on the host, never in the repo).
-- A native/device client for the CLI and a web client (PKCE) for the dashboard; their client ids.
-- DNS for `api.rroflow.ai` (and `rroflow.ai`).
+| What | Value |
+|---|---|
+| Issuer | `https://id.shippin.cloud` (endpoints under `/oauth/v2/`) |
+| Project id (the `aud`) | `396821566727389188` |
+| `rroflow-ingest` API app, private-key JWT (introspection) | client id `396821567230771204`; key in Gold's `platform-core.sops.yaml` as `rroflow_ingest_jwt_key_b64` |
+| `rroflow-cli` native app, device flow + refresh, no secret | client id `396821568421953540` |
+| `rroflow-dashboard` web app, authorization code + PKCE + refresh, no secret | client id `396821568908492804`; redirect `https://app.rroflow.ai/auth/callback` |
+
+DNS: `rroflow.ai` → 23.156.136.173 (Cloudflare proxy off). `api.rroflow.ai` and `app.rroflow.ai` to be added the same way.
 
 ## Turning on sign-in (tx-infra-prod)
 
@@ -60,9 +65,9 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 
    ```toml
    [nomen]
-   issuer = "<Nomen issuer URL>"
-   audiences = ["<rroflow project id>"]
-   clients = ["<CLI client id>", "<web client id>"]
+   issuer = "https://id.shippin.cloud"
+   audiences = ["396821566727389188"]
+   clients = ["396821568421953540", "396821568908492804"]
    key_file = "/etc/rroflow/nomen-key.json"
    ```
 3. Re-run the deploy; it prints `nomen sign-in: on`.

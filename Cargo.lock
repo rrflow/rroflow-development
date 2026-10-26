@@ -1673,6 +1673,7 @@ name = "rroflow"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "clap",
  "rand 0.9.5",
@@ -1681,6 +1682,8 @@ dependencies = [
  "ruzstd",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
  "ureq",
  "uuid",
 ]
