@@ -12,7 +12,10 @@ LISTEN="${LISTEN:-127.0.0.1:8787}"
 
 echo "== packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+# A host without a Proxmox subscription has enterprise repos that answer 401; apt-get update then
+# exits non-zero although the Debian repos refreshed. Keep going and let the install fail loudly
+# if the packages are really unavailable. Repository configuration is left as it is.
+apt-get update -qq || echo "apt-get update reported errors (see above); continuing with the repos that refreshed"
 apt-get install -y -qq build-essential pkg-config curl ca-certificates >/dev/null
 
 echo "== rust toolchain in $ROOT/rust"
