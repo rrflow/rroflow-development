@@ -209,14 +209,18 @@ fn ingest_rroflow(args: IngestArgs, parse: Parse) -> Result<()> {
             sent += chunk.len();
         }
     }
-    println!(
-        "sent {sent} turns ({hits} signal hits) to rroflow{}",
-        if args.content {
-            " with content"
-        } else {
-            ", content kept local"
-        }
-    );
+    if args.dry_run {
+        println!("dry run: {hits} signal hits found, nothing sent");
+    } else {
+        println!(
+            "sent {sent} turns ({hits} signal hits) to rroflow{}",
+            if args.content {
+                " with content"
+            } else {
+                ", content kept local"
+            }
+        );
+    }
     Ok(())
 }
 
