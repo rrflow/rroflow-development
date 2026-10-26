@@ -14,6 +14,15 @@ ROOT=/opt/rroflow
 export RUSTUP_HOME=$ROOT/rust/rustup CARGO_HOME=$ROOT/rust/cargo
 export PATH=$CARGO_HOME/bin:$PATH
 LISTEN="${LISTEN:-127.0.0.1:8787}"
+# Public hostnames Caddy serves with TLS, all proxied to $LISTEN: the API and the dashboard.
+# Empty skips the proxy. Certificates are issued once each name's A record points here.
+PUBLIC_HOSTS="${PUBLIC_HOSTS-api.rroflow.ai app.rroflow.ai}"
+# Nomen sign-in for this host (project `rroflow`, Shippin Platform org). Used when the
+# ingest app's key file is present at $NOMEN_KEY_FILE.
+NOMEN_ISSUER="${NOMEN_ISSUER:-https://id.shippin.cloud}"
+NOMEN_PROJECT="${NOMEN_PROJECT:-396821566727389188}"
+NOMEN_CLIENTS="${NOMEN_CLIENTS:-396821568421953540 396821568908492804}"
+NOMEN_KEY_FILE=/etc/rroflow/nomen-key.json
 
 echo "== packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -76,14 +85,26 @@ key_sha256 = ["$(cat /etc/rroflow/keys/jesse.sha256)"]
 id = "selftest"
 key_sha256 = ["$(cat /etc/rroflow/keys/selftest.sha256)"]
 EOF
-# Nomen sign-in: written by the operator once the rroflow apps exist in Nomen (see
-# docs/plan/identity-and-devspaces.md). Kept across runs; the key file must be owned by
-# rroflow with mode 0600.
+# Nomen sign-in: on when the ingest app's key file is on the host (it comes from Gold's sops,
+# never from the repo). /etc/rroflow/nomen.toml, when an operator writes one, replaces the
+# values above. See docs/plan/identity-and-devspaces.md.
 if [ -f /etc/rroflow/nomen.toml ]; then
   { echo; cat /etc/rroflow/nomen.toml; } >> /etc/rroflow/ingest.toml
-  echo "nomen sign-in: on ($(sed -n 's/^issuer *= *//p' /etc/rroflow/nomen.toml))"
+  echo "nomen sign-in: on (operator's /etc/rroflow/nomen.toml)"
+elif [ -s "$NOMEN_KEY_FILE" ]; then
+  chown rroflow:rroflow "$NOMEN_KEY_FILE"; chmod 0600 "$NOMEN_KEY_FILE"
+  clients=$(printf '"%s", ' $NOMEN_CLIENTS); clients="[${clients%, }]"
+  cat >> /etc/rroflow/ingest.toml <<EOF
+
+[nomen]
+issuer = "$NOMEN_ISSUER"
+audiences = ["$NOMEN_PROJECT"]
+clients = $clients
+key_file = "$NOMEN_KEY_FILE"
+EOF
+  echo "nomen sign-in: on ($NOMEN_ISSUER, project $NOMEN_PROJECT)"
 else
-  echo "nomen sign-in: off (no /etc/rroflow/nomen.toml)"
+  echo "nomen sign-in: off (no $NOMEN_KEY_FILE yet; keys still work)"
 fi
 chmod 0644 /etc/rroflow/ingest.toml
 
@@ -149,4 +170,36 @@ curl -sSf -H "Authorization: Bearer $st" "$base/v1/summary" | grep -o '"turns":[
 runuser -u postgres -- psql -qAt -d rroflow -c "SELECT devspace_id, count(*) FROM turns GROUP BY 1"
 curl -s -o /dev/null -w 'wrong key -> %{http_code}\n' -H 'Authorization: Bearer nope' "$base/v1/summary"
 ss -ltnp | grep -E ":(${LISTEN##*:}|5432)\b" || true
+
+if [ -n "$PUBLIC_HOSTS" ]; then
+  echo "== public TLS (Caddy) for: $PUBLIC_HOSTS"
+  # Stop rather than take over ports 80/443 from something else on this host.
+  busy=$(ss -ltnpH '( sport = :80 or sport = :443 )' | grep -v '"caddy"' || true)
+  if [ -n "$busy" ]; then
+    echo "ports 80/443 are used by another service; not installing Caddy:"; echo "$busy"; exit 1
+  fi
+  apt-get install -y -qq caddy >/dev/null
+  sites=$(printf '%s, ' $PUBLIC_HOSTS); sites="${sites%, }"
+  cat > /etc/caddy/Caddyfile <<EOF
+# rroflow.ai: written by deploy/tx-infra-prod/deploy.sh; changes here are overwritten.
+$sites {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy $LISTEN
+}
+EOF
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+  systemctl enable --now caddy
+  systemctl reload caddy
+  systemctl is-active caddy
+  command -v pve-firewall >/dev/null && echo "proxmox firewall: $(pve-firewall status 2>&1 | head -1)"
+  for h in $PUBLIC_HOSTS; do
+    ip=$(getent ahostsv4 "$h" | awk 'NR==1{print $1}')
+    code=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "https://$h/healthz" || true)
+    echo "$h -> ${ip:-no DNS yet}; https /healthz -> ${code:-no answer} (certificate comes once DNS points here)"
+  done
+fi
 echo "== done"
