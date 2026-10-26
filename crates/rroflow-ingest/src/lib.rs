@@ -357,12 +357,30 @@ async fn get_summary(
     })))
 }
 
-/// The HTTP surface: `POST /v1/turns`, `GET /v1/turns`, `GET /v1/summary`, `GET /healthz`.
+/// The devspace dashboard: one self-contained page (no external scripts) that asks for the
+/// ingest key, keeps it in the tab's session storage, and reads `/v1/summary` and `/v1/turns`.
+async fn dashboard() -> impl IntoResponse {
+    (
+        [
+            ("content-type", "text/html; charset=utf-8"),
+            (
+                "content-security-policy",
+                "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+            ),
+            ("x-content-type-options", "nosniff"),
+            ("referrer-policy", "no-referrer"),
+        ],
+        include_str!("dashboard.html"),
+    )
+}
+
+/// The HTTP surface: `GET /` (dashboard), `POST /v1/turns`, `GET /v1/turns`, `GET /v1/summary`, `GET /healthz`.
 pub fn router(st: AppState, max_body_bytes: usize) -> Router {
     Router::new()
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/", get(dashboard))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .with_state(st)
 }
@@ -504,6 +522,31 @@ mod tests {
         let app2 = self::app(&dir);
         let (_, body) = call(&app2, get("key-jesse", "/v1/summary")).await;
         assert_eq!(body["summary"]["turns"], 2);
+    }
+
+    #[tokio::test]
+    async fn dashboard_is_served_without_a_key_and_reads_only_with_one() {
+        let app = app(&tmp("dash"));
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
+            resp.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("connect-src 'self'")
+        );
+        let html = resp.into_body().collect().await.unwrap().to_bytes();
+        assert!(std::str::from_utf8(&html).unwrap().contains("/v1/summary"));
+        let (code, _) = call(
+            &app,
+            Request::get("/v1/summary").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

@@ -28,6 +28,7 @@ key_sha256 = ["<hash printed by keygen>"]
 | `GET /v1/turns?limit=&signal=` | newest records in the devspace, optionally filtered by signal |
 | `GET /v1/summary` | turns by agent and project, signal counts, tool calls and errors, tokens (unreported usage counted, never priced as zero), and the signal catalogue |
 | `GET /healthz` | liveness |
+| `GET /` | devspace dashboard: one self-contained page (no external scripts, strict CSP). It asks for the ingest key, keeps it only in the tab, and shows turns, signals with evidence, tool errors and tokens |
 
 **Store.** Append-only JSONL per devspace, indexed in memory, behind the `TurnStore` trait. This is interim until decision D-4 (Parquet + DataFusion, Turso, or RRFlow) picks the durable store.
 

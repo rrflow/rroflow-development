@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rroflow devspace</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#2a313c;--text:#e6edf3;--muted:#8b949e;--warn:#e3b341;--crit:#f85149;--info:#58a6ff;--ok:#3fb950}
+@media (prefers-color-scheme: light){:root{--bg:#f6f8fa;--panel:#fff;--line:#d0d7de;--text:#1f2328;--muted:#59636e;--warn:#9a6700;--crit:#cf222e;--info:#0969da;--ok:#1a7f37}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+header{padding:20px 16px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:var(--muted)}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat b{display:block;font-size:24px}.stat span{color:var(--muted);font-size:13px}
+table{width:100%;border-collapse:collapse}td,th{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:500;font-size:13px}
+.chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;margin:2px 4px 2px 0;border:1px solid currentColor}
+.warn{color:var(--warn)}.critical{color:var(--crit)}.info{color:var(--info)}.muted{color:var(--muted)}
+input,button,select{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}button{cursor:pointer}
+details{margin-top:4px}summary{cursor:pointer;color:var(--muted);font-size:13px}.ev{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;color:var(--muted)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+</style>
+</head>
+<body>
+<header><h1>rroflow · Sentry for your AI</h1><p>Your devspace: what your coding agents did, where they failed, and what it cost. Every number on this page comes from records you sent.</p></header>
+<main>
+<section class="panel" id="login">
+  <div class="row"><input id="key" type="password" placeholder="Devspace ingest key" size="48" autocomplete="off"><button id="go">Open devspace</button></div>
+  <p class="muted">The key stays in this browser tab only and is sent only to this server.</p>
+  <p id="err" class="critical"></p>
+</section>
+<section id="app" hidden>
+  <div class="panel"><div class="row"><b id="ds"></b><span class="muted" id="updated"></span><button id="refresh">Refresh</button><button id="logout">Forget key</button></div></div>
+  <div class="panel grid" id="stats"></div>
+  <div class="panel"><h2 style="margin-top:0;font-size:16px">Signals</h2><table><thead><tr><th>Signal</th><th>Hits</th><th>Meaning</th></tr></thead><tbody id="signals"></tbody></table></div>
+  <div class="panel"><div class="row"><h2 style="margin:0;font-size:16px">Recent turns</h2><select id="filter"><option value="">All turns</option></select></div>
+  <table><thead><tr><th>When</th><th>Agent · project</th><th>Tools</th><th>Tokens in / out</th><th>Signals</th></tr></thead><tbody id="turns"></tbody></table></div>
+</section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const fmt = (n) => n == null ? "—" : Number(n).toLocaleString();
+  let key = "";
+  try { key = sessionStorage.getItem("rroflow.key") || ""; } catch (_) {}
+
+  async function api(path) {
+    const r = await fetch(path, { headers: { Authorization: "Bearer " + key } });
+    if (r.status === 401) throw new Error("That key does not open a devspace on this server.");
+    if (!r.ok) throw new Error("Server answered " + r.status);
+    return r.json();
+  }
+
+  async function load() {
+    const [sum, list] = await Promise.all([api("/v1/summary"), api("/v1/turns?limit=100" + ($("filter").value ? "&signal=" + encodeURIComponent($("filter").value) : ""))]);
+    const s = sum.summary;
+    $("ds").textContent = "Devspace " + sum.devspace;
+    $("updated").textContent = "loaded " + new Date().toLocaleTimeString();
+    const agents = Object.entries(s.by_agent).map(([a, n]) => `${a} ${n}`).join(" · ") || "none yet";
+    $("stats").innerHTML = [
+      ["Turns", fmt(s.turns), agents],
+      ["Signal hits", fmt(Object.values(s.signals).reduce((a, b) => a + b, 0)), Object.keys(s.signals).length + " kinds"],
+      ["Tool calls", fmt(s.tool_calls), fmt(s.tool_errors) + " failed"],
+      ["Input tokens", fmt(s.input_tokens), fmt(s.cache_read_tokens) + " cache read"],
+      ["Output tokens", fmt(s.output_tokens), s.turns_without_usage ? s.turns_without_usage + " turns unreported" : "all reported"],
+    ].map(([t, v, sub]) => `<div class="stat"><span>${esc(t)}</span><b>${esc(v)}</b><span>${esc(sub)}</span></div>`).join("");
+    const sel = $("filter"), cur = sel.value;
+    sel.innerHTML = '<option value="">All turns</option>' + sum.catalogue.map((c) => `<option value="${esc(c.signal)}">${esc(c.signal)}</option>`).join("");
+    sel.value = cur;
+    $("signals").innerHTML = sum.catalogue.map((c) => `<tr><td>${esc(c.signal)} <span class="muted">v${c.rule_version}</span></td><td><b>${fmt(s.signals[c.signal] || 0)}</b></td><td>${esc(c.meaning)}</td></tr>`).join("");
+    $("turns").innerHTML = list.turns.map((t) => {
+      const errs = t.tools.filter((x) => x.status === "error").length;
+      const chips = t.signals.map((h) => `<span class="chip ${esc(h.severity)}" title="${esc(h.summary)}">${esc(h.signal)}${h.score != null && h.signal === "mood" ? " " + (h.score > 0 ? "+" : "") + h.score : ""}</span>`).join("") || '<span class="muted">none</span>';
+      const ev = t.signals.map((h) => `<div><b>${esc(h.signal)}</b>: ${esc(h.summary)}${h.evidence.filter((e) => e.excerpt).map((e) => `<div class="ev">${esc(e.kind)}: ${esc(e.excerpt)}</div>`).join("")}</div>`).join("");
+      const who = t.prompt_author ? ` <span class="muted">(prompt from ${esc(t.prompt_author)})</span>` : "";
+      return `<tr><td>${esc((t.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(t.agent)} · ${esc(t.project || "—")}${who}<br><span class="muted">${esc(t.model || "")}</span></td><td>${t.tools.length}${errs ? ` <span class="warn">(${errs} failed)</span>` : ""}${t.tools_unfinished ? ` <span class="muted">+${t.tools_unfinished} running</span>` : ""}</td><td>${fmt(t.usage.input_tokens)} / ${fmt(t.usage.output_tokens)}</td><td>${chips}${ev ? `<details><summary>evidence</summary>${ev}</details>` : ""}</td></tr>`;
+    }).join("") || '<tr><td colspan="5" class="muted">No turns yet. Send some with <code>rroflow ingest-claude</code> or <code>rroflow ingest-codex</code>.</td></tr>';
+  }
+
+  async function open() {
+    $("err").textContent = "";
+    try {
+      await load();
+      try { sessionStorage.setItem("rroflow.key", key); } catch (_) {}
+      $("login").hidden = true; $("app").hidden = false;
+    } catch (e) { $("err").textContent = e.message; $("login").hidden = false; $("app").hidden = true; }
+  }
+  $("go").onclick = () => { key = $("key").value.trim(); open(); };
+  $("key").onkeydown = (e) => { if (e.key === "Enter") $("go").click(); };
+  $("refresh").onclick = () => load().catch((e) => ($("err").textContent = e.message));
+  $("filter").onchange = () => load().catch((e) => ($("err").textContent = e.message));
+  $("logout").onclick = () => { try { sessionStorage.removeItem("rroflow.key"); } catch (_) {} key = ""; $("app").hidden = true; $("login").hidden = false; };
+  if (key) open();
+})();
+</script>
+</body>
+</html>
