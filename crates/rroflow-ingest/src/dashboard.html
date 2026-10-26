@@ -9,32 +9,48 @@
 @media (prefers-color-scheme: light){:root{--bg:#f6f8fa;--panel:#fff;--line:#d0d7de;--text:#1f2328;--muted:#59636e;--warn:#9a6700;--crit:#cf222e;--info:#0969da;--ok:#1a7f37}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
 header{padding:20px 16px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:var(--muted)}
+h2{margin:0 0 8px;font-size:16px}h3{margin:16px 0 4px;font-size:14px}
 main{max-width:1100px;margin:0 auto;padding:16px}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px;overflow-x:auto}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
 .stat b{display:block;font-size:24px}.stat span{color:var(--muted);font-size:13px}
+.agent{border:1px solid var(--line);border-radius:8px;padding:12px}.agent b{font-size:16px}
 table{width:100%;border-collapse:collapse}td,th{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-weight:500;font-size:13px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;margin:2px 4px 2px 0;border:1px solid currentColor}
-.warn{color:var(--warn)}.critical{color:var(--crit)}.info{color:var(--info)}.muted{color:var(--muted)}
+.warn{color:var(--warn)}.critical{color:var(--crit)}.info{color:var(--info)}.ok{color:var(--ok)}.muted{color:var(--muted)}
 input,button,select{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}button{cursor:pointer}
+input[type=number]{width:90px}input[type=checkbox]{width:18px;height:18px;padding:0;vertical-align:middle}
 details{margin-top:4px}summary{cursor:pointer;color:var(--muted);font-size:13px}.ev{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;color:var(--muted)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cat{color:var(--muted);font-size:13px;margin:0 0 4px}
+table.sig{table-layout:fixed;min-width:760px}
 </style>
 </head>
 <body>
-<header><h1>rroflow · Sentry for your AI</h1><p>Your devspace: what your coding agents did, where they failed, and what it cost. Every number on this page comes from records you sent.</p></header>
+<header><h1>rroflow · Sentry for your AI</h1><p>Your devspace: what Claude Code and Codex did, where they failed, and what it cost. Every number on this page comes from records you sent.</p></header>
 <main>
 <section class="panel" id="login">
-  <div class="row"><input id="key" type="password" placeholder="Devspace ingest key" size="48" autocomplete="off"><button id="go">Open devspace</button></div>
+  <div class="row"><input id="key" type="password" placeholder="Devspace ingest key" size="48" autocomplete="off" aria-label="Devspace ingest key"><button id="go">Open devspace</button></div>
   <p class="muted">The key stays in this browser tab only and is sent only to this server.</p>
   <p id="err" class="critical"></p>
 </section>
 <section id="app" hidden>
-  <div class="panel"><div class="row"><b id="ds"></b><span class="muted" id="updated"></span><button id="refresh">Refresh</button><button id="logout">Forget key</button></div></div>
+  <div class="panel"><div class="row"><b id="ds"></b><span class="muted" id="updated"></span><button id="refresh">Refresh</button><button id="logout">Forget key</button></div><p id="apperr" class="critical"></p></div>
+  <div class="panel"><h2>Agents</h2><div class="grid" id="agents"></div></div>
   <div class="panel grid" id="stats"></div>
-  <div class="panel"><h2 style="margin-top:0;font-size:16px">Signals</h2><table><thead><tr><th>Signal</th><th>Hits</th><th>Meaning</th></tr></thead><tbody id="signals"></tbody></table></div>
-  <div class="panel"><div class="row"><h2 style="margin:0;font-size:16px">Recent turns</h2><select id="filter"><option value="">All turns</option></select></div>
-  <table><thead><tr><th>When</th><th>Agent · project</th><th>Tools</th><th>Tokens in / out</th><th>Signals</th></tr></thead><tbody id="turns"></tbody></table></div>
+  <div class="panel"><h2>Signals</h2><div id="signals"></div></div>
+  <div class="panel">
+    <details id="settingsBox"><summary style="font-size:15px;color:var(--text)">Signal settings for this devspace</summary>
+      <p class="muted">Collectors read these before they evaluate, so a change applies to turns sent from now on.</p>
+      <div id="settings"></div>
+      <div class="row" style="margin-top:12px"><button id="save">Save settings</button><span id="saved" class="muted"></span></div>
+    </details>
+  </div>
+  <div class="panel"><div class="row"><h2 style="margin:0">Recent turns</h2>
+    <select id="agentFilter" aria-label="Agent"><option value="">All agents</option></select>
+    <select id="filter" aria-label="Signal"><option value="">All turns</option></select></div>
+  <table><thead><tr><th>When</th><th>Agent · project</th><th class="n">Tools</th><th class="n">Tokens in / out</th><th>Signals</th></tr></thead><tbody id="turns"></tbody></table></div>
 </section>
 </main>
 <script>
@@ -42,40 +58,100 @@ details{margin-top:4px}summary{cursor:pointer;color:var(--muted);font-size:13px}
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const fmt = (n) => n == null ? "—" : Number(n).toLocaleString();
-  let key = "";
+  // Display names for the agents rroflow collects from; other agents show their id.
+  const AGENTS = { "claude-code": "Claude Code", "codex": "Codex" };
+  const agentName = (a) => AGENTS[a] || a;
+  const plural = (n, word) => fmt(n) + " " + word + (n === 1 ? "" : "s");
+  let key = "", catalogue = null, settings = { disabled: [], options: {} };
   try { key = sessionStorage.getItem("rroflow.key") || ""; } catch (_) {}
 
-  async function api(path) {
-    const r = await fetch(path, { headers: { Authorization: "Bearer " + key } });
+  async function api(path, init) {
+    const r = await fetch(path, Object.assign({ headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" } }, init || {}));
     if (r.status === 401) throw new Error("That key does not open a devspace on this server.");
-    if (!r.ok) throw new Error("Server answered " + r.status);
-    return r.json();
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ("Server answered " + r.status));
+    return body;
+  }
+
+  function turnsQuery() {
+    const q = new URLSearchParams({ limit: "100" });
+    if ($("agentFilter").value) q.set("agent", $("agentFilter").value);
+    if ($("filter").value) q.set("signal", $("filter").value);
+    return "/v1/turns?" + q;
+  }
+
+  function renderSignals(s, agents) {
+    const off = new Set(settings.disabled);
+    const head = `<tr><th style="width:200px">Signal</th>${agents.map((a) => `<th class="n" style="width:110px">${esc(agentName(a))}</th>`).join("")}<th class="n" style="width:70px">Total</th><th style="width:70px">Status</th><th>Meaning</th></tr>`;
+    $("signals").innerHTML = catalogue.categories.map((c) => {
+      const rows = c.signals.map((id) => {
+        const spec = catalogue.signals.find((x) => x.id === id);
+        const per = agents.map((a) => `<td class="n">${fmt((s.signals_by_agent[a] || {})[id] || 0)}</td>`).join("");
+        return `<tr><td>${esc(id)} <span class="muted">v${spec.version}</span></td>${per}<td class="n"><b>${fmt(s.signals[id] || 0)}</b></td><td>${off.has(id) ? '<span class="muted">off</span>' : '<span class="ok">on</span>'}</td><td>${esc(spec.meaning)}</td></tr>`;
+      }).join("");
+      return `<h3>${esc(c.label)}</h3><p class="cat">${esc(c.meaning)}</p><table class="sig"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+    }).join("");
+  }
+
+  function renderSettings() {
+    const off = new Set(settings.disabled);
+    $("settings").innerHTML = catalogue.categories.map((c) => `<h3>${esc(c.label)}</h3>` + c.signals.map((id) => {
+      const spec = catalogue.signals.find((x) => x.id === id);
+      const opts = spec.options.map((o) => {
+        const v = ((settings.options || {})[id] || {})[o.name] ?? o.default;
+        return `<label class="row muted" style="margin:4px 0 0 26px">${esc(o.name)} <input type="number" data-signal="${esc(id)}" data-option="${esc(o.name)}" min="${o.min}" max="${o.max}" step="1" value="${v}"> <span>${esc(o.meaning)} (${o.min}–${o.max}, default ${o.default})</span></label>`;
+      }).join("");
+      return `<div style="margin:6px 0"><label class="row"><input type="checkbox" data-toggle="${esc(id)}" ${off.has(id) ? "" : "checked"}> <b>${esc(id)}</b> <span class="muted">${esc(spec.meaning)}</span></label>${opts}</div>`;
+    }).join("")).join("");
+  }
+
+  function collectSettings() {
+    const disabled = [], options = {};
+    document.querySelectorAll("[data-toggle]").forEach((el) => { if (!el.checked) disabled.push(el.dataset.toggle); });
+    document.querySelectorAll("[data-option]").forEach((el) => {
+      const spec = catalogue.signals.find((x) => x.id === el.dataset.signal);
+      const o = spec.options.find((x) => x.name === el.dataset.option);
+      const v = Number(el.value);
+      if (v !== o.default) (options[el.dataset.signal] ||= {})[el.dataset.option] = v;
+    });
+    return { disabled, options };
   }
 
   async function load() {
-    const [sum, list] = await Promise.all([api("/v1/summary"), api("/v1/turns?limit=100" + ($("filter").value ? "&signal=" + encodeURIComponent($("filter").value) : ""))]);
+    $("apperr").textContent = "";
+    const [sum, list] = await Promise.all([api("/v1/summary"), api(turnsQuery())]);
     const s = sum.summary;
+    catalogue = sum.catalogue;
+    settings = sum.settings || settings;
     $("ds").textContent = "Devspace " + sum.devspace;
     $("updated").textContent = "loaded " + new Date().toLocaleTimeString();
-    const agents = Object.entries(s.by_agent).map(([a, n]) => `${a} ${n}`).join(" · ") || "none yet";
+    const agents = Array.from(new Set(Object.keys(AGENTS).concat(Object.keys(s.by_agent))));
+    $("agents").innerHTML = agents.map((a) => {
+      const hits = Object.values(s.signals_by_agent[a] || {}).reduce((x, y) => x + y, 0);
+      return `<div class="agent"><b>${esc(agentName(a))}</b><div class="muted">${plural(s.by_agent[a] || 0, "turn")} · ${plural(hits, "signal hit")}</div>${s.by_agent[a] ? "" : '<div class="muted">Nothing sent yet: <code>rroflow ingest-' + (a === "codex" ? "codex" : "claude") + "</code></div>"}</div>`;
+    }).join("");
     $("stats").innerHTML = [
-      ["Turns", fmt(s.turns), agents],
+      ["Turns", fmt(s.turns), Object.keys(s.by_project).length + " projects"],
       ["Signal hits", fmt(Object.values(s.signals).reduce((a, b) => a + b, 0)), Object.keys(s.signals).length + " kinds"],
       ["Tool calls", fmt(s.tool_calls), fmt(s.tool_errors) + " failed"],
       ["Input tokens", fmt(s.input_tokens), fmt(s.cache_read_tokens) + " cache read"],
       ["Output tokens", fmt(s.output_tokens), s.turns_without_usage ? s.turns_without_usage + " turns unreported" : "all reported"],
     ].map(([t, v, sub]) => `<div class="stat"><span>${esc(t)}</span><b>${esc(v)}</b><span>${esc(sub)}</span></div>`).join("");
+    renderSignals(s, agents);
+    if (!$("settingsBox").open) renderSettings();
     const sel = $("filter"), cur = sel.value;
-    sel.innerHTML = '<option value="">All turns</option>' + sum.catalogue.map((c) => `<option value="${esc(c.signal)}">${esc(c.signal)}</option>`).join("");
+    sel.innerHTML = '<option value="">All turns</option>' + catalogue.categories.map((c) => `<optgroup label="${esc(c.label)}">` + c.signals.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join("") + "</optgroup>").join("");
     sel.value = cur;
-    $("signals").innerHTML = sum.catalogue.map((c) => `<tr><td>${esc(c.signal)} <span class="muted">v${c.rule_version}</span></td><td><b>${fmt(s.signals[c.signal] || 0)}</b></td><td>${esc(c.meaning)}</td></tr>`).join("");
+    const asel = $("agentFilter"), acur = asel.value;
+    asel.innerHTML = '<option value="">All agents</option>' + agents.map((a) => `<option value="${esc(a)}">${esc(agentName(a))}</option>`).join("");
+    asel.value = acur;
     $("turns").innerHTML = list.turns.map((t) => {
       const errs = t.tools.filter((x) => x.status === "error").length;
       const chips = t.signals.map((h) => `<span class="chip ${esc(h.severity)}" title="${esc(h.summary)}">${esc(h.signal)}${h.score != null && h.signal === "mood" ? " " + (h.score > 0 ? "+" : "") + h.score : ""}</span>`).join("") || '<span class="muted">none</span>';
       const ev = t.signals.map((h) => `<div><b>${esc(h.signal)}</b>: ${esc(h.summary)}${h.evidence.filter((e) => e.excerpt).map((e) => `<div class="ev">${esc(e.kind)}: ${esc(e.excerpt)}</div>`).join("")}</div>`).join("");
       const who = t.prompt_author ? ` <span class="muted">(prompt from ${esc(t.prompt_author)})</span>` : "";
-      return `<tr><td>${esc((t.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(t.agent)} · ${esc(t.project || "—")}${who}<br><span class="muted">${esc(t.model || "")}</span></td><td>${t.tools.length}${errs ? ` <span class="warn">(${errs} failed)</span>` : ""}${t.tools_unfinished ? ` <span class="muted">+${t.tools_unfinished} running</span>` : ""}</td><td>${fmt(t.usage.input_tokens)} / ${fmt(t.usage.output_tokens)}</td><td>${chips}${ev ? `<details><summary>evidence</summary>${ev}</details>` : ""}</td></tr>`;
-    }).join("") || '<tr><td colspan="5" class="muted">No turns yet. Send some with <code>rroflow ingest-claude</code> or <code>rroflow ingest-codex</code>.</td></tr>';
+      return `<tr><td>${esc((t.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(agentName(t.agent))} · ${esc(t.project || "—")}${who}<br><span class="muted">${esc(t.model || "")}</span></td><td class="n">${t.tools.length}${errs ? ` <span class="warn">(${errs} failed)</span>` : ""}${t.tools_unfinished ? ` <span class="muted">+${t.tools_unfinished} running</span>` : ""}</td><td class="n">${fmt(t.usage.input_tokens)} / ${fmt(t.usage.output_tokens)}</td><td>${chips}${ev ? `<details><summary>evidence</summary>${ev}</details>` : ""}</td></tr>`;
+    }).join("") || '<tr><td colspan="5" class="muted">No turns match. Send some with <code>rroflow ingest-claude</code> or <code>rroflow ingest-codex</code>.</td></tr>';
   }
 
   async function open() {
@@ -86,10 +162,22 @@ details{margin-top:4px}summary{cursor:pointer;color:var(--muted);font-size:13px}
       $("login").hidden = true; $("app").hidden = false;
     } catch (e) { $("err").textContent = e.message; $("login").hidden = false; $("app").hidden = true; }
   }
+  const reload = () => load().catch((e) => ($("apperr").textContent = e.message));
   $("go").onclick = () => { key = $("key").value.trim(); open(); };
   $("key").onkeydown = (e) => { if (e.key === "Enter") $("go").click(); };
-  $("refresh").onclick = () => load().catch((e) => ($("err").textContent = e.message));
-  $("filter").onchange = () => load().catch((e) => ($("err").textContent = e.message));
+  $("refresh").onclick = reload;
+  $("filter").onchange = reload;
+  $("agentFilter").onchange = reload;
+  $("save").onclick = async () => {
+    $("saved").textContent = "";
+    try {
+      const r = await api("/v1/signals/settings", { method: "PUT", body: JSON.stringify(collectSettings()) });
+      settings = r.settings;
+      $("saved").textContent = "Saved. Collectors use these from their next send.";
+      $("settingsBox").open = false;
+      await load();
+    } catch (e) { $("saved").textContent = e.message; }
+  };
   $("logout").onclick = () => { try { sessionStorage.removeItem("rroflow.key"); } catch (_) {} key = ""; $("app").hidden = true; $("login").hidden = false; };
   if (key) open();
 })();

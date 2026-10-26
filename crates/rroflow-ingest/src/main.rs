@@ -4,7 +4,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use rand::RngCore;
-use rroflow_ingest::{AppState, Config, JsonlStore, hash_key, router};
+use rroflow_ingest::{AppState, Config, Store, hash_key, router};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -19,9 +19,12 @@ struct Cli {
 enum Cmd {
     /// Serve the ingest API.
     Serve {
-        /// TOML config (listen, data_dir, max_batch, max_body_bytes, [[devspace]]).
+        /// TOML config (listen, database_url or data_dir, max_batch, max_body_bytes, [[devspace]]).
         #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
         config: PathBuf,
+        /// Postgres URL; overrides `database_url` in the config.
+        #[arg(long, env = "RROFLOW_DATABASE_URL", hide_env_values = true)]
+        database_url: Option<String>,
     },
     /// Mint a new ingest key for a devspace. The key is printed once; store it in the
     /// user's secret store and put only the printed hash in the config.
@@ -44,24 +47,33 @@ async fn main() -> anyhow::Result<()> {
                 hash_key(&key)
             );
         }
-        Cmd::Serve { config } => {
+        Cmd::Serve {
+            config,
+            database_url,
+        } => {
             let text = std::fs::read_to_string(&config)
                 .with_context(|| format!("read {}", config.display()))?;
-            let cfg: Config = toml::from_str(&text).context("parse config")?;
+            let mut cfg: Config = toml::from_str(&text).context("parse config")?;
+            if database_url.is_some() {
+                cfg.database_url = database_url;
+            }
             anyhow::ensure!(
                 !cfg.devspace.is_empty(),
                 "config has no [[devspace]] entries"
             );
-            let store = Arc::new(JsonlStore::open(cfg.data_dir.clone())?);
-            let app = router(AppState::new(&cfg, store)?, cfg.max_body_bytes);
+            let store = cfg.open_store().await.context("open store")?;
+            let where_ = match &store {
+                Store::Postgres(_) => "postgres".to_string(),
+                Store::Jsonl(_) => format!("jsonl in {}", cfg.data_dir.display()),
+            };
+            let app = router(AppState::new(&cfg, Arc::new(store))?, cfg.max_body_bytes);
             let listener = tokio::net::TcpListener::bind(&cfg.listen)
                 .await
                 .with_context(|| format!("bind {}", cfg.listen))?;
             eprintln!(
-                "rroflow-ingest listening on {} ({} devspace(s), data in {})",
+                "rroflow-ingest listening on {} ({} devspace(s), store: {where_})",
                 cfg.listen,
-                cfg.devspace.len(),
-                cfg.data_dir.display()
+                cfg.devspace.len()
             );
             axum::serve(listener, app)
                 .with_graceful_shutdown(async {

@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Build and install rroflow-ingest as a hardened systemd service on a Debian host.
-# Approved 2026-10-26 for tx-infra-prod (rl07): localhost only, data in /var/lib/rroflow.
-# Keys are minted on the host and never printed; only their SHA-256 hashes enter the config.
+# Build and install rroflow-ingest as a hardened systemd service on a Debian host, with its
+# data in the host's Postgres. Approved 2026-10-26 for tx-infra-prod (rl07): localhost only.
+#
+# - Postgres: Debian's package, listening on localhost only (Debian default). The service runs
+#   as the system user `rroflow` and reaches the database `rroflow` over the Unix socket with
+#   peer authentication, so no database password exists anywhere.
+# - Keys are minted on the host and never printed; only their SHA-256 hashes enter the config.
+# - Re-running is safe: users, roles, database, keys and data are kept; the binary is rebuilt.
 set -euo pipefail
 
 REV="${REV:?commit to build}"
@@ -16,7 +21,15 @@ export DEBIAN_FRONTEND=noninteractive
 # exits non-zero although the Debian repos refreshed. Keep going and let the install fail loudly
 # if the packages are really unavailable. Repository configuration is left as it is.
 apt-get update -qq || echo "apt-get update reported errors (see above); continuing with the repos that refreshed"
-apt-get install -y -qq build-essential pkg-config curl ca-certificates >/dev/null
+apt-get install -y -qq build-essential pkg-config curl ca-certificates postgresql >/dev/null
+
+echo "== postgres: role and database rroflow (peer auth over the Unix socket)"
+systemctl enable --now postgresql
+id -u rroflow >/dev/null 2>&1 || useradd --system --home-dir /var/lib/rroflow --no-create-home --shell /usr/sbin/nologin rroflow
+pg() { runuser -u postgres -- psql -v ON_ERROR_STOP=1 -qAt "$@"; }
+[ "$(pg -c "SELECT 1 FROM pg_roles WHERE rolname = 'rroflow'")" = 1 ] || pg -c "CREATE ROLE rroflow LOGIN"
+[ "$(pg -c "SELECT 1 FROM pg_database WHERE datname = 'rroflow'")" = 1 ] || pg -c "CREATE DATABASE rroflow OWNER rroflow"
+pg -c "SHOW listen_addresses"
 
 echo "== rust toolchain in $ROOT/rust"
 mkdir -p "$ROOT/rust"
@@ -50,7 +63,8 @@ mint() { # mint <devspace>: writes the key to /etc/rroflow/keys/<devspace>.key, 
 [ -s /etc/rroflow/keys/selftest.key ] || mint selftest > /etc/rroflow/keys/selftest.sha256
 cat > /etc/rroflow/ingest.toml <<EOF
 listen = "$LISTEN"
-data_dir = "/var/lib/rroflow"
+database_url = "postgres:///rroflow?host=/run/postgresql&user=rroflow"
+db_max_connections = 10
 max_batch = 500
 max_body_bytes = 16777216
 
@@ -68,12 +82,14 @@ echo "== systemd unit"
 cat > /etc/systemd/system/rroflow-ingest.service <<'EOF'
 [Unit]
 Description=rroflow.ai ingest (devspace turns and signals)
-After=network-online.target
+After=network-online.target postgresql.service
 Wants=network-online.target
+Requires=postgresql.service
 
 [Service]
 ExecStart=/usr/local/bin/rroflow-ingest serve --config /etc/rroflow/ingest.toml
-DynamicUser=yes
+User=rroflow
+Group=rroflow
 StateDirectory=rroflow
 Restart=on-failure
 RestartSec=2
@@ -111,13 +127,16 @@ echo "== self-test (selftest devspace; keys not printed)"
 base="http://$LISTEN"
 curl -sSf "$base/healthz"; echo
 curl -sSf -o /dev/null -w 'dashboard %{http_code}\n' "$base/"
+curl -sSf "$base/v1/signals" | head -c 160; echo
 st=$(cat /etc/rroflow/keys/selftest.key)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 curl -sSf -H "Authorization: Bearer $st" -H 'content-type: application/json' "$base/v1/turns" -d @- <<EOF
 {"turns":[{"schema":"rroflow.turn/v1","event_id":"selftest-$REV","agent":"selftest","agent_version":"0","provider":"none","model":null,"session_id":"selftest","turn_key":"deploy","subagent":null,"prompt_author":null,"started_at":"$now","ended_at":"$now","cwd":"/","git_branch":"","project":"deploy","usage":{"input_tokens":null,"output_tokens":null,"cache_read_tokens":null,"cache_write_tokens":null,"input_includes_cache":false},"termination":"completed","compacted":false,"tools":[],"tools_unfinished":0,"content":null,"signals":[],"collector":"deploy.sh"}]}
 EOF
 echo
-curl -sSf -H "Authorization: Bearer $st" "$base/v1/summary" | head -c 300; echo
+curl -sSf -H "Authorization: Bearer $st" "$base/v1/signals/settings"; echo
+curl -sSf -H "Authorization: Bearer $st" "$base/v1/summary" | sed 's/"catalogue".*//' | head -c 300; echo
+runuser -u postgres -- psql -qAt -d rroflow -c "SELECT devspace_id, count(*) FROM turns GROUP BY 1"
 curl -s -o /dev/null -w 'wrong key -> %{http_code}\n' -H 'Authorization: Bearer nope' "$base/v1/summary"
-ss -ltnp | grep 8787 || true
+ss -ltnp | grep -E ":(${LISTEN##*:}|5432)\b" || true
 echo "== done"

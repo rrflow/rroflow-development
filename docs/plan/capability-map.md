@@ -26,7 +26,9 @@ Sources:
 
 | Capability | Raindrop | Sentry | rroflow.ai | Status |
 |---|---|---|---|---|
-| Detect behaviour | signals (topic/regex/instrumented/code); 8 presets | errors and tool errors per tool | **behaviour signals v0**, deterministic with evidence: blocked handoff, tool-error streak, usage-limit hit, false done, aborted turn, context loss, correction spiral, mood (both directions) | built |
+| Detect behaviour | signals (topic/regex/instrumented/code); 8 presets | errors and tool errors per tool | **behaviour signals v0**, deterministic with evidence: blocked handoff, tool-error streak, usage-limit hit, false done, aborted turn, context loss, correction spiral, mood (both directions); grouped as Failure, Friction, Cost, Context; public catalogue `GET /v1/signals` | built |
+| Signal settings | signal settings per project (plan-gated) | alert rules | per-devspace on/off and thresholds (`/v1/signals/settings`), read by collectors before evaluating, edited in the dashboard | built |
+| Compare agents | — | per-model views | Claude Code and Codex side by side: turns, hits per signal per agent, agent filter | built |
 | Evidence | "Why Triage thinks this is a match" + confidence | trace view | every hit names the tool spans and text that matched, and the rule version | built |
 | Author a signal in words | Triage agent writes rules + JS classifier | — | tier 3 judge mints a candidate rule from a description | planned (5) |
 | Group into issues | Issues (unlock at 100 events), Stumbles | issue grouping | signals grouped per session and project | planned (4) |
@@ -54,6 +56,7 @@ Sources:
 
 | Capability | Raindrop | Sentry | rroflow.ai | Status |
 |---|---|---|---|---|
-| Tenancy | org → projects (unclaimed slugs hidden) | org → projects | **devspace** (the user's Shippin.cloud space) → projects; the ingest key decides the devspace, so a client cannot write elsewhere | built |
-| Hosting | SaaS | SaaS | rroflow.ai ingest on Shippin.cloud; local-first collector works without it | built (service, verified locally); Shippin.cloud deploy planned |
+| Tenancy | org → projects (unclaimed slugs hidden) | org → projects | **devspace** owned by the user's Nomen account, attachable to their Shippin.cloud tenant → projects; the credential decides the devspace, so a client cannot write elsewhere | built (keys); Nomen sign-in planned |
+| Store | SaaS | SaaS | Postgres (devspaces, turns, signal hits, settings) with embedded migrations; JSONL for single-user local runs | built |
+| Hosting | SaaS | SaaS | rroflow.ai ingest on tx-infra-prod with Postgres; local-first collector works without it | built (verified locally on Postgres); host deploy pending the root run |
 | MCP monitoring | — | MCP server tools, resources, errors | MCP tool calls appear as tool spans in the turn (`mcp__*` names) | built (as tool spans) |

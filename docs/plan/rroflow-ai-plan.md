@@ -133,7 +133,7 @@ capture ─▶ signals ─▶ evidence ─▶ labels ─▶ candidates ─▶ he
 - **Collector:** this crate, split into `rroflow-core` (event model, pricing, redaction), `rroflow-collect` (Claude and Codex parsers) and sinks (`rroflow-raindrop`, local store).
 - **Public site:** same pattern as the decided rrflow.ai site (Astro static + islands, plus a Rust gateway that is the only data client; source chip on every live panel; planned states labelled, never sample data). Explainers rendered with Remotion. Lives in `site/` in this repo (repo scope already decided: outward lab + site).
 - **Hosted track runs on Shippin.cloud.** `api.rroflow.ai` ingest and the hosted dashboard are deployed as Shippin.cloud services. Accounts and plans come from shippin.ai, and auth from the shared IdP. Endpoints are configuration, nothing hardcoded.
-- **Store:** open, see D-4.
+- **Store:** hosted ingest on Postgres (D-4); the on-machine store is still open. Identity and devspaces: [identity-and-devspaces.md](identity-and-devspaces.md).
 
 ## 8. Build order (one PR each; each builds on the last)
 
@@ -156,8 +156,9 @@ Hosted track, in parallel from increment 2 on the same event model:
 - **D-1 Positioning — answered 2026-10-25:** *RRFlow (rrflow.ai) is the reasoning engine; RROFLOW (rroflow.ai) is Sentry for AI and holds the learning vision, powered by Shippin.cloud / shippin.ai.* rroflow.ai leads with capture, signals, spend and learning, and links to rrflow.ai for the engine. This replaces the May 2026 "RRO sold to enterprise" headline. Not canon until saved as an ADR.
 - **D-2 Order of surfaces — answered 2026-10-25: both in parallel.** The local-first collector and dashboard, and hosted rroflow.ai accounts with cloud ingest, are built as two tracks on one event model. Not canon until saved as an ADR. Consequence: the event model (increment 2) is the shared contract, and hosted ingest must honour the DevPulse laws: no provider keys held; content opt-in and scrubbed before upload.
 - **D-3 Site — answered 2026-10-25:** `site/` in this repo, using Astro static with islands, a Rust gateway as the only data client, and Remotion explainers. This is the same pattern as the rrflow.ai site. Not canon until saved as an ADR.
-- **D-4 Local store.** Parquet + DataFusion (devpulselabs, 2026-08) vs Turso vs RRFlow when ready. The live repos disagree.
+- **D-4 Store — hosted answered 2026-10-26: Postgres on tx-infra-prod.** The rroflow.ai ingest keeps devspaces, turns, signal hits and signal settings in Postgres (schema in `crates/rroflow-ingest/migrations/`). The on-machine store stays open: Parquet + DataFusion (devpulselabs, 2026-08) vs Turso vs RRFlow when ready. Not canon until saved as an ADR.
 - **D-5 Term.** "Behaviour signal" for the learned classifier, because "signal" is already H-05 telemetry in RRFlow.
+- **D-6 Devspace identity — answered 2026-10-26:** a devspace is owned by the user's Nomen account (issuer + `sub`), the identity shared by all Shippin services. If the user grows into Shippin.cloud, the devspace is attached to their Shippin tenant; the data does not move. Not canon until saved as an ADR.
 
 ## 10. Sources
 

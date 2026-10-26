@@ -4,7 +4,7 @@
 use crate::otlp::event_id;
 use crate::redact::{Redactor, truncate};
 use crate::transcript::Turn;
-use rroflow_core::signals::evaluate_session;
+use rroflow_core::signals::{SignalConfig, evaluate_session_with};
 use rroflow_core::{Content, SCHEMA, Termination, ToolRecord, ToolStatus, TurnRecord, Usage};
 
 /// Longest prompt or response text kept in a record.
@@ -91,9 +91,10 @@ pub(crate) fn records(
     project: Option<&str>,
     content: bool,
     r: &Redactor,
+    signals: &SignalConfig,
 ) -> Vec<TurnRecord> {
     let mut recs: Vec<TurnRecord> = turns.iter().map(|t| to_record(t, project, r)).collect();
-    evaluate_session(&mut recs);
+    evaluate_session_with(&mut recs, signals);
     if !content {
         for rec in &mut recs {
             rec.strip_content();
@@ -144,7 +145,13 @@ mod tests {
 
     #[test]
     fn signals_survive_without_content_and_secrets_never_appear() {
-        let recs = records(&[turn()], Some("shippinai"), false, &Redactor::new());
+        let recs = records(
+            &[turn()],
+            Some("shippinai"),
+            false,
+            &Redactor::new(),
+            &SignalConfig::default(),
+        );
         let r = &recs[0];
         assert!(r.content.is_none());
         assert!(r.signals.iter().any(|s| s.signal == "blocked_handoff"));
@@ -162,7 +169,13 @@ mod tests {
 
     #[test]
     fn content_opt_in_keeps_redacted_text() {
-        let recs = records(&[turn()], None, true, &Redactor::new());
+        let recs = records(
+            &[turn()],
+            None,
+            true,
+            &Redactor::new(),
+            &SignalConfig::default(),
+        );
         let c = recs[0].content.as_ref().unwrap();
         assert!(c.input.contains("[REDACTED]") && !c.input.contains("sk-ABCDEF"));
     }
