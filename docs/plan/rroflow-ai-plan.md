@@ -109,7 +109,7 @@ The pipeline: Capture → Signals (rules) → Evidence → Label → Candidate �
 
 ## 8. Build order (one PR each; each builds on the last)
 
-0. **Repo ready.** Merge #1 and #2; checkout at `D:\projects\rroflow.ai`; workspace layout from section 7; CI unchanged (fmt, clippy, tests).
+0. **Repo ready.** #1 and #2 merged 2026-10-25; checkout at `D:\projects\rroflow.ai`; workspace layout from section 7; CI unchanged (fmt, clippy, tests).
 1. **Positioning page.** `site/` skeleton on Astro with the hero "Sentry for your AI", how it works, the learning loop marked "being built", and a waitlist. Deployed to rroflow.ai.
 2. **Event model + pricing.** `rroflow-core` with the AiEvent-aligned event, cache tokens split, `pricing.v1`, census test. Ingest moves onto it; the Raindrop sink stays byte-compatible.
 3. **`connect` + hooks.** Claude Code `Stop` hook and the Codex equivalent; key reference in keychain or Infisical; project create/claim. Per-turn capture, so compaction no longer loses data.
@@ -118,12 +118,15 @@ The pipeline: Capture → Signals (rules) → Evidence → Label → Candidate �
 6. **Spend and limits view.** Per agent, project and day; Codex plan windows.
 7. **Unsupervised:** failure clustering that proposes candidate signals.
 8. **Live demo on rroflow.ai** from the public demo dataset through the gateway.
-9. **Hosted ingest** (if D-2 says so).
+Hosted track, in parallel from increment 2 on the same event model:
+- **H1.** rroflow.ai accounts and project keys; `api.rroflow.ai` ingest accepting the event model (OTLP + events), deduplicated by `event_id`, with the finished-span rule enforced server-side.
+- **H2.** Hosted dashboard: signals, evidence cards, spend and limits. It reuses the local dashboard's components.
+- **H3.** Sync: the local collector uploads opt-in, redacted projections; content stays local unless enabled.
 
 ## 9. Decisions (one per pass)
 
 - **D-1 Positioning statement.** "rroflow.ai — Sentry for your AI." This replaces the May 2026 "RRO sold to enterprise" framing for the public site. RRO-as-substrate can remain the enterprise tier.
-- **D-2 Order of surfaces.** Local-first collector + local dashboard before hosted cloud ingest, or hosted first, like Raindrop. The DevPulse laws (subscription-only; "never hold a key"; local-first as a trust property) favour local first.
+- **D-2 Order of surfaces — answered 2026-10-25: both in parallel.** The local-first collector and dashboard, and hosted rroflow.ai accounts with cloud ingest, are built as two tracks on one event model. Not canon until saved as an ADR. Consequence: the event model (increment 2) is the shared contract, and hosted ingest must honour the DevPulse laws: no provider keys held; content opt-in and scrubbed before upload.
 - **D-3 Site stack.** Reuse the rrflow.ai decision (Astro + Rust gateway, Remotion explainers) in `site/` of this repo, or a separate `rrflow/rroflow-site` repo.
 - **D-4 Local store.** Parquet + DataFusion (devpulselabs, 2026-08) vs Turso vs RRFlow when ready. The live repos disagree.
 - **D-5 Term.** "Behaviour signal" for the learned classifier, because "signal" is already H-05 telemetry in RRFlow.
