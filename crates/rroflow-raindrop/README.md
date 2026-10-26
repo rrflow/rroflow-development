@@ -1,6 +1,6 @@
 # rroflow-raindrop
 
-Sends real agent runs to Raindrop, so its classifiers and RROFLOW's work on the same traffic.
+Sends real coding-agent runs (Claude Code and Codex CLI) to Raindrop, so its classifiers and RROFLOW's work on the same traffic.
 
 `ingest-claude` reads Claude Code session transcripts (`~/.claude/projects/**/*.jsonl`) and sends:
 
@@ -9,6 +9,26 @@ Sends real agent runs to Raindrop, so its classifiers and RROFLOW's work on the 
 - one tool span per tool call, with name, duration and status. A failed call is an ERROR span and shows up as the event's tool error.
 
 Ids are derived from the transcript (session, agent and prompt ids), so running it twice does not duplicate events.
+
+## Codex CLI: `ingest-codex`
+
+`ingest-codex` reads Codex CLI session rollouts from `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (on Windows, `%USERPROFILE%\.codex\sessions`). Older rollouts that Codex has compressed to `.jsonl.zst` are decompressed in-process. It sends the same shapes as Claude Code: event `codex.turn`, one LLM span, and one span per finished tool call. It takes the same flags and environment variables.
+
+```bash
+infisical run --env dev -- rroflow-raindrop ingest-codex ~/.codex/sessions --project shippinai --workspace shippinai --payloads
+```
+
+Both agents stamp `properties.agent` (`claude-code` or `codex`) and `properties.agent_version`, so one Raindrop project can hold both and a signal can be filtered by agent. Claude Code events also keep `claude_code_version`.
+
+How the rollout is read is pinned to the format in `openai/codex` at `970111f` (2026-10-23):
+- Turns are bounded by `task_started` / `task_complete`. Older rollouts have no task events, so a new prompt after an answer opens a new turn.
+- The prompt comes from `user_message` (legacy history) or `item_completed` → `UserMessage` (paginated history). Injected `<environment_context>`, `<user_instructions>` and AGENTS.md blocks are never taken as the prompt.
+- Tools are `function_call`, `custom_tool_call`, `local_shell_call` and `web_search_call`, paired with their outputs by `call_id`.
+- Codex stores no success flag. A tool call counts as failed when its output reports a non-zero `Exit code:` or `metadata.exit_code`.
+- The model comes from `turn_context`. Tokens are summed from `token_count.last_token_usage`; OpenAI's `input_tokens` already include cached input.
+- Unknown record types are skipped, so a newer Codex loses fields instead of failing.
+
+Not yet validated on a real rollout: it is tested on synthetic lines built from Codex's source and its own test fixtures. Before relying on it, run `--dry-run --dump out.jsonl` on your sessions and check the output.
 
 ## Deploy in any project (shippinAI, rrflow, rroflow, clyffy)
 

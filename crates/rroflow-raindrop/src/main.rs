@@ -1,8 +1,8 @@
 //! rroflow-raindrop: send real agent runs to Raindrop.
 //!
-//! `ingest-claude` turns Claude Code session transcripts (JSONL) into Raindrop
-//! events (one per user turn) plus OTLP spans (one LLM span per turn, one tool
-//! span per tool call). Event and span ids are derived from transcript ids, so
+//! `ingest-claude` (Claude Code) and `ingest-codex` (Codex CLI) turn coding-agent
+//! session transcripts into Raindrop events (one per user turn) plus OTLP spans
+//! (one LLM span per turn, one tool span per finished tool call). Event and span ids are derived from transcript ids, so
 //! re-ingesting a transcript is idempotent on Raindrop's side.
 //!
 //! Configuration is environment-first so every project deploys it the same way:
@@ -17,6 +17,7 @@
 //!   RAINDROP_QUERY_URL   base URL (default: https://query.raindrop.ai/v1)
 
 mod api;
+mod codex;
 mod doctor;
 mod otlp;
 mod redact;
@@ -37,31 +38,36 @@ struct Cli {
     cmd: Cmd,
 }
 
+#[derive(clap::Args)]
+struct IngestArgs {
+    paths: Vec<PathBuf>,
+    #[arg(long, env = "RAINDROP_PROJECT", default_value = "default")]
+    project: String,
+    #[arg(long, env = "RAINDROP_USER_ID", default_value = "operator")]
+    user: String,
+    /// Free-form tag stored as properties.workspace (e.g. shippinai, rrflow, clyffy).
+    #[arg(long, env = "RROFLOW_WORKSPACE")]
+    workspace: Option<String>,
+    /// Include (redacted, truncated) tool inputs and outputs on spans.
+    #[arg(long)]
+    payloads: bool,
+    /// Parse and print a summary; send nothing.
+    #[arg(long)]
+    dry_run: bool,
+    /// Write the exact payloads that would be sent to this JSONL file.
+    #[arg(long)]
+    dump: Option<PathBuf>,
+    /// Only turns at or after this RFC 3339 timestamp.
+    #[arg(long)]
+    since: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
-    /// Ingest Claude Code transcripts (.jsonl files or directories of them).
-    IngestClaude {
-        paths: Vec<PathBuf>,
-        #[arg(long, env = "RAINDROP_PROJECT", default_value = "default")]
-        project: String,
-        #[arg(long, env = "RAINDROP_USER_ID", default_value = "operator")]
-        user: String,
-        /// Free-form tag stored as properties.workspace (e.g. shippinai, rrflow, clyffy).
-        #[arg(long, env = "RROFLOW_WORKSPACE")]
-        workspace: Option<String>,
-        /// Include (redacted, truncated) tool inputs and outputs on spans.
-        #[arg(long)]
-        payloads: bool,
-        /// Parse and print a summary; send nothing.
-        #[arg(long)]
-        dry_run: bool,
-        /// Write the exact payloads that would be sent to this JSONL file.
-        #[arg(long)]
-        dump: Option<PathBuf>,
-        /// Only turns at or after this RFC 3339 timestamp.
-        #[arg(long)]
-        since: Option<String>,
-    },
+    /// Ingest Claude Code transcripts (~/.claude/projects, .jsonl files or directories).
+    IngestClaude(IngestArgs),
+    /// Ingest Codex CLI rollouts (~/.codex/sessions, .jsonl or .jsonl.zst, files or directories).
+    IngestCodex(IngestArgs),
     /// Read back the newest event (or --event) and check what Raindrop stored.
     ///
     /// Exit code: 0 nothing failed, 1 a check failed, 2 a secret reached Raindrop.
@@ -97,71 +103,81 @@ fn main() {
     }
 }
 
+/// Parse every transcript under `args.paths` with `parse`, then send (or dump) the turns.
+fn ingest(
+    args: IngestArgs,
+    service: &str,
+    parse: fn(&std::path::Path) -> Result<Vec<transcript::Turn>>,
+) -> Result<()> {
+    let IngestArgs {
+        paths,
+        project,
+        user,
+        workspace,
+        payloads,
+        dry_run,
+        dump,
+        since,
+    } = args;
+    let key = std::env::var("RAINDROP_WRITE_KEY").unwrap_or_default();
+    if key.is_empty() && !dry_run {
+        bail!("RAINDROP_WRITE_KEY is not set (use --dry-run to only parse)");
+    }
+    let base =
+        std::env::var("RAINDROP_API_URL").unwrap_or_else(|_| "https://api.raindrop.ai/v1".into());
+    let since_ns = since.as_deref().and_then(ts_nanos);
+    let red = Redactor::new();
+    let (mut sent, mut spans_sent) = (0usize, 0usize);
+    // One run, one dump: start the file empty, then append per transcript.
+    if let Some(d) = &dump {
+        std::fs::File::create(d)?;
+    }
+    for file in collect(&paths) {
+        let turns = parse(&file)?;
+        let built: Vec<Built> = turns
+            .iter()
+            .filter(|t| since_ns.is_none_or(|s| ts_nanos(&t.start).unwrap_or(0) >= s))
+            .map(|t| build(t, &user, workspace.as_deref(), payloads, &red))
+            .collect();
+        let nspans: usize = built.iter().map(|b| b.spans.len()).sum();
+        println!(
+            "{}: {} turns, {} spans",
+            file.display(),
+            built.len(),
+            nspans
+        );
+        if let Some(d) = &dump {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(d)?;
+            for b in &built {
+                writeln!(f, "{}", json!({"event": b.event, "spans": b.spans}))?;
+            }
+        }
+        if dry_run {
+            continue;
+        }
+        for chunk in built.chunks(20) {
+            let events: Vec<Value> = chunk.iter().map(|b| b.event.clone()).collect();
+            api::post(&base, "events/track", &key, &project, &Value::Array(events))?;
+            let spans: Vec<Value> = chunk.iter().flat_map(|b| b.spans.clone()).collect();
+            for sc in spans.chunks(200) {
+                api::post(&base, "traces", &key, &project, &trace_body(service, sc))?;
+            }
+            sent += chunk.len();
+            spans_sent += spans.len();
+        }
+    }
+    println!("sent {sent} events, {spans_sent} spans to project {project}");
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
-        Cmd::IngestClaude {
-            paths,
-            project,
-            user,
-            workspace,
-            payloads,
-            dry_run,
-            dump,
-            since,
-        } => {
-            let key = std::env::var("RAINDROP_WRITE_KEY").unwrap_or_default();
-            if key.is_empty() && !dry_run {
-                bail!("RAINDROP_WRITE_KEY is not set (use --dry-run to only parse)");
-            }
-            let base = std::env::var("RAINDROP_API_URL")
-                .unwrap_or_else(|_| "https://api.raindrop.ai/v1".into());
-            let since_ns = since.as_deref().and_then(ts_nanos);
-            let red = Redactor::new();
-            let (mut sent, mut spans_sent) = (0usize, 0usize);
-            // One run, one dump: start the file empty, then append per transcript.
-            if let Some(d) = &dump {
-                std::fs::File::create(d)?;
-            }
-            for file in collect(&paths) {
-                let turns = parse_transcript(&file)?;
-                let built: Vec<Built> = turns
-                    .iter()
-                    .filter(|t| since_ns.is_none_or(|s| ts_nanos(&t.start).unwrap_or(0) >= s))
-                    .map(|t| build(t, &user, workspace.as_deref(), payloads, &red))
-                    .collect();
-                let nspans: usize = built.iter().map(|b| b.spans.len()).sum();
-                println!(
-                    "{}: {} turns, {} spans",
-                    file.display(),
-                    built.len(),
-                    nspans
-                );
-                if let Some(d) = &dump {
-                    use std::io::Write;
-                    let mut f = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(d)?;
-                    for b in &built {
-                        writeln!(f, "{}", json!({"event": b.event, "spans": b.spans}))?;
-                    }
-                }
-                if dry_run {
-                    continue;
-                }
-                for chunk in built.chunks(20) {
-                    let events: Vec<Value> = chunk.iter().map(|b| b.event.clone()).collect();
-                    api::post(&base, "events/track", &key, &project, &Value::Array(events))?;
-                    let spans: Vec<Value> = chunk.iter().flat_map(|b| b.spans.clone()).collect();
-                    for sc in spans.chunks(200) {
-                        api::post(&base, "traces", &key, &project, &trace_body(sc))?;
-                    }
-                    sent += chunk.len();
-                    spans_sent += spans.len();
-                }
-            }
-            println!("sent {sent} events, {spans_sent} spans to project {project}");
-        }
+        Cmd::IngestClaude(args) => ingest(args, "claude-code", parse_transcript)?,
+        Cmd::IngestCodex(args) => ingest(args, "codex", codex::parse_rollout)?,
         Cmd::Doctor {
             project,
             event,

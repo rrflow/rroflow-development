@@ -50,11 +50,12 @@ pub(crate) fn build(
     tool_names.dedup();
     let output = r.apply(&truncate(&t.output.join("\n\n"), 20_000));
     let mut props = json!({
-        "source": "claude-code",
+        "source": t.agent,
+        "agent": t.agent,
+        "agent_version": t.version,
         "session_id": t.session,
         "cwd": t.cwd,
         "git_branch": t.branch,
-        "claude_code_version": t.version,
         "entrypoint": t.entrypoint,
         "compacted": t.compacted,
         "tool_calls": finished.len(),
@@ -63,8 +64,22 @@ pub(crate) fn build(
         "tool_names": tool_names.join(","),
         "ingested_by": concat!("rroflow-raindrop/", env!("CARGO_PKG_VERSION")),
     });
+    if t.agent == "claude-code" {
+        // Kept for signals and filters written before `agent_version` existed.
+        props["claude_code_version"] = json!(t.version);
+    }
     if let Some(w) = workspace {
         props["workspace"] = json!(w);
+    }
+    // Set only when present, so transcripts without them keep their exact payloads.
+    if let Some(a) = &t.prompt_author {
+        props["prompt_author"] = json!(a);
+    }
+    if let Some(sa) = &t.subagent {
+        props["subagent"] = json!(sa);
+    }
+    if t.aborted {
+        props["aborted"] = json!(true);
     }
     let mut ai = json!({"input": r.apply(&truncate(&t.input, 20_000)), "convo_id": t.session});
     if !output.is_empty() {
@@ -73,20 +88,21 @@ pub(crate) fn build(
     if let Some(m) = &t.model {
         ai["model"] = json!(m);
     }
-    let event = json!({"event_id": event_id, "user_id": user, "event": "claude_code.turn", "timestamp": t.start, "ai_data": ai, "properties": props});
+    let event_name = format!("{}.turn", t.agent.replace('-', "_"));
+    let event = json!({"event_id": event_id, "user_id": user, "event": event_name, "timestamp": t.start, "ai_data": ai, "properties": props});
 
     let start = ts_nanos(&t.start).unwrap_or(0);
     let end = ts_nanos(&t.end).unwrap_or(start).max(start);
     let assoc = |k: &str, v: &str| attr(&format!("traceloop.association.properties.{k}"), json!(v));
     let model = t.model.clone().unwrap_or_else(|| "unknown".into());
     let mut spans = vec![json!({
-        "traceId": trace_id, "spanId": root, "name": "claude_code.turn", "kind": 1,
+        "traceId": trace_id, "spanId": root, "name": event_name, "kind": 1,
         "startTimeUnixNano": start.to_string(), "endTimeUnixNano": end.to_string(),
         "status": {"code": if errors > 0 { 2 } else { 1 }},
         "attributes": [
             assoc("event_id", &event_id), assoc("user_id", user), assoc("convo_id", &t.session),
             attr("ai.operationId", json!("ai.generateText")), attr("traceloop.span.kind", json!("llm")),
-            attr("gen_ai.system", json!("anthropic")), attr("gen_ai.request.model", json!(model)),
+            attr("gen_ai.system", json!(t.provider)), attr("gen_ai.request.model", json!(model)),
             attr("gen_ai.response.model", json!(model)),
             attr("gen_ai.usage.input_tokens", json!(t.in_tokens)), attr("gen_ai.usage.output_tokens", json!(t.out_tokens)),
         ]
@@ -129,9 +145,9 @@ pub(crate) fn build(
 }
 
 /// Wrap spans in one OTLP/JSON `resourceSpans` body.
-pub(crate) fn trace_body(spans: &[Value]) -> Value {
+pub(crate) fn trace_body(service: &str, spans: &[Value]) -> Value {
     json!({"resourceSpans": [{
-        "resource": {"attributes": [attr("service.name", json!("claude-code"))]},
+        "resource": {"attributes": [attr("service.name", json!(service))]},
         "scopeSpans": [{"scope": {"name": "rroflow-raindrop", "version": env!("CARGO_PKG_VERSION")}, "spans": spans}]
     }]})
 }
