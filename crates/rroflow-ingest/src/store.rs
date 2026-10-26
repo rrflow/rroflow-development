@@ -60,6 +60,19 @@ impl Store {
         }
     }
 
+    /// The devspace a Nomen account owns, created on its first sign-in. Postgres only:
+    /// the config check refuses `[nomen]` without a database.
+    pub async fn devspace_for_owner(
+        &self,
+        issuer: &str,
+        subject: &crate::Subject,
+    ) -> anyhow::Result<String> {
+        match self {
+            Store::Jsonl(_) => anyhow::bail!("Nomen sign-in needs the Postgres store"),
+            Store::Postgres(p) => p.devspace_for_owner(issuer, subject).await,
+        }
+    }
+
     /// Insert or replace records by `event_id`. Within one batch the last record for an
     /// `event_id` wins.
     pub async fn upsert(&self, devspace: &str, recs: &[TurnRecord]) -> anyhow::Result<Upserted> {

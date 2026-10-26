@@ -76,6 +76,15 @@ key_sha256 = ["$(cat /etc/rroflow/keys/jesse.sha256)"]
 id = "selftest"
 key_sha256 = ["$(cat /etc/rroflow/keys/selftest.sha256)"]
 EOF
+# Nomen sign-in: written by the operator once the rroflow apps exist in Nomen (see
+# docs/plan/identity-and-devspaces.md). Kept across runs; the key file must be owned by
+# rroflow with mode 0600.
+if [ -f /etc/rroflow/nomen.toml ]; then
+  { echo; cat /etc/rroflow/nomen.toml; } >> /etc/rroflow/ingest.toml
+  echo "nomen sign-in: on ($(sed -n 's/^issuer *= *//p' /etc/rroflow/nomen.toml))"
+else
+  echo "nomen sign-in: off (no /etc/rroflow/nomen.toml)"
+fi
 chmod 0644 /etc/rroflow/ingest.toml
 
 echo "== systemd unit"
@@ -135,7 +144,8 @@ curl -sSf -H "Authorization: Bearer $st" -H 'content-type: application/json' "$b
 EOF
 echo
 curl -sSf -H "Authorization: Bearer $st" "$base/v1/signals/settings"; echo
-curl -sSf -H "Authorization: Bearer $st" "$base/v1/summary" | sed 's/"catalogue".*//' | head -c 300; echo
+curl -sSf -H "Authorization: Bearer $st" "$base/v1/whoami"; echo
+curl -sSf -H "Authorization: Bearer $st" "$base/v1/summary" | grep -o '"turns":[0-9]*' | head -1
 runuser -u postgres -- psql -qAt -d rroflow -c "SELECT devspace_id, count(*) FROM turns GROUP BY 1"
 curl -s -o /dev/null -w 'wrong key -> %{http_code}\n' -H 'Authorization: Bearer nope' "$base/v1/summary"
 ss -ltnp | grep -E ":(${LISTEN##*:}|5432)\b" || true

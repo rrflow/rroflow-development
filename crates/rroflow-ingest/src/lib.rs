@@ -13,9 +13,13 @@
 //!   choices (on/off, thresholds) at `/v1/signals/settings`, which collectors read before
 //!   evaluating.
 
+pub mod nomen;
 pub mod pg;
 pub mod store;
+#[cfg(test)]
+mod test_keys;
 
+pub use nomen::{AuthError, NomenVerifier, Subject};
 pub use pg::PgStore;
 pub use store::{JsonlStore, Store, Summary, TurnFilter, Upserted};
 
@@ -52,6 +56,23 @@ pub struct Config {
     pub max_body_bytes: usize,
     /// Devspaces and the hashes of their ingest keys.
     pub devspace: Vec<Devspace>,
+    /// Sign-in with Nomen, the identity shared by all Shippin services. When set, a Nomen
+    /// access token opens the devspace its account owns (created on first sign-in).
+    /// Requires `database_url`.
+    pub nomen: Option<NomenConfig>,
+}
+
+/// How the ingest checks Nomen tokens (RFC 7662 introspection, private-key JWT).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NomenConfig {
+    /// Nomen issuer URL, for example `https://id.shippin.cloud`.
+    pub issuer: String,
+    /// Nomen project ids a token's audience must name (the rroflow project).
+    pub audiences: Vec<String>,
+    /// Client ids allowed to have obtained the token (the rroflow CLI and web clients).
+    pub clients: Vec<String>,
+    /// Key file of the ingest's API application in Nomen (JSON, mode 0600).
+    pub key_file: String,
 }
 
 impl Default for Config {
@@ -64,6 +85,7 @@ impl Default for Config {
             max_batch: 500,
             max_body_bytes: 16 * 1024 * 1024,
             devspace: vec![],
+            nomen: None,
         }
     }
 }
@@ -103,10 +125,26 @@ pub fn valid_devspace_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Shared state: key-hash → devspace, the store, limits.
+/// Who is calling, as their credential proved it.
+#[derive(Clone, Debug, Serialize)]
+pub struct Caller {
+    /// The devspace every read and write of this request is confined to.
+    pub devspace: String,
+    /// `key` (ingest key) or `nomen` (Nomen sign-in).
+    pub via: &'static str,
+    /// Nomen account ID, for `nomen`.
+    pub subject: Option<String>,
+    /// Nomen organization, when the token carried it.
+    pub org: Option<String>,
+    /// Login name Nomen reported, for display only.
+    pub name: Option<String>,
+}
+
+/// Shared state: key-hash → devspace, the Nomen verifier, the store, limits.
 #[derive(Clone)]
 pub struct AppState {
     keys: Arc<HashMap<String, String>>,
+    nomen: Option<Arc<NomenVerifier>>,
     store: Arc<Store>,
     max_batch: usize,
 }
@@ -134,29 +172,86 @@ impl AppState {
                 }
             }
         }
+        let nomen = match &cfg.nomen {
+            None => None,
+            Some(n) => {
+                anyhow::ensure!(
+                    matches!(*store, Store::Postgres(_)),
+                    "[nomen] needs database_url: devspace owners are kept in Postgres"
+                );
+                anyhow::ensure!(
+                    !n.audiences.is_empty() && !n.clients.is_empty(),
+                    "[nomen] needs at least one audience and one client"
+                );
+                Some(Arc::new(NomenVerifier::new(
+                    &n.issuer,
+                    &n.audiences,
+                    &n.clients,
+                    &n.key_file,
+                )?))
+            }
+        };
         Ok(Self {
             keys: Arc::new(keys),
+            nomen,
             store,
             max_batch: cfg.max_batch,
         })
     }
 
-    fn devspace(&self, headers: &HeaderMap) -> Result<String, ApiError> {
-        let key = headers
+    /// Identify the caller from `Authorization: Bearer <credential>`: an ingest key first
+    /// (a hash lookup), then a Nomen access token when sign-in is configured.
+    pub async fn caller(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
+        let token = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
             .ok_or(ApiError::Unauthorized)?;
-        self.keys
-            .get(&hash_key(key.trim()))
-            .cloned()
-            .ok_or(ApiError::Unauthorized)
+        if let Some(devspace) = self.keys.get(&hash_key(token)) {
+            return Ok(Caller {
+                devspace: devspace.clone(),
+                via: "key",
+                subject: None,
+                org: None,
+                name: None,
+            });
+        }
+        let Some(nomen) = &self.nomen else {
+            return Err(ApiError::Unauthorized);
+        };
+        let subject = match nomen.verify(token).await {
+            Ok(s) => s,
+            Err(AuthError::Invalid(why)) => {
+                eprintln!("sign-in refused: {why}");
+                return Err(ApiError::Unauthorized);
+            }
+            Err(AuthError::Unavailable(why)) => {
+                eprintln!("issuer_unavailable: {why}");
+                return Err(ApiError::IssuerUnavailable);
+            }
+        };
+        let devspace = self
+            .store
+            .devspace_for_owner(nomen.issuer(), &subject)
+            .await
+            .map_err(internal)?;
+        Ok(Caller {
+            devspace,
+            via: subject.via,
+            subject: Some(subject.id),
+            org: subject.org,
+            name: subject.name,
+        })
     }
 }
 
 #[derive(Debug)]
 pub enum ApiError {
     Unauthorized,
+    /// Nomen could not be asked about a token; retry. Never a refusal.
+    IssuerUnavailable,
     BadRequest(String),
     Internal,
 }
@@ -166,7 +261,11 @@ impl IntoResponse for ApiError {
         let (code, msg) = match self {
             ApiError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
-                "missing or unknown ingest key".to_string(),
+                "missing or unknown credential: an ingest key or a Nomen sign-in".to_string(),
+            ),
+            ApiError::IssuerUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "issuer_unavailable: Nomen could not be reached to check the sign-in; retry".into(),
             ),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             ApiError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "store error".into()),
@@ -207,7 +306,7 @@ async fn post_turns(
     headers: HeaderMap,
     Json(body): Json<TurnsBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.devspace(&headers)?;
+    let devspace = st.caller(&headers).await?.devspace;
     if body.turns.len() > st.max_batch {
         return Err(ApiError::BadRequest(format!(
             "batch of {} exceeds the limit of {}",
@@ -246,7 +345,7 @@ async fn get_turns(
     headers: HeaderMap,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.devspace(&headers)?;
+    let devspace = st.caller(&headers).await?.devspace;
     let limit = q.limit.unwrap_or(50).min(LIST_MAX);
     let turns = st
         .store
@@ -293,7 +392,7 @@ async fn get_signal_settings(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.devspace(&headers)?;
+    let devspace = st.caller(&headers).await?.devspace;
     let settings = st.store.signal_config(&devspace).await.map_err(internal)?;
     Ok(Json(
         serde_json::json!({ "devspace": devspace, "settings": settings }),
@@ -305,7 +404,7 @@ async fn put_signal_settings(
     headers: HeaderMap,
     Json(cfg): Json<SignalConfig>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.devspace(&headers)?;
+    let devspace = st.caller(&headers).await?.devspace;
     cfg.validate().map_err(ApiError::BadRequest)?;
     st.store
         .set_signal_config(&devspace, &cfg)
@@ -320,7 +419,7 @@ async fn get_summary(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.devspace(&headers)?;
+    let devspace = st.caller(&headers).await?.devspace;
     let (summary, settings) = tokio::try_join!(
         st.store.summary(&devspace),
         st.store.signal_config(&devspace)
@@ -351,12 +450,21 @@ async fn dashboard() -> impl IntoResponse {
     )
 }
 
+/// Who the credential belongs to and which devspace it opens.
+async fn get_whoami(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Caller>, ApiError> {
+    Ok(Json(st.caller(&headers).await?))
+}
+
 /// The HTTP surface: `GET /` (dashboard), `POST|GET /v1/turns`, `GET /v1/summary`,
-/// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /healthz`.
+/// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /v1/whoami`, `GET /healthz`.
 pub fn router(st: AppState, max_body_bytes: usize) -> Router {
     Router::new()
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
+        .route("/v1/whoami", get(get_whoami))
         .route("/v1/signals", get(get_signals))
         .route(
             "/v1/signals/settings",

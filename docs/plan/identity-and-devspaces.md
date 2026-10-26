@@ -21,7 +21,7 @@ Nomen account (issuer, sub)  ──owns──▶  devspace  ──holds──▶
 |---|---|---|
 | Collector (`rroflow ingest-claude`, `ingest-codex`) | ingest key; server stores only its SHA-256 | `rroflow login` via the OAuth device flow, like `devagotchi-cli@shippin`; refresh token kept in the OS keychain |
 | Dashboard | ingest key pasted into the tab (session storage only) | sign in with Nomen: authorization code + PKCE |
-| Server check | key hash lookup | opaque token introspection (RFC 7662) with private-key JWT client auth, answers cached 60 s; Nomen unreachable → 503 `issuer_unavailable`. Same pattern as the Devagotchi hub (`crates/hub/src/nomen.rs`). Required: issuer, `aud` = the rroflow project, `client_id` in the allowed list, `exp`, `sub` |
+| Server check | key hash lookup, then Nomen (built) | opaque token introspection (RFC 7662) with private-key JWT client auth, answers cached 60 s; Nomen unreachable → 503 `issuer_unavailable`. Same pattern as the Devagotchi hub (`crates/hub/src/nomen.rs`). Required: issuer, `aud` = the rroflow project, `client_id` in the allowed list, `exp`, `sub` |
 
 Keys stay supported after sign-in exists, for headless machines and CI, but are minted by a signed-in user for their own devspace.
 
@@ -34,12 +34,13 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 | `GET /v1/summary` | devspace | totals, per-agent signal counts, the catalogue, the devspace's settings |
 | `GET /v1/signals` | public | catalogue `rroflow.signals/v1`: categories (Failure, Friction, Cost, Context), signals, options with defaults and ranges |
 | `GET`/`PUT /v1/signals/settings` | devspace | which signals run and their thresholds; collectors read this before evaluating |
+| `GET /v1/whoami` | devspace | which devspace the credential opens, and how (`key` or `nomen`, account ID, org) |
 | `GET /healthz`, `GET /` | public | health; dashboard page |
 
 ## Build steps
 
 1. **Built:** Postgres store with migrations, signal catalogue grouped with options, per-devspace settings, dashboard with Claude Code and Codex side by side, deploy script with Postgres for tx-infra-prod.
-2. Nomen token introspection on the ingest; first sign-in creates the devspace for that `sub`.
+2. **Built:** Nomen token introspection on the ingest (ported from the Devagotchi hub, same checks and caching); first sign-in creates the devspace for that `sub`; `rroflow-ingest claim` gives an existing key devspace to an account; Nomen down → 503 `issuer_unavailable`, keys keep working.
 3. `rroflow login` (device flow) and token refresh in the CLI.
 4. Dashboard sign-in (authorization code + PKCE); key management in the page.
 5. `api.rroflow.ai` public: DNS A record to 23.156.136.173, TLS at a reverse proxy in front of `127.0.0.1:8787`.
@@ -51,3 +52,19 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 - An API application in that project with private-key JWT, for introspection (key file installed on the host, never in the repo).
 - A native/device client for the CLI and a web client (PKCE) for the dashboard; their client ids.
 - DNS for `api.rroflow.ai` (and `rroflow.ai`).
+
+## Turning on sign-in (tx-infra-prod)
+
+1. Put the API application's key file at `/etc/rroflow/nomen-key.json`, owner `rroflow`, mode 0600.
+2. Write `/etc/rroflow/nomen.toml` (kept across deploys):
+
+   ```toml
+   [nomen]
+   issuer = "<Nomen issuer URL>"
+   audiences = ["<rroflow project id>"]
+   clients = ["<CLI client id>", "<web client id>"]
+   key_file = "/etc/rroflow/nomen-key.json"
+   ```
+3. Re-run the deploy; it prints `nomen sign-in: on`.
+4. Sign in once, read your account ID from `GET /v1/whoami`, then give your existing devspace to it:
+   `rroflow-ingest claim --config /etc/rroflow/ingest.toml --devspace jesse --subject <sub>` (run as `rroflow`). An empty devspace made by that first sign-in gives way; one with turns does not.
