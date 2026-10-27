@@ -43,7 +43,7 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 2. **Built:** Nomen token introspection on the ingest (ported from the Devagotchi hub, same checks and caching); first sign-in creates the devspace for that `sub`; `rroflow-ingest claim` gives an existing key devspace to an account; Nomen down → 503 `issuer_unavailable`, keys keep working.
 3. **Built:** `rroflow login` / `logout` / `whoami` (device flow ported from the Devagotchi CLI, refresh within 5 min of expiry, 7-day offline grace, tokens in `account.json` 0600). The collector sends as the signed-in account; `RROFLOW_INGEST_KEY` still wins for headless machines.
 4. Dashboard sign-in (authorization code + PKCE); key management in the page.
-5. Public: `api.rroflow.ai` (API) and `app.rroflow.ai` (dashboard), both A records to 23.156.136.173. TLS ends at the Texas edge container (CT 100), which proxies both names to the `rroflow` VM; both reach the same service, so the dashboard's API calls are same-origin. Layout: [../deploy/README.md](../deploy/README.md).
+5. Public: `api.rroflow.ai` (API) and `app.rroflow.ai` (dashboard), both A records to 23.156.136.173, TLS at Caddy in front of `127.0.0.1:8787`. Both hosts reach the same service, so the dashboard's API calls are same-origin.
 6. Attach a devspace to a Shippin tenant (`shippin_tenant_id`), started from the Shippin console.
 
 ## Nomen setup (created 2026-10-26, project `rroflow` in the Shippin Platform org)
@@ -59,8 +59,6 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 DNS: `rroflow.ai` → 23.156.136.173 (Cloudflare proxy off). `api.rroflow.ai` and `app.rroflow.ai` to be added the same way.
 
 ## Turning on sign-in (tx-infra-prod)
-
-These steps are for the first install on the Texas host. In the VM layout the bootstrap carries `nomen.toml` and the key file across ([../deploy/README.md](../deploy/README.md)).
 
 1. Put the API application's key file at `/etc/rroflow/nomen-key.json`, owner `rroflow`, mode 0600.
 2. Write `/etc/rroflow/nomen.toml` (kept across deploys):

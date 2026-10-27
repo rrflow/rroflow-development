@@ -9,7 +9,7 @@ Updated 2026-10-27. This page says where everything stands. The plan is [plan/rr
 | `rroflow` CLI (the SDK) | `ingest-claude`, `ingest-codex`, `signals`, `doctor`, `login` / `logout` / `whoami` (Nomen device flow) | `crates/rroflow-cli` |
 | Shared records | `rroflow.turn/v1` and the signal catalogue `rroflow.signals/v1` (Failure, Friction, Cost, Context) | `crates/rroflow-core` |
 | Ingest API | Postgres store with migrations, upsert by `event_id`, summary, per-devspace signal settings, `whoami`, Nomen token introspection, `claim` | `crates/rroflow-ingest`; API table in [plan/identity-and-devspaces.md](plan/identity-and-devspaces.md) |
-| Dashboard | one page served by the ingest, with Claude Code and Codex side by side; you sign in by pasting an ingest key | `crates/rroflow-ingest/src/dashboard.html` |
+| Dashboard | one page served by the ingest, with Claude Code and Codex side by side; you sign in by pasting an ingest key (account sign-in is in #14) | `crates/rroflow-ingest/src/dashboard.html` |
 
 ## Released
 
@@ -49,13 +49,20 @@ Also decided:
 - Devagotchi offers the rroflow.ai free tier and installs the SDK. From there it leads users to devscif and Vaultix, and tells them about its add-ons.
 - Training datasets need a training consent that is separate from telemetry ([plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md)).
 
+## In review (open pull requests)
+
+| PR | What | State |
+|---|---|---|
+| #13 | `SECURITY.md`: private vulnerability reporting, data handling in scope | ready; needs private reporting turned on in the repo's Security tab |
+| #14 | Browser sign-in with Nomen (PKCE through the Rust service, HttpOnly session), Texas read-only preflight, `PUBLIC_HOSTS` off by default; docs on Texas readiness, subscription support, automatic datasets v0 | draft; live Texas and Nomen not verified |
+| #15 (on #14) | Durable SDK capture (local outbox, replay), capture events API, signal reviews (MATCH / NOT MATCH saved as immutable reviews), JavaScript SDK wrapper | draft; not production-ready by its own account |
+
 ## Next (one pull request each)
 
 1. Release `rroflow-ingest` for Linux x64 and ARM64 from GitHub Actions ([deploy/README.md](deploy/README.md), increment 2).
 2. `deploy/texas/`: the bootstrap paste and `rroflow-host` with pull updates (increment 3).
-3. A `web/` React dashboard at parity with today's page, embedded in the ingest, with types generated from Rust (increment 4).
-4. Dashboard sign-in with Nomen (PKCE) (increment 5).
-5. `rroflow setup`: detect Claude Code and Codex, then offer to link them, backfill and capture every turn ([plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md), increment 2).
+3. A `web/` React dashboard at parity with the page as #14 and #15 leave it, embedded in the ingest, with types generated from Rust (increment 4).
+4. `rroflow setup`: detect Claude Code and Codex, then offer to link them, backfill and capture every turn ([plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md), increment 2), building on #15's outbox.
 
 ## Waiting on the owner
 

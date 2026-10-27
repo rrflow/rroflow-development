@@ -73,7 +73,7 @@ This keeps the earlier rule "deploy from GitHub only, no hand-built copies". Bui
   - its self-test passed.
 
   That was the approved first step. It does not match the layout above.
-- **Do not run its TLS step on Texas.** It installs Caddy on the host, but 443 is forwarded to the edge container, so the certificate could never be issued there. This PR changes the default to `PUBLIC_HOSTS=""`.
+- **Do not run its TLS step on Texas.** It installs Caddy on the host, but 443 is forwarded to the edge container, so the certificate could never be issued there. PR #14 changes the default to `PUBLIC_HOSTS` empty and adds a read-only preflight that refuses to install on the hypervisor ([../plan/texas-readiness.md](../plan/texas-readiness.md) once merged).
 - **The move happens once, in the bootstrap:**
   1. `pg_dump` the host's `rroflow` database into the VM.
   2. Copy `/etc/rroflow/keys/*` and `nomen.toml` into the VM.
@@ -91,17 +91,17 @@ This keeps the earlier rule "deploy from GitHub only, no hand-built copies". Bui
   - Devagotchi already does this with `json-schema-to-typescript`.
   - CI fails if the generated types drift from the Rust ones.
 - **Serving:** CI builds the bundle, and `rroflow-ingest` embeds it and serves it at `/`. The API stays under `/v1`. There is one release and one process.
-- **Sign-in:** Nomen authorization code + PKCE with the `rroflow-dashboard` app (`396821568908492804`, redirect `https://app.rroflow.ai/auth/callback`). Tokens are kept in memory, never in browser storage.
+- **Sign-in:** through the Rust service, as PR #14 builds it: Nomen authorization code + S256 PKCE with the `rroflow-dashboard` app (`396821568908492804`, redirect `https://app.rroflow.ai/auth/callback`). The access token stays in server memory, and the browser holds only an opaque `__Host-` HttpOnly session cookie, so the React app never handles a token.
 - **First screen:** parity with today's `dashboard.html`, with Claude Code and Codex side by side, signals by category, and settings. After that come evidence cards, spend and limits, and linked agents.
 - **The public site stays as decided (D-3):** Astro static with islands. Its islands can reuse the dashboard's React components.
 
 ## Increments (one PR each)
 
-1. **This record:** deploy plan, D-7 and D-8, status page, docs index. `deploy.sh` stops defaulting to a host Caddy.
+1. **This record:** deploy plan, D-7 and D-8, status page, docs index. (In review alongside it: #14 browser sign-in + Texas preflight, #15 durable capture + signal reviews.)
 2. **Release `rroflow-ingest`** for Linux x86_64 and aarch64 from GitHub Actions, with checksums and attestations, published automatically on a version bump (as the CLI is).
 3. **`deploy/texas/`:** the bootstrap paste (preflight, VM, edge routes, hosts line, data move) and `rroflow-host` with pull updates. It will be tested against stand-ins for the Proxmox commands, the way Nomen's was.
 4. **`web/` dashboard** at parity, embedded in the ingest. Types are generated from Rust, with a CI drift check.
-5. **Dashboard sign-in** with Nomen (PKCE) and key management in the page.
+5. **Key management in the page** (sign-in itself is #14).
 
 ## Owner steps (each needs root, DNS or Nomen admin)
 
