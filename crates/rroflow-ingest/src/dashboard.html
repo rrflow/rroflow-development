@@ -214,10 +214,13 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
       if (new URLSearchParams(location.search).has("signin")) {
         history.replaceState(null, "", "/");
         $("err").textContent = "Sign-in could not finish. Please try again.";
-      } else if (key) { await open(); }
-      else {
+      } else {
         const who = await fetch("/v1/whoami", { credentials: "same-origin" });
-        if (who.ok) await open();
+        if (who.ok) {
+          key = "";
+          try { sessionStorage.removeItem("rroflow.key"); } catch (_) {}
+          await open();
+        } else if (who.status === 401 && key) await open();
         else if (who.status !== 401) $("err").textContent = "Your session could not be checked. Please retry shortly.";
       }
     } catch (e) { $("signin-status").textContent = e.message; }

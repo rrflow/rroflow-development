@@ -6,12 +6,12 @@ import test from 'node:test';
 
 const html = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-async function page({ signedIn = false, enabled = true, turns = 2 } = {}) {
+async function page({ signedIn = false, enabled = true, turns = 2, previousKey = false } = {}) {
   const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, {
     value: '', textContent: '', innerHTML: '', hidden: id === 'app' || id === 'signin', open: false,
     replaceChildren() { this.innerHTML = ''; this.textContent = ''; },
   }]));
-  const requests = [], storage = new Map();
+  const requests = [], storage = new Map(previousKey ? [["rroflow.key", "old-key"]] : []);
   const sum = { devspace: 'mine', catalogue: { categories: [], signals: [] },
     settings: { disabled: [], options: {} }, summary: {
       turns, by_agent: turns ? { 'claude-code': 1, codex: 1 } : {}, signals_by_agent: {},
@@ -39,7 +39,7 @@ async function page({ signedIn = false, enabled = true, turns = 2 } = {}) {
 }
 
 test('signed-in landing shows both agents from the account summary without exposing a token', async () => {
-  const { elements: el, requests, storage } = await page({ signedIn: true });
+  const { elements: el, requests, storage } = await page({ signedIn: true, previousKey: true });
   assert.equal(el.get('app').hidden, false);
   assert.equal(el.get('login').hidden, true);
   assert.match(el.get('agents').innerHTML, /Claude Code/);
