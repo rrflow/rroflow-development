@@ -31,7 +31,7 @@ test('activity supports search, older pages, browser history and session drill-d
   await page.getByLabel('Search activity',{exact:true}).fill('unique search phrase');await page.getByRole('button',{name:'Apply',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(1);
   await expect(page).toHaveURL(/search=unique\+search\+phrase/);await page.goBack();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
   await page.locator('#activity-results [data-event="fixture-000"]').click();await expect(page.locator('#inspector')).toBeVisible();await page.getByRole('button',{name:'View session \u2192',exact:true}).click();await settled(page);
-  await expect(page.locator('#session-scope')).toContainText('fixture-session-review');await expect(page.locator('#activity-results .activity-row')).toHaveCount(3);
+  await expect(page.locator('#session-scope')).toContainText('fixture-session-review');await expect(page.locator('#agent-filter')).toHaveValue('codex');await expect(page.locator('#activity-results .activity-row')).toHaveCount(2);await expect(page.locator('#activity-results [data-event="fixture-001"]')).toHaveCount(0);
   await reflow(page);await accessible(page);await screenshot(page,info,'activity-session');
 });
 test('turn evidence is safe, keyboard-accessible and supports persisted verdicts',async({page,service},info)=>{
