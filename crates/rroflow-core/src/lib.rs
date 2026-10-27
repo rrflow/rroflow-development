@@ -5,6 +5,7 @@
 //! Signals run where the content is (on the user's machine, before upload), so a
 //! devspace can receive signal results and metrics without receiving prompt text.
 
+pub mod capture;
 pub mod record;
 pub mod signals;
 

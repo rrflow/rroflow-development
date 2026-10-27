@@ -21,6 +21,7 @@
 
 mod account;
 mod api;
+mod capture;
 mod codex;
 mod doctor;
 mod otlp;
@@ -98,6 +99,11 @@ enum Agent {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Durably record SDK events and deliver acknowledged events to your devspace.
+    Capture {
+        #[command(subcommand)]
+        command: capture::Command,
+    },
     /// Ingest Claude Code transcripts (~/.claude/projects, .jsonl files or directories).
     IngestClaude(IngestArgs),
     /// Ingest Codex CLI rollouts (~/.codex/sessions, .jsonl or .jsonl.zst, files or directories).
@@ -420,6 +426,7 @@ fn report_signals(
 
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
+        Cmd::Capture { command } => capture::run(command)?,
         Cmd::Login {
             issuer,
             client_id,

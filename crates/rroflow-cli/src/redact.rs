@@ -12,6 +12,7 @@ impl Redactor {
         let pats = [
             r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}",
             r"sk-[A-Za-z0-9_-]{16,}",
+            r"xai-[A-Za-z0-9_-]{16,}",
             r"gh[pousr]_[A-Za-z0-9]{20,}",
             r"xox[abprs]-[A-Za-z0-9-]{10,}",
             r"AKIA[0-9A-Z]{16}",
@@ -19,6 +20,10 @@ impl Redactor {
             r"\b[a-f0-9]{48,}\b",
         ];
         let mut literals: Vec<String> = [
+            "RROFLOW_INGEST_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "XAI_API_KEY",
             "RAINDROP_WRITE_KEY",
             "RAINDROP_QUERY_KEY",
             "RAINDROP_QUERY_API_KEY",

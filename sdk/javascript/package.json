@@ -1,0 +1,13 @@
+{
+  "name": "@rroflow/capture",
+  "version": "0.1.0",
+  "description": "Durable local event capture for Codex, Claude Agent SDK and Grok API calls",
+  "type": "module",
+  "main": "./index.mjs",
+  "types": "./index.d.ts",
+  "exports": { ".": { "types": "./index.d.ts", "import": "./index.mjs" } },
+  "files": ["index.mjs", "index.d.ts", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --test test.mjs" },
+  "license": "Apache-2.0"
+}

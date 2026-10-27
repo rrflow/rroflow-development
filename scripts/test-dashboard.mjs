@@ -25,6 +25,7 @@ async function page({ signedIn = false, enabled = true, turns = 2, previousKey =
     else if (path === '/auth/logout') { signedIn = false; status = 204; }
     else if (!signedIn) status = 401;
     else if (path === '/v1/whoami') data = { devspace: 'mine', name: '<script>name</script>', via: 'nomen' };
+    else if (path.startsWith('/v1/events')) data = { events: [] };
     else if (path === '/v1/summary') data = sum;
     else if (path.startsWith('/v1/turns')) data = { turns: [] };
     return { ok: status < 400, status, json: async () => data };
@@ -56,7 +57,7 @@ test('signed-in landing shows both agents from the account summary without expos
 
 test('empty devspace labels both agents as having no captured activity', async () => {
   const { elements: el } = await page({ signedIn: true, turns: 0 });
-  assert.equal((el.get('agents').innerHTML.match(/No captured activity yet/g) || []).length, 2);
+  assert.equal((el.get('agents').innerHTML.match(/No activity in this view/g) || []).length, 3);
   assert.doesNotMatch(el.get('agents').innerHTML, /Captured activity/);
 });
 

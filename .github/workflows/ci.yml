@@ -36,6 +36,10 @@ jobs:
         run: node --test scripts/test-dashboard.mjs
       - name: Test
         run: cargo test --workspace --locked
+      - name: Build collector and ingest for SDK proof
+        run: cargo build --workspace --locked
+      - name: SDK capture end to end (fixture providers)
+        run: node --test sdk/javascript/test.mjs
       - name: Parse a fixture transcript (no network)
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
 
@@ -58,6 +62,10 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - name: Test
         run: cargo test --workspace --locked
+      - name: Build collector and ingest for SDK proof
+        run: cargo build --workspace --locked
+      - name: SDK capture end to end (fixture providers)
+        run: node --test sdk/javascript/test.mjs
       - name: Parse a fixture transcript (no network)
         shell: bash
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
