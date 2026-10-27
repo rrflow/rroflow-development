@@ -345,12 +345,14 @@ async fn signal_settings_round_trip_and_reject_bad_values() {
             0,
             "{b:?}"
         );
-        let want = serde_json::json!({
+        let mut want = serde_json::json!({
             "disabled": ["mood"],
             "options": { "tool_error_streak": { "min_streak": 5.0 } }
         });
         let (code, _) = call(&app, put("key-jesse", "/v1/signals/settings", want.clone())).await;
         assert_eq!(code, StatusCode::OK, "{b:?}");
+        want["revision"] = 1.into();
+        want["custom"] = serde_json::json!([]);
         let (_, body) = call(&app, get("key-jesse", "/v1/signals/settings")).await;
         assert_eq!(body["settings"], want, "{b:?}");
         // Settings are per devspace.
@@ -938,5 +940,222 @@ async fn reviews_pin_evidence_reject_stale_and_isolate_owners() {
         assert_eq!(rows["reviews"][0]["request"]["verdict"], "not_match");
         let (_, other) = call(&app, get("key-other", "/v1/reviews")).await;
         assert!(other["reviews"].as_array().unwrap().is_empty());
+    }
+}
+
+fn json_post(key: &str, uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::post(uri)
+        .header("authorization", format!("Bearer {key}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn custom_signals_preview_ingest_pause_and_persist_per_owner() {
+    for b in backends() {
+        let env = Env::new(b, "custom");
+        let app = env.app().await;
+        let rule = serde_json::json!({"id":"custom_test_phrase","name":"Completion phrase","group":"Quality","enabled":true,"agent":"codex","project":"shippinai","condition":{"kind":"response_contains","text":"all done"}});
+        let mut t = rec("first", None);
+        t.content = Some(rroflow_core::Content {
+            input: "Check this".into(),
+            output: "It is ALL DONE now.".into(),
+        });
+        let missing = rec("missing", None);
+        let mut other_agent = t.clone();
+        other_agent.event_id = "claude".into();
+        other_agent.agent = "claude-code".into();
+        assert_eq!(
+            call(&app, post("key-jesse", &[t.clone(), missing, other_agent]))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let (status, preview) = call(
+            &app,
+            json_post("key-jesse", "/v1/signals/preview", rule.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(preview["evaluated"], 1);
+        assert_eq!(preview["unavailable"], 1);
+        assert_eq!(preview["matches"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            call(&app, json_post("", "/v1/signals/preview", rule.clone()))
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(
+                &app,
+                json_post("key-other", "/v1/signals/preview", rule.clone())
+            )
+            .await
+            .1["scanned"],
+            0
+        );
+        let config = serde_json::json!({"revision":0,"custom":[rule.clone()]});
+        let (status, saved) = call(
+            &app,
+            put("key-jesse", "/v1/signals/settings", config.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(saved["settings"]["revision"], 1);
+        // Saving does not silently rewrite the already captured turn.
+        assert_eq!(
+            call(
+                &app,
+                get("key-jesse", "/v1/turns?signal=custom_test_phrase")
+            )
+            .await
+            .1["turns"],
+            serde_json::json!([])
+        );
+        t.event_id = "new-arrival".into();
+        call(&app, post("key-jesse", &[t.clone()])).await;
+        let (_, hits) = call(
+            &app,
+            get("key-jesse", "/v1/turns?signal=custom_test_phrase"),
+        )
+        .await;
+        assert_eq!(hits["turns"].as_array().unwrap().len(), 1);
+        assert_eq!(hits["turns"][0]["signals"][0]["rule_version"], 1);
+        assert_eq!(
+            call(&app, put("key-jesse", "/v1/signals/settings", config))
+                .await
+                .0,
+            StatusCode::CONFLICT
+        );
+        let mut changed = saved["settings"].clone();
+        changed["custom"][0]["condition"]["text"] = "different".into();
+        assert_eq!(
+            call(&app, put("key-jesse", "/v1/signals/settings", changed))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        let mut paused = saved["settings"].clone();
+        paused["custom"][0]["enabled"] = false.into();
+        assert_eq!(
+            call(&app, put("key-jesse", "/v1/signals/settings", paused))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let restarted = env.app().await;
+        assert_eq!(
+            call(&restarted, get("key-jesse", "/v1/signals/settings"))
+                .await
+                .1["settings"]["custom"][0]["enabled"],
+            false
+        );
+        t.event_id = "after-pause".into();
+        call(&restarted, post("key-jesse", &[t])).await;
+        assert_eq!(
+            call(
+                &restarted,
+                get("key-jesse", "/v1/turns?signal=custom_test_phrase")
+            )
+            .await
+            .1["turns"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        // Clients cannot inject another owner's/custom namespace findings.
+        call(
+            &restarted,
+            post("key-other", &[rec("forged", Some("custom_test_phrase"))]),
+        )
+        .await;
+        assert_eq!(
+            call(
+                &restarted,
+                get("key-other", "/v1/turns?signal=custom_test_phrase")
+            )
+            .await
+            .1["turns"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            call(&restarted, get("key-other", "/v1/signals/settings"))
+                .await
+                .1["settings"]["custom"],
+            serde_json::json!([])
+        );
+    }
+}
+
+#[tokio::test]
+async fn custom_rule_bounds_metadata_and_concurrent_settings_are_checked() {
+    use rroflow_core::custom::{CustomSignal, Evaluation};
+    for b in backends() {
+        let env = Env::new(b, "custom-bounds");
+        let app = env.app().await;
+        let rule = serde_json::json!({"id":"custom_test_errors","name":"Tool failures","group":"Quality","enabled":true,"condition":{"kind":"tool_errors","at_least":2}});
+        let mut t = rec("tools", None);
+        t.tools = (0..3)
+            .map(|i| rroflow_core::ToolRecord {
+                id: format!("tool-{i}"),
+                name: "TestRunner".into(),
+                status: if i < 2 {
+                    rroflow_core::ToolStatus::Error
+                } else {
+                    rroflow_core::ToolStatus::Ok
+                },
+                started_at: t.started_at.clone(),
+                ended_at: t.ended_at.clone(),
+                input: None,
+                output: None,
+            })
+            .collect();
+        let parsed: CustomSignal = serde_json::from_value(rule.clone()).unwrap();
+        assert!(matches!(parsed.evaluate(&t), Evaluation::Match(_)));
+        let mut named = rule.clone();
+        named["condition"] = serde_json::json!({"kind":"tool_named","name":"testrunner"});
+        assert!(matches!(
+            serde_json::from_value::<CustomSignal>(named)
+                .unwrap()
+                .evaluate(&t),
+            Evaluation::Match(_)
+        ));
+        let mut scoped = parsed.clone();
+        scoped.project = Some("different".into());
+        assert!(matches!(scoped.evaluate(&t), Evaluation::OutOfScope));
+        let mut cfg = serde_json::json!({"revision":0,"custom":[rule.clone()]});
+        let (a, b) = tokio::join!(
+            call(&app, put("key-jesse", "/v1/signals/settings", cfg.clone())),
+            call(&app, put("key-jesse", "/v1/signals/settings", cfg.clone()))
+        );
+        assert!(
+            (a.0 == StatusCode::OK && b.0 == StatusCode::CONFLICT)
+                || (b.0 == StatusCode::OK && a.0 == StatusCode::CONFLICT)
+        );
+        cfg["revision"] = 1.into();
+        cfg["custom"] = serde_json::json!([]);
+        assert_eq!(
+            call(&app, put("key-jesse", "/v1/signals/settings", cfg))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        for condition in [
+            serde_json::json!({"kind":"tool_errors","at_least":0}),
+            serde_json::json!({"kind":"prompt_contains","text":""}),
+            serde_json::json!({"kind":"response_contains","text":"x".repeat(161)}),
+        ] {
+            let mut invalid = rule.clone();
+            invalid["condition"] = condition;
+            assert_eq!(
+                call(&app, json_post("key-jesse", "/v1/signals/preview", invalid))
+                    .await
+                    .0,
+                StatusCode::BAD_REQUEST
+            );
+        }
     }
 }

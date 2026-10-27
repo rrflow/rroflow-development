@@ -74,3 +74,17 @@ Tests cover more than twelve files across multiple projects, offline recording,
 restart without duplicate revisions, changed turns, lock exclusion, malformed and
 partial writes, unavailable delivery, uncertain receipts, account refusal, API
 tenant isolation, server-side filters, escaped UI content and logout cleanup.
+
+
+## Signal settings refresh (2026-10-27 follow-up)
+
+The signal-workspace increment refreshes built-in settings after successful delivery,
+at most once per minute. It verifies the bound endpoint and devspace, validates the
+configuration and writes an immutable local settings revision before using it. On
+restart the newest cached revision is used, including offline runs. Older/conflicting
+revisions are refused and reported separately from delivery; acknowledged uploads
+remain acknowledged. Changed built-in choices invalidate the scan cache so local
+rules are recomputed on the next pass. Custom definitions remain cloud-only rules
+on uploaded projections; a custom-setting change alone does not clear the scan cache.
+The revision cache currently retains all settings revisions. Older collector builds
+retain link-time settings and need an upgrade. See [signal workspace](../ux/signal-workspace.md).

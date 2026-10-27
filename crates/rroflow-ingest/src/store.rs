@@ -144,7 +144,7 @@ impl Store {
         &self,
         devspace: &str,
         cfg: &SignalConfig,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         match self {
             Store::Jsonl(s) => s.set_signal_config(devspace, cfg),
             Store::Postgres(p) => p.set_signal_config(devspace, cfg).await,
@@ -172,6 +172,7 @@ pub(crate) fn last_per_event(recs: &[TurnRecord]) -> Vec<&TurnRecord> {
 /// The last line for an `event_id` wins, so a re-send replaces the earlier record. Signal
 /// settings live beside it in `signal_settings.json`.
 pub struct JsonlStore {
+    settings_lock: Mutex<()>,
     pub(crate) root: PathBuf,
     index: Mutex<HashMap<String, HashMap<String, TurnRecord>>>,
     capture_index: Mutex<HashMap<String, Vec<rroflow_core::capture::CaptureEvent>>>,
@@ -295,6 +296,7 @@ impl JsonlStore {
             }
         }
         Ok(Self {
+            settings_lock: Mutex::new(()),
             root,
             index: Mutex::new(index),
             capture_index: Mutex::new(HashMap::new()),
@@ -417,12 +419,23 @@ impl JsonlStore {
         }
     }
 
-    fn set_signal_config(&self, devspace: &str, cfg: &SignalConfig) -> anyhow::Result<()> {
+    fn set_signal_config(&self, devspace: &str, cfg: &SignalConfig) -> anyhow::Result<bool> {
+        let _guard = self.settings_lock.lock().expect("settings lock");
+        if self.signal_config(devspace)?.revision != cfg.revision {
+            return Ok(false);
+        }
+        let mut saved = cfg.clone();
+        saved.revision += 1;
         let dir = self.root.join(devspace);
         std::fs::create_dir_all(&dir)?;
         let tmp = dir.join(format!("{SETTINGS_FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(cfg)?)?;
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(&serde_json::to_vec_pretty(&saved)?)?;
+        file.sync_all()?;
+        drop(file);
         std::fs::rename(tmp, dir.join(SETTINGS_FILE))?;
-        Ok(())
+        #[cfg(unix)]
+        std::fs::File::open(&dir)?.sync_all()?;
+        Ok(true)
     }
 }

@@ -7,12 +7,16 @@
   const fmt = value => value == null ? 'Unknown' : Number(value).toLocaleString();
   const names = {'claude-code':'Claude Code', codex:'Codex', grok:'Grok'};
   const name = id => names[id] || id;
+  const verdictLabel = verdict => verdict === 'match' ? 'Matches' : 'Does not match';
   const titles = {blocked_handoff:'Blocked handoff', false_done:'Possible false completion', tool_error_streak:'Repeated tool failures', usage_limit_hit:'Usage limit reached', context_loss:'Context compaction', correction_spiral:'Possible correction spiral', aborted_turn:'Interrupted turn', mood:'Mood shift'};
-  const title = id => titles[id] || String(id).replaceAll('_', ' ');
+  const title = id => metadata?.settings?.custom?.find(s => s.id === id)?.name || titles[id] || String(id).replaceAll('_', ' ');
   const views = {
     overview:['Overview','A clear view of your agents’ work, with evidence one click away.'],
     activity:['Activity','Explore captured turns across agents, projects and sessions.'],
-    signals:['Signals','Find patterns worth reviewing. Every match links to its captured evidence.'],
+    signals:['Findings','See the moments your signals picked out. Open one to understand what happened.'],
+    library:['Signal library','Use our built-in checks or create your own. You decide what deserves attention.'],
+    projects:['Projects','Keep work organized and jump straight to the activity you care about.'],
+    datasets:['Datasets','See how captured work and your corrections will become useful examples.'],
     sources:['Sources','See what has reported activity and how to connect your agents.'],
     learning:['From evidence to improvement','Corrections today. Consented datasets and evaluated learning next.'],
     settings:['Settings','Make this workspace yours. Control which signals are evaluated.'],
@@ -23,6 +27,7 @@
   let nextCursor = null, currentTurn = null, toolLimit = 50, research = [], researchCategory = 'All', inspection = 0;
   let currentRoute = {view:'overview', params:new URLSearchParams()}, toastTimer, reviewSaving = false;
   const pendingReviews = new Map(), previousPages = new Map();
+  let builderId = '', previewSignature = '', builderAttempt = 0, savingSignals = false;
   try { key = sessionStorage.getItem('rroflow.key') || ''; } catch (_) {}
 
   function empty(heading, description, link = '') {
@@ -74,6 +79,10 @@
     $('app').hidden = true; $('login').hidden = false; $('loading').hidden = true;
     $('skip-link').setAttribute('href','#login');
     $('toast').hidden = true; showError('');
+    builderAttempt++; previewSignature = ''; $('signal-builder').close();
+    for (const id of ['signal-library','library-status','signal-preview','builder-status','project-cards','dataset-readiness']) $(id).replaceChildren();
+    for (const id of ['custom-name','custom-group','custom-text','project-search','library-search']) $(id).value = '';
+    for (const id of ['custom-agent','custom-project','library-group']) $(id).replaceChildren();
   }
   function options(id, label, entries, selected) {
     $(id).innerHTML = `<option value="">${esc(label)}</option>` + entries.map(([value, text]) => `<option value="${esc(value)}">${esc(text)}</option>`).join('');
@@ -83,7 +92,7 @@
     const p = currentRoute.params, s = metadata.summary;
     options('agent-filter','All agents', [...new Set([...Object.keys(names), ...Object.keys(s.by_agent)])].map(a => [a,name(a)]), p.get('agent'));
     options('project-filter','All projects', Object.entries(s.by_project).map(([p,n]) => [p,`${p} (${fmt(n)})`]), p.get('project'));
-    options('signal-filter','All signals', metadata.catalogue.signals.map(s => [s.id,title(s.id)]), p.get('signal'));
+    options('signal-filter','All signals', [...metadata.catalogue.signals,...(metadata.settings?.custom || [])].map(s => [s.id,title(s.id)]), p.get('signal'));
     $('search').value = p.get('search') || ''; $('time-filter').value = p.get('days') || '';
     $('session-scope').hidden = !p.get('session');
     $('session-scope').textContent = p.get('session') ? 'Session: ' + p.get('session') + ' · Reset filters to see all sessions.' : '';
@@ -123,7 +132,7 @@
   }
   function signalCard(t,h, evidence = false) {
     const saved = reviewFor(t,h);
-    return `<article class="signal-card"><span class="badge ${['warn','critical','info'].includes(h.severity) ? h.severity : 'neutral'}">${esc(h.severity)}</span> <span class="small muted">Rule v${esc(h.rule_version)}</span><h3>${esc(title(h.signal))}</h3><p>${esc(h.summary)}</p><div class="small muted">${esc(name(t.agent))} · ${esc(date(t.started_at))}</div>${evidence ? h.evidence.map(e => `<div class="evidence-item"><strong>${esc(e.kind)}</strong>${e.tool_id ? `<p>Tool: ${esc(e.tool_id)}</p>` : ''}<div>${esc(e.excerpt || 'Text was not included in this capture.')}</div></div>`).join('') + `<div class="review-actions"><button class="button" data-review="match" data-signal="${esc(h.signal)}">MATCH</button><button class="button" data-review="not_match" data-signal="${esc(h.signal)}">NOT MATCH</button></div><p class="review-note">A saved verdict does not change a rule or start training.</p>` : `<div class="row"><button class="button" data-event="${esc(t.event_id)}" data-open-tab="signals">Inspect evidence →</button></div>`}<p class="review-note">${saved ? 'Saved: ' + esc(saved.request.verdict.toUpperCase().replace('_',' ')) : reviewError ? esc(reviewError) : 'No verdict on this revision in the latest 1,000 reviews.'}</p></article>`;
+    return `<article class="signal-card"><span class="badge ${['warn','critical','info'].includes(h.severity) ? h.severity : 'neutral'}">${esc(h.severity)}</span> <span class="small muted">Rule v${esc(h.rule_version)}</span><h3>${esc(title(h.signal))}</h3><p>${esc(h.summary)}</p><div class="small muted">${esc(name(t.agent))} · ${esc(date(t.started_at))}</div>${evidence ? h.evidence.map(e => `<div class="evidence-item"><strong>${esc(e.kind)}</strong>${e.tool_id ? `<p>Tool: ${esc(e.tool_id)}</p>` : ''}<div>${esc(e.excerpt || 'Text was not included in this capture.')}</div></div>`).join('') + `<div class="review-actions"><button class="button" data-review="match" data-signal="${esc(h.signal)}">Yes, this matches</button><button class="button" data-review="not_match" data-signal="${esc(h.signal)}">No, it does not</button></div><p class="review-note">Your decision adds evidence. It does not change a rule or start training.</p>` : `<div class="row"><button class="button" data-event="${esc(t.event_id)}" data-open-tab="signals">Inspect evidence →</button></div>`}<p class="review-note">${saved ? 'Saved: ' + esc(verdictLabel(saved.request.verdict)) : reviewError ? esc(reviewError) : 'No saved decision shown for this version.'}</p></article>`;
   }
   function renderExplorer() {
     renderFilters();
@@ -143,11 +152,11 @@
     $('sdk-events').innerHTML = journalError ? empty('SDK journal unavailable',journalError) : journal.map(e => `<div class="list-row"><div><strong>${esc(name(e.agent === 'claude' ? 'claude-code' : e.agent))} · ${esc(e.kind)}</strong><small>${esc(e.native_type || '')} · ${esc(date(e.observed_at))} · #${esc(e.sequence)}</small></div></div>`).join('') || empty('No SDK events received','Instrumented calls appear here after their local queue delivers them.');
   }
   function renderLearning() {
-    $('learning-reviews').innerHTML = reviewError ? empty('Reviews unavailable',reviewError) : reviews.map(r => `<div class="list-row"><div><strong>${esc(title(r.request.signal))}</strong><small>Revision ${esc(r.request.turn_digest.slice(0,12))} · ${esc(r.request.event_id)}</small></div><span class="badge neutral">${esc(r.request.verdict.toUpperCase().replace('_',' '))}</span><button class="button" data-event="${esc(r.request.event_id)}" data-open-tab="signals">Open turn</button></div>`).join('') || empty('Your corrections belong here','Open a signal, inspect its evidence, and save MATCH or NOT MATCH.','<a class="button" href="#signals">Explore signals</a>');
+    $('learning-reviews').innerHTML = reviewError ? empty('Reviews unavailable',reviewError) : reviews.map(r => `<div class="list-row"><div><strong>${esc(title(r.request.signal))}</strong><small>Revision ${esc(r.request.turn_digest.slice(0,12))} · ${esc(r.request.event_id)}</small></div><span class="badge neutral">${esc(verdictLabel(r.request.verdict))}</span><button class="button" data-event="${esc(r.request.event_id)}" data-open-tab="signals">Open turn</button></div>`).join('') || empty('Your corrections belong here','Open a signal, inspect its evidence, and save MATCH or NOT MATCH.','<a class="button" href="#signals">Explore signals</a>');
   }
   function renderSettings() {
     const cfg = metadata.settings || {disabled:[],options:{}};
-    $('signal-settings').innerHTML = metadata.catalogue.signals.map(s => `<div class="signal-setting"><label class="setting-label"><input type="checkbox" data-toggle="${esc(s.id)}" ${cfg.disabled.includes(s.id) ? '' : 'checked'}><span><strong>${esc(title(s.id))}</strong><small>${esc(s.meaning)}</small></span></label>${s.options.map(o => `<label class="setting-option">${esc(o.name)}<input type="number" data-signal="${esc(s.id)}" data-option="${esc(o.name)}" value="${esc(cfg.options?.[s.id]?.[o.name] ?? o.default)}" min="${o.min}" max="${o.max}" step="1" required><span>${esc(o.meaning)} (default ${o.default})</span></label>`).join('')}</div>`).join('');
+    $('signal-settings').innerHTML = metadata.catalogue.signals.map(s => `<div class="signal-setting"><label class="setting-label"><input type="checkbox" data-toggle="${esc(s.id)}" ${cfg.disabled.includes(s.id) ? '' : 'checked'}><span><strong>${esc(title(s.id))}</strong><small>${esc(s.meaning)}</small></span></label>${s.options.map(o => `<label class="setting-option">${esc(({min_streak:'Failed tools in a row',min_prompts:'Corrections in a row'})[o.name] || o.name)}<input type="number" data-signal="${esc(s.id)}" data-option="${esc(o.name)}" value="${esc(cfg.options?.[s.id]?.[o.name] ?? o.default)}" min="${o.min}" max="${o.max}" step="1" required><span>${esc(o.meaning)} (default ${o.default})</span></label>`).join('')}</div>`).join('');
   }
   function renderResearch() {
     const categories = ['All',...new Set(research.map(r => r.category))];
@@ -157,6 +166,89 @@
     $('research-count').textContent = `${matching.length} of ${research.length} source notes`;
     $('research-list').innerHTML = matching.map(r => `<article class="research-card"><span class="badge neutral">${esc(r.category)}</span><h2>${esc(r.title)}</h2><p>${esc(r.description)}</p><small>${esc(r.path)}</small><button class="button" data-note="${esc(r.path)}">Read source note →</button><details><summary class="small muted">Source fingerprint · UTF-8 / LF</summary><small>${esc(r.sha256)}</small></details></article>`).join('') || empty('No notes match','Try a different phrase or category.');
   }
+
+  function ruleDescription(rule) {
+    const c = rule.condition;
+    if (c.kind === 'tool_errors') return `At least ${c.at_least} tool calls fail in one turn.`;
+    if (c.kind === 'tool_named') return `A completed tool call is named “${c.name}”.`;
+    return `${c.kind === 'prompt_contains' ? 'The message sent to the AI' : 'The AI’s response'} contains “${c.text}” (ignoring letter case).`;
+  }
+  function renderLibrary() {
+    const cfg = metadata.settings || {disabled:[],custom:[]};
+    const groups = {failure:'Quality',friction:'Working together',cost:'Usage & interruptions',context:'Context'};
+    const built = metadata.catalogue.signals.map(s => ({id:s.id,name:title(s.id),group:groups[s.category] || 'Built-in',description:s.meaning,enabled:!cfg.disabled.includes(s.id),kind:'built_in'}));
+    const custom = (cfg.custom || []).map(s => ({...s,description:ruleDescription(s),kind:'custom'}));
+    const group = $('library-group').value, query = $('library-search').value.toLowerCase(), kind = $('library-kind').value || 'all';
+    options('library-group','All groups',[...new Set([...built,...custom].map(s => s.group))].sort().map(g => [g,g]),group);
+    const matching = [...built,...custom].filter(s => (!group || s.group === group) && (kind === 'all' || kind === s.kind) && (s.name + ' ' + s.description).toLowerCase().includes(query));
+    $('signal-library').innerHTML = [...new Set(matching.map(s => s.group))].map(group => `<section class="signal-library-group"><h2>${esc(group)}</h2><div class="signal-grid">` + matching.filter(s => s.group === group).map(s => `<article class="panel library-card"><div class="row"><span class="badge neutral">${s.kind === 'custom' ? 'Your signal' : 'Built-in'}</span><span class="badge ${s.enabled ? 'positive' : 'neutral'}">${s.enabled ? 'On' : 'Paused'}</span></div><h3>${esc(s.name)}</h3><p>${esc(s.description)}</p><p class="small">${s.kind === 'custom' ? esc((s.agent ? name(s.agent) : 'All agents') + ' · ' + (s.project || 'All projects')) : 'Runs in the collector. Connected collectors refresh your settings.'}</p><p class="small muted">${fmt(metadata.summary.signals[s.id] || 0)} recorded matches</p><div class="row"><a class="button" href="${link('signals',{signal:s.id})}">View findings</a>${s.kind === 'built_in' ? '<a class="button subtle" href="#settings">Adjust checks</a>' : ''}<button class="button subtle" data-library-toggle="${esc(s.id)}" data-library-kind="${s.kind}" aria-label="${s.enabled ? 'Pause' : 'Turn on'} ${esc(s.name)}">${s.enabled ? 'Pause' : 'Turn on'}</button></div></article>`).join('') + '</div></section>').join('') || empty('No matching signals','Try another group or create a signal for something you want to notice.');
+  }
+  function renderProjects() {
+    const query = $('project-search').value.toLowerCase();
+    $('project-cards').innerHTML = Object.entries(metadata.summary.by_project).filter(([p]) => p.toLowerCase().includes(query)).sort((a,b) => b[1]-a[1]).map(([project,count]) => `<article class="research-card"><h2>${esc(project)}</h2><p><span class="project-capture-count">${fmt(count)}</span> captured turns</p><a class="button" href="${link('activity',{project})}">Open project activity →</a><p class="small muted">Source: received project label or working directory.</p></article>`).join('') || empty('No projects match','Projects appear when captured work arrives.');
+  }
+  function renderDatasets() {
+    $('dataset-readiness').innerHTML = [['Captured turns',fmt(metadata.summary.turns),'Received activity, not yet a dataset'],['Saved decisions',reviewError ? 'Unavailable' : fmt(reviews.length),'Latest 1,000 reviews; not training labels yet'],['Published datasets','Not available','Dataset building is not active'],['Learning jobs','Not available','Training and clustering are not active']].map(([label,value,note]) => `<article class="stat"><span>${label}</span><b>${value}</b><small>${note}</small></article>`).join('');
+  }
+  function draftSignal() {
+    const kind = $('custom-kind').value;
+    return {id:builderId,name:$('custom-name').value.trim(),group:$('custom-group').value.trim(),enabled:true,agent:$('custom-agent').value || null,project:$('custom-project').value || null,condition:kind === 'tool_errors' ? {kind,at_least:Number($('custom-number').value)} : kind === 'tool_named' ? {kind,name:$('custom-text').value.trim()} : {kind,text:$('custom-text').value.trim()}};
+  }
+  function builderChanged() {
+    builderAttempt++; previewSignature = ''; $('save-signal').disabled = true; $('signal-preview').replaceChildren(); $('builder-status').textContent = '';
+    const count = $('custom-kind').value === 'tool_errors';
+    $('custom-number-label').hidden = !count; $('custom-number').required = count;
+    $('custom-text-label').hidden = count; $('custom-text').required = !count;
+    $('custom-help').textContent = ['prompt_contains','response_contains'].includes($('custom-kind').value) ? 'Needs opted-in uploaded text. The preview counts turns whose text is unavailable separately.' : 'Uses completed tool names or statuses. Prompt and response text are not required.';
+  }
+  $('new-signal').onclick = () => {
+    builderId = 'custom_' + crypto.randomUUID(); $('custom-name').value = ''; $('custom-group').value = 'My signals'; $('custom-text').value = ''; $('custom-kind').value = 'tool_errors'; $('custom-number').value = '3';
+    options('custom-agent','All agents', [...new Set([...Object.keys(names),...Object.keys(metadata.summary.by_agent)])].map(a => [a,name(a)]));
+    options('custom-project','All projects',Object.keys(metadata.summary.by_project).map(p => [p,p]));
+    builderChanged(); $('signal-builder').showModal(); $('custom-name').focus();
+  };
+  $('close-builder').onclick = () => { builderAttempt++; inspection++; $('signal-builder').close(); };
+  $('signal-builder').oncancel = () => { builderAttempt++; inspection++; };
+  $('signal-form').oninput = builderChanged;
+  $('custom-kind').onchange = builderChanged;
+  $('signal-form').onsubmit = async e => {
+    e.preventDefault(); const draft = draftSignal(), signature = JSON.stringify(draft), attempt = ++builderAttempt, g = generation;
+    $('preview-signal').disabled = true; $('save-signal').disabled = true; $('builder-status').textContent = 'Checking up to 100 recent turns…';
+    try {
+      const result = await api('/v1/signals/preview',{method:'POST',body:signature});
+      if (g !== generation || attempt !== builderAttempt || !signedIn) return;
+      previewSignature = signature; $('save-signal').disabled = false;
+      $('builder-status').textContent = `${result.matches.length} matches in ${result.evaluated} checked turns. ${result.unavailable} could not be checked because text was not uploaded.${result.more_history ? ' More history exists; this preview covers the newest 100 scoped turns.' : ''} This is a preview, not an accuracy score.`;
+      $('signal-preview').innerHTML = result.matches.map(m => `<article class="preview-match"><p>${esc(m.hit.summary)}</p>${m.hit.evidence.map(e => `<p class="small muted">${esc(e.tool_id ? 'Tool: ' + e.tool_id : 'Matched phrase: ' + (e.excerpt || ''))}</p>`).join('')}<button class="button" data-event="${esc(m.event_id)}">Open captured turn</button></article>`).join('') || '<p class="muted">No matches in this preview. You can change the rule and try again, or save it for future activity.</p>';
+    } catch (error) { if (g === generation && attempt === builderAttempt) $('builder-status').textContent = error.message; }
+    finally { if (g === generation) $('preview-signal').disabled = false; }
+  };
+  $('save-signal').onclick = async () => {
+    const draft = draftSignal(); if (savingSignals || !previewSignature || JSON.stringify(draft) !== previewSignature) return;
+    const g = generation; savingSignals = true; $('save-signal').disabled = true;
+    try {
+      const cfg = {...metadata.settings,custom:[...(metadata.settings.custom || []),draft]};
+      await api('/v1/signals/settings',{method:'PUT',body:JSON.stringify(cfg)});
+      if (g !== generation || !signedIn) return;
+      $('signal-builder').close(); await load(); toast('Signal saved. It will check newly received turns.');
+    } catch (error) { if (g === generation) $('builder-status').textContent = error.message; }
+    finally { savingSignals = false; if (g === generation) $('save-signal').disabled = false; }
+  };
+  async function toggleLibrary(button) {
+    if (savingSignals) return;
+    const g = generation; savingSignals = true; button.disabled = true;
+    const cfg = JSON.parse(JSON.stringify(metadata.settings)), id = button.dataset.libraryToggle;
+    if (button.dataset.libraryKind === 'custom') { const rule = cfg.custom.find(s => s.id === id); rule.enabled = !rule.enabled; }
+    else cfg.disabled = cfg.disabled.includes(id) ? cfg.disabled.filter(s => s !== id) : [...cfg.disabled,id];
+    try {
+      const result = await api('/v1/signals/settings',{method:'PUT',body:JSON.stringify(cfg)});
+      if (g !== generation || !signedIn) return;
+      metadata.settings = result.settings; renderLibrary(); $('library-status').textContent = 'Saved. Existing findings and decisions are retained. Connected collectors refresh built-in choices.';
+    } catch (error) { if (g === generation) $('library-status').textContent = error.message; }
+    finally { savingSignals = false; button.disabled = false; }
+  }
+  for (const id of ['library-search','library-kind','library-group']) { $(id).oninput = renderLibrary; $(id).onchange = renderLibrary; }
+  $('project-search').oninput = renderProjects;
   function turnQuery() {
     const q = new URLSearchParams({limit:'100'});
     if (['activity','signals'].includes(currentRoute.view)) {
@@ -176,7 +268,7 @@
   function renderTurn(t, tab = 'conversation') {
     currentTurn = t; toolLimit = 50;
     $('inspector-title').textContent = name(t.agent) + ' · ' + date(t.started_at);
-    $('inspector-summary').innerHTML = `<div class="row"><span class="badge neutral">${esc(t.model || 'Model not reported')}</span><span class="badge neutral">${esc(t.termination)}</span><button class="button subtle" data-session="${esc(t.session_id)}" data-agent="${esc(t.agent)}">View session →</button><button class="button subtle" id="copy-turn">Copy link</button></div>`;
+    $('inspector-summary').innerHTML = `<div class="row"><span class="badge neutral">${esc(t.model || 'Model not reported')}</span><span class="badge neutral">${esc(String(t.termination).replaceAll('_',' '))}</span><button class="button subtle" data-session="${esc(t.session_id)}" data-agent="${esc(t.agent)}">View session →</button><button class="button subtle" id="copy-turn">Copy link</button></div>`;
     $('pane-conversation').innerHTML = [['Prompt',t.content?.input],['Response',t.content?.output]].map(([label,text],i) => `<article class="message ${i ? 'assistant' : ''}"><h3>${label}${!i && t.prompt_author ? ' · ' + esc(t.prompt_author) : ''}</h3><div class="message-body">${esc(text ?? 'Text was not included in this capture. Content capture is opt-in.') || '(empty)'}</div></article>`).join('');
     renderTools();
     $('pane-signals').innerHTML = t.signals.map(h => signalCard(t,h,true)).join('') || empty('No signal matches','No rule matches were included in this captured turn.');
@@ -203,7 +295,7 @@
     controller?.abort(); controller = new AbortController();
     currentRoute = readRoute();
     closeNavigation();
-    $('inspector').close(); currentTurn = null;
+    $('inspector').close(); $('signal-builder').close(); builderAttempt++; currentTurn = null;
     $('main-content').setAttribute('aria-busy','true');
     $('page-title').textContent = views[currentRoute.view][0]; $('page-description').textContent = views[currentRoute.view][1];
     $('breadcrumb').textContent = 'Workspace / ' + views[currentRoute.view][0];
@@ -221,7 +313,7 @@
         if (g !== generation) return;
         records = list.turns; revisions = list.revisions || {}; nextCursor = list.next_cursor;
       }
-      if (['overview','sources','signals','activity','learning'].includes(currentRoute.view)) {
+      if (['overview','sources','signals','activity','learning','datasets'].includes(currentRoute.view)) {
         const results = await Promise.allSettled([api('/v1/reviews'),api('/v1/events?limit=100')]);
         if (g !== generation) return;
         const [r,j] = results;
@@ -233,6 +325,9 @@
       if (currentRoute.view === 'sources') renderSources();
       if (currentRoute.view === 'learning') renderLearning();
       if (currentRoute.view === 'settings') renderSettings();
+      if (currentRoute.view === 'library') renderLibrary();
+      if (currentRoute.view === 'projects') renderProjects();
+      if (currentRoute.view === 'datasets') renderDatasets();
       if (currentRoute.view === 'research') {
         if (!research.length) {
           const notes = await api('/assets/research.json');
@@ -277,7 +372,7 @@
       if (g !== generation || currentTurn?.event_id !== t.event_id) return;
       pendingReviews.delete(intent); reviews.unshift({request});
       $('pane-signals').innerHTML = t.signals.map(h => signalCard(t,h,true)).join('');
-      $('review-status').textContent = 'Verdict saved to this evidence revision. No training or rule change started.';
+      $('review-status').textContent = 'Decision saved for this captured version. No training or rule change started.';
     } catch (e) { if (g === generation && e.name !== 'AbortError') $('review-status').textContent = e.message; }
     finally { reviewSaving = false; if (g === generation) all('[data-review]').forEach(b => { b.disabled = false; }); }
   }
@@ -319,9 +414,9 @@
     all('[data-option]').forEach(el => { (options[el.dataset.signal] ||= {})[el.dataset.option] = Number(el.value); });
     $('save-settings').disabled = true; $('settings-status').textContent = 'Saving…';
     try {
-      const r = await api('/v1/signals/settings',{method:'PUT',body:JSON.stringify({disabled,options})});
+      const r = await api('/v1/signals/settings',{method:'PUT',body:JSON.stringify({...metadata.settings,disabled,options})});
       if (g !== generation) return;
-      metadata.settings = r.settings; $('settings-status').textContent = 'Saved. Existing source links retain their settings from link time.';
+      metadata.settings = r.settings; $('settings-status').textContent = 'Saved. Connected collectors refresh these choices; offline collectors keep their last saved settings.';
     } catch (e) { if (g === generation && e.name !== 'AbortError') $('settings-status').textContent = e.message; }
     finally { $('save-settings').disabled = false; }
   };
@@ -345,6 +440,7 @@
     if (button.hasAttribute('data-setup')) $('setup-dialog').showModal();
     if (button.dataset.event) await openTurn(button.dataset.event,button.dataset.openTab);
     if (button.dataset.tab) setTab(button.dataset.tab);
+    if (button.dataset.libraryToggle) await toggleLibrary(button);
     if (button.dataset.review) await saveReview(button);
     if (button.dataset.session) { $('inspector').close(); location.hash = link('activity',{agent:button.dataset.agent,session:button.dataset.session}); }
     if (button.dataset.category) { researchCategory = button.dataset.category; renderResearch(); }
@@ -359,7 +455,7 @@
     }
   });
   document.addEventListener('keydown',e => { if (e.key === 'Escape') { closeNavigation(); } });
-  window.addEventListener('hashchange',load);
+  window.addEventListener('hashchange',() => { if (signedIn) { window.scrollTo(0,0); $('main-content').focus({preventScroll:true}); } return load(); });
   const media = window.matchMedia('(prefers-color-scheme: dark)');
   function setTheme(value) { document.documentElement.dataset.theme = value === 'system' ? (media.matches ? 'dark' : 'light') : value; }
   let theme = 'system'; try { theme = localStorage.getItem('rroflow.theme') || theme; } catch (_) {}

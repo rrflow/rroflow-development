@@ -2,10 +2,12 @@
 //! deterministic behaviour signals evaluated over it.
 //!
 //! The record is agent-neutral: Claude Code, Codex and future agents map onto it.
-//! Signals run where the content is (on the user's machine, before upload), so a
+//! Built-in signals run where the content is (on the user's machine, before upload), so a
 //! devspace can receive signal results and metrics without receiving prompt text.
+//! Custom cloud rules evaluate only the projection received by ingest.
 
 pub mod capture;
+pub mod custom;
 pub mod record;
 pub mod signals;
 

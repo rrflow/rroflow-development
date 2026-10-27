@@ -51,7 +51,7 @@ async function page({signedIn=false,enabled=true,turns=2,previousKey=false,recor
     return {ok:status<400,status,json:async()=>data};
   };
   const document={getElementById:id=>elements.get(id),querySelectorAll,documentElement:{dataset:{}},addEventListener:(name,fn)=>{documentEvents[name]=fn;}};
-  runInNewContext(script,{document,fetch,URLSearchParams,location,history:{replaceState(){}},window:{addEventListener:(name,fn)=>{windowEvents[name]=fn;},matchMedia:()=>({matches:false,addEventListener(){}})},navigator:{clipboard:{writeText:async()=>{}}},AbortController,crypto:{randomUUID:()=> 'test-uuid'},setTimeout:()=>0,clearTimeout(){},
+  runInNewContext(script,{document,fetch,URLSearchParams,location,history:{replaceState(){}},window:{scrollTo(){},addEventListener:(name,fn)=>{windowEvents[name]=fn;},matchMedia:()=>({matches:false,addEventListener(){}})},navigator:{clipboard:{writeText:async()=>{}}},AbortController,crypto:{randomUUID:()=> 'test-uuid'},setTimeout:()=>0,clearTimeout(){},
     sessionStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},localStorage:{getItem:()=>null,setItem(){}}});
   await settle(); await settle();
   return {el:elements,requests,storage,location,document,summary,async route(hash){location.hash=hash;await windowEvents.hashchange();},async click(dataset,id=''){const n=node(id);n.dataset=dataset;await documentEvents.click({target:n});},settle};
@@ -120,7 +120,7 @@ test('review writes the exact evidence digest and rule version, then shows saved
   const p=await page({signedIn:true,records:[t]});await p.click({event:'one',openTab:'signals'});await p.click({review:'not_match',signal:'blocked_handoff'});
   const r=p.requests.find(r=>r.path==='/v1/reviews'&&r.init.method==='POST');
   assert.deepEqual(JSON.parse(r.init.body),{review_id:'test-uuid',event_id:'one',turn_digest:'digest-one',signal:'blocked_handoff',rule_version:7,verdict:'not_match'});
-  assert.match(p.el.get('pane-signals').innerHTML,/Saved: NOT MATCH/);assert.match(p.el.get('review-status').textContent,/No training/);
+  assert.match(p.el.get('pane-signals').innerHTML,/Saved: Does not match/);assert.match(p.el.get('review-status').textContent,/No training/);
 });
 test('settings use saved API state and make an authenticated PUT',async()=>{
   const p=await page({signedIn:true,hash:'#settings'});
