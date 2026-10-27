@@ -1159,3 +1159,52 @@ async fn custom_rule_bounds_metadata_and_concurrent_settings_are_checked() {
         }
     }
 }
+
+#[tokio::test]
+async fn settings_migration_preserves_old_choices_and_refuses_old_writers() {
+    if std::env::var(PG_ENV).is_err() {
+        return;
+    }
+    let env = Env::new(Backend::Postgres, "settings-migration");
+    let Store::Postgres(pg) = env.cfg.open_store().await.unwrap() else {
+        unreachable!()
+    };
+    let mut tx = pg.pool.begin().await.unwrap();
+    // pg_temp shadows the real table on this transaction's connection only.
+    sqlx::query("CREATE TEMP TABLE signal_settings (config JSONB NOT NULL) ON COMMIT DROP")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO signal_settings VALUES ($1)")
+        .bind(sqlx::types::Json(
+            serde_json::json!({"disabled":["mood"],"options":{}}),
+        ))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../migrations/0004_signal_settings_revisions.sql"
+    ))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let normalized: sqlx::types::Json<serde_json::Value> =
+        sqlx::query_scalar("SELECT config FROM signal_settings")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    assert_eq!(normalized.0["revision"], 0);
+    assert_eq!(normalized.0["custom"], serde_json::json!([]));
+    assert_eq!(normalized.0["disabled"], serde_json::json!(["mood"]));
+    let error = sqlx::query(
+        "INSERT INTO signal_settings VALUES ('{\"disabled\":[],\"options\":{}}'::jsonb)",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("23514")
+    );
+    tx.rollback().await.unwrap();
+}

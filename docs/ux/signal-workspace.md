@@ -65,7 +65,13 @@ That contract remains the owner; the UI does not invent a training service.
 ## Contract and verification
 
 `SignalConfig` adds defaulted `revision` and `custom` fields, using the existing
-per-devspace settings stores; no new database or table is selected. GET returns
+per-devspace settings stores; no new database or table is selected. Migration 0004
+preserves existing built-in choices, adds default revision/custom fields and refuses
+older Postgres writers that omit them. The changed migration fingerprint makes the
+release activator refuse an unreviewed upgrade or downgrade across this boundary.
+Take and verify a backup before migrating; restoring an older binary requires a
+reviewed data restore, not bypassing that guard. JSONL deployments must obey the same
+release boundary because their files have no database constraint. GET returns
 the revision. PUT supplies the last-read revision, replaces the whole configuration
 and returns the incremented revision. Stale writes receive 409. Old clients that
 omit revision can write only the initial revision; they must GET before later writes.
