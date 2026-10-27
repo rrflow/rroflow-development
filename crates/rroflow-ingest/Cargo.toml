@@ -30,3 +30,7 @@ aws-lc-rs = "1"
 tempfile = "3"
 http-body-util = "0.1.5"
 tower = { version = "0.5.3", features = ["util"] }
+
+# The ingest server ships through deploy/, not as a user download.
+[package.metadata.dist]
+dist = false
