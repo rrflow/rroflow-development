@@ -28,9 +28,14 @@
   function empty(heading, description, link = '') {
     return `<div class="empty"><div class="empty-symbol" aria-hidden="true">◇</div><strong>${esc(heading)}</strong><p>${esc(description)}</p>${link}</div>`;
   }
-  function date(value) {
+  function parsedDate(value) {
+    if (value == null || value === '') return null;
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? 'Time not reported' : d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  function date(value) {
+    const d = parsedDate(value);
+    return d ? d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : 'Time not reported';
   }
   function agentIcon(agent) {
     return `<span class="agent-icon ${agent === 'codex' ? 'codex' : agent === 'grok' ? 'grok' : ''}" aria-hidden="true">${esc(name(agent).slice(0,1))}</span>`;
@@ -103,7 +108,7 @@
     $('getting-started').innerHTML = '<strong>Your first capture starts here.</strong><p>Connect the computer running your agent. Once a turn reaches this workspace, it appears below.</p><button class="button primary" data-setup>Connect a source</button>';
     const days = new Map();
     for (const t of records) {
-      const d = new Date(t.started_at), day = Number.isNaN(d.getTime()) ? 'Undated' : d.toISOString().slice(0,10);
+      const d = parsedDate(t.started_at), day = d ? d.toISOString().slice(0,10) : 'Undated';
       days.set(day,(days.get(day) || 0) + 1);
     }
     const max = Math.max(1,...days.values());
