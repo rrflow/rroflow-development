@@ -1,4 +1,4 @@
-﻿import {test as base,expect} from '@playwright/test';
+import {test as base,expect} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import {startFixture} from './service.mjs';
 const test=base.extend({service:[async({},use)=>{const service=await startFixture();try{await use(service);}finally{await service.close();}},{scope:'worker'}]});
@@ -13,22 +13,24 @@ async function settled(page){await expect(page.locator('#loading')).toBeHidden()
 async function navigate(page,route){await page.evaluate(route=>{location.hash='#'+route;},route);await expect(page.locator(`[data-nav="${route}"]`)).toHaveAttribute('aria-current','page');await settled(page);}
 async function reflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
 async function accessible(page){const results=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa']).analyze();expect(results.violations.map(v=>({id:v.id,impact:v.impact,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))}))).toEqual([]);}
-async function screenshot(page,info,name){const path=info.outputPath(`${name}-test-fixture.png`);await page.screenshot({path,fullPage:false});await info.attach(`${name} â€” disposable test records`,{path,contentType:'image/png'});}
+async function screenshot(page,info,name){const path=info.outputPath(`${name}-test-fixture.png`);await page.screenshot({path,fullPage:false});await info.attach(`${name} - disposable test records`,{path,contentType:'image/png'});}
 test.beforeEach(async({page,service})=>{await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());});
 
 test('sign-in and overview are readable at this viewport',async({page,service},info)=>{
   await page.goto(service.base);await expect(page.locator('#signin-status')).not.toContainText('Checking');await reflow(page);await accessible(page);await screenshot(page,info,'sign-in');
+  await page.locator('#skip-link').focus();await page.keyboard.press('Enter');await expect(page.locator('#login')).toBeFocused();
   await signIn(page,service);await expect(page.locator('#overview-stats')).toContainText('105');await expect(page.locator('#workspace-name')).toHaveText('ui_fixture');
   await expect(page.locator('#overview-sources')).toContainText('Claude Code');await expect(page.locator('#overview-sources')).toContainText('Codex');
   await reflow(page);await accessible(page);await screenshot(page,info,'overview');
 });
 test('activity supports search, older pages, browser history and session drill-down',async({page,service},info)=>{
   await signIn(page,service);await navigate(page,'activity');await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
-  await page.getByRole('button',{name:'Next â†’',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(5);
-  await page.getByRole('button',{name:'â† Previous',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
+  const activityUrl=page.url();await page.locator('#skip-link').focus();await page.keyboard.press('Enter');await expect(page.locator('#main-content')).toBeFocused();expect(page.url()).toBe(activityUrl);
+  await page.getByRole('button',{name:'Next \u2192',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(5);
+  await page.getByRole('button',{name:'\u2190 Previous',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
   await page.getByLabel('Search activity',{exact:true}).fill('unique search phrase');await page.getByRole('button',{name:'Apply',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(1);
   await expect(page).toHaveURL(/search=unique\+search\+phrase/);await page.goBack();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
-  await page.locator('#activity-results [data-event="fixture-000"]').click();await expect(page.locator('#inspector')).toBeVisible();await page.getByRole('button',{name:'View session â†’',exact:true}).click();await settled(page);
+  await page.locator('#activity-results [data-event="fixture-000"]').click();await expect(page.locator('#inspector')).toBeVisible();await page.getByRole('button',{name:'View session \u2192',exact:true}).click();await settled(page);
   await expect(page.locator('#session-scope')).toContainText('fixture-session-review');await expect(page.locator('#activity-results .activity-row')).toHaveCount(3);
   await reflow(page);await accessible(page);await screenshot(page,info,'activity-session');
 });

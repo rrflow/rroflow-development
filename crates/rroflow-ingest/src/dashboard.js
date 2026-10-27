@@ -67,6 +67,7 @@
     $('search').value = ''; $('key').value = ''; $('inspector').close(); $('setup-dialog').close(); $('research-dialog').close();
     $('main-content').setAttribute('aria-busy','false');
     $('app').hidden = true; $('login').hidden = false; $('loading').hidden = true;
+    $('skip-link').setAttribute('href','#login');
     $('toast').hidden = true; showError('');
   }
   function options(id, label, entries, selected) {
@@ -252,6 +253,7 @@
       await api('/v1/whoami');
       if (g !== generation) return;
       signedIn = true; $('login').hidden = true; $('app').hidden = false; $('key').value = '';
+      $('skip-link').setAttribute('href','#main-content');
       try { if (key) sessionStorage.setItem('rroflow.key',key); } catch (_) {}
       await load();
     } catch (e) { if (g === generation && e.name !== 'AbortError') $('login-error').textContent = e.message; }
@@ -296,6 +298,7 @@
   };
   $('refresh').onclick = load;
   $('key-form').onsubmit = e => { e.preventDefault(); key = $('key').value.trim(); return openWorkspace(); };
+  $('skip-link').onclick = e => { e.preventDefault(); ($('app').hidden ? $('login') : $('main-content')).focus(); };
   $('signin').onclick = () => { key = ''; try { sessionStorage.removeItem('rroflow.key'); } catch (_) {} };
   $('logout').onclick = async () => {
     clearPrivateView(); key = ''; try { sessionStorage.removeItem('rroflow.key'); } catch (_) {}

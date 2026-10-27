@@ -86,6 +86,14 @@ review. It uses a fresh server/store in CI, never the private serving preview or
 personal browser. Fixture screenshots are not evidence of real captured activity.
 Manual visual/assistive-technology review and hosted sign-in remain separate gates.
 
+The first rendered CI run passed eight of twelve scenarios. It exposed insufficient
+contrast on light status badges; two pagination scenarios also failed because of
+incorrectly encoded labels in the test. Corrections darken the accent, keep skip
+navigation on visible content without changing the current route, and repair the
+test labels. Screenshot review also moved the phone menu shadow to its open state
+and arranged overview sources/signals beside recent activity instead of stretching
+one short panel down the page. These changes require the follow-up CI result.
+
 ## Remaining product acceptance
 
 - Activate a reviewed build and verify the UI against real records in the serving

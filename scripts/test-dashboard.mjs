@@ -60,14 +60,26 @@ async function page({signedIn=false,enabled=true,turns=2,previousKey=false,recor
 test('account sign-in wins over a stale key; logout clears private data',async()=>{
   const p=await page({signedIn:true,previousKey:true});
   assert.equal(p.el.get('app').hidden,false);assert.equal(p.el.get('login').hidden,true);
+  assert.equal(p.el.get('skip-link').getAttribute('href'),'#main-content');
   assert.match(p.el.get('overview-sources').innerHTML,/Claude Code/);assert.match(p.el.get('overview-sources').innerHTML,/Codex/);
   assert.equal(p.storage.size,0);assert.equal(p.requests.some(r=>r.init.headers?.Authorization),false);
   await p.el.get('logout').onclick();assert.equal(p.el.get('app').hidden,true);assert.equal(p.el.get('overview-sources').innerHTML,'');
+  assert.equal(p.el.get('skip-link').getAttribute('href'),'#login');
   assert.equal(p.requests.at(-1).init.method,'POST');assert.equal(p.requests.at(-1).init.headers['X-Rroflow-Request'],'dashboard');
 });
 test('anonymous and unconfigured sign-in remain outside the dashboard',async()=>{
   const p=await page();assert.equal(p.el.get('app').hidden,true);assert.equal(p.el.get('signin').hidden,false);
   const disabled=await page({enabled:false});assert.equal(disabled.el.get('signin').hidden,true);assert.match(disabled.el.get('signin-status').textContent,/not enabled/);
+});
+
+test('skip navigation focuses visible content without changing the activity route',async()=>{
+  for(const signedIn of [false,true]){
+    const p=await page({signedIn,hash:'#activity?search=repair'});let focused='',prevented=false;
+    for(const id of ['login','main-content'])p.el.get(id).focus=()=>{focused=id;};
+    p.el.get('skip-link').onclick({preventDefault(){prevented=true;}});
+    assert.equal(focused,signedIn?'main-content':'login');assert.equal(prevented,true);
+    assert.equal(p.location.hash,'#activity?search=repair');
+  }
 });
 test('empty workspace offers connection without claiming online sources',async()=>{
   const p=await page({signedIn:true,turns:0});assert.equal(p.el.get('getting-started').hidden,false);
@@ -143,5 +155,5 @@ test('large tool traces are bounded until explicitly expanded',async()=>{
 test('dashboard assets are external and tab panels have explicit accessible relationships',()=>{
   assert.doesNotMatch(html,/<style>|<script>/);assert.match(html,/src="\/assets\/dashboard.js"/);
   for(const tab of ['conversation','tools','signals','details']) {assert.match(html,new RegExp('aria-controls="pane-'+tab+'"'));assert.match(html,new RegExp('aria-labelledby="tab-'+tab+'"'));}
-  assert.match(html,/href="#main-content"/);assert.match(html,/aria-label="Main navigation"/);
+  assert.match(html,/id="skip-link" class="skip-link" href="#login"/);assert.match(html,/aria-label="Main navigation"/);
 });
