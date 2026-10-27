@@ -283,6 +283,7 @@ impl AppState {
 pub enum ApiError {
     Unauthorized,
     Conflict,
+    SettingsConflict,
     /// Nomen could not be asked about a token; retry. Never a refusal.
     IssuerUnavailable,
     BadRequest(String),
@@ -293,6 +294,10 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (code, msg) = match self {
             ApiError::Conflict => (StatusCode::CONFLICT, "capture identity conflict".into()),
+            ApiError::SettingsConflict => (
+                StatusCode::CONFLICT,
+                "Signal settings changed in another tab. Refresh before saving.".into(),
+            ),
             ApiError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "missing or unknown credential: an ingest key or a Nomen sign-in".to_string(),
@@ -338,7 +343,7 @@ fn check_record(r: &TurnRecord) -> Result<(), String> {
 async fn post_turns(
     State(st): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<TurnsBody>,
+    Json(mut body): Json<TurnsBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let devspace = st.caller(&headers).await?.devspace;
     if body.turns.len() > st.max_batch {
@@ -350,6 +355,17 @@ async fn post_turns(
     }
     for (i, r) in body.turns.iter().enumerate() {
         check_record(r).map_err(|m| ApiError::BadRequest(format!("turns[{i}]: {m}")))?;
+    }
+    let settings = st.store.signal_config(&devspace).await.map_err(internal)?;
+    for turn in &mut body.turns {
+        // This namespace belongs to the receiving devspace, never the submitting client.
+        turn.signals
+            .retain(|hit| !hit.signal.starts_with("custom_"));
+        for signal in settings.custom.iter().filter(|s| s.enabled) {
+            if let rroflow_core::custom::Evaluation::Match(hit) = signal.evaluate(turn) {
+                turn.signals.push(hit);
+            }
+        }
     }
     let up = st
         .store
@@ -503,16 +519,65 @@ async fn get_signal_settings(
 async fn put_signal_settings(
     State(st): State<AppState>,
     headers: HeaderMap,
-    Json(cfg): Json<SignalConfig>,
+    Json(mut cfg): Json<SignalConfig>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let devspace = st.caller(&headers).await?.devspace;
     cfg.validate().map_err(ApiError::BadRequest)?;
-    st.store
+    let old = st.store.signal_config(&devspace).await.map_err(internal)?;
+    if old.revision != cfg.revision {
+        return Err(ApiError::SettingsConflict);
+    }
+    cfg.validate_update(&old).map_err(ApiError::BadRequest)?;
+    let saved = st
+        .store
         .set_signal_config(&devspace, &cfg)
         .await
         .map_err(internal)?;
+    if !saved {
+        return Err(ApiError::SettingsConflict);
+    }
+    cfg.revision += 1;
     Ok(Json(
         serde_json::json!({ "devspace": devspace, "settings": cfg }),
+    ))
+}
+
+async fn preview_signal(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(rule): Json<rroflow_core::custom::CustomSignal>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let devspace = st.caller(&headers).await?.devspace;
+    rule.validate().map_err(ApiError::BadRequest)?;
+    let turns = st
+        .store
+        .list(
+            &devspace,
+            101,
+            &store::TurnFilter {
+                agent: rule.agent.as_deref(),
+                project: rule.project.as_deref(),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(internal)?;
+    let mut matches = vec![];
+    let mut evaluated = 0;
+    let mut unavailable = 0;
+    for turn in turns.iter().take(100) {
+        match rule.evaluate(turn) {
+            rroflow_core::custom::Evaluation::Match(hit) => {
+                evaluated += 1;
+                matches.push(serde_json::json!({"event_id":turn.event_id,"hit":hit}));
+            }
+            rroflow_core::custom::Evaluation::NoMatch => evaluated += 1,
+            rroflow_core::custom::Evaluation::Unavailable => unavailable += 1,
+            rroflow_core::custom::Evaluation::OutOfScope => {}
+        }
+    }
+    Ok(Json(
+        serde_json::json!({"scanned":turns.len().min(100),"evaluated":evaluated,"unavailable":unavailable,"more_history":turns.len()>100,"matches":matches}),
     ))
 }
 
@@ -588,6 +653,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
         .route("/v1/signals", get(get_signals))
+        .route("/v1/signals/preview", post(preview_signal))
         .route(
             "/v1/signals/settings",
             get(get_signal_settings).put(put_signal_settings),

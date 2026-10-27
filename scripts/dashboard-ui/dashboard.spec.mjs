@@ -40,15 +40,15 @@ test('turn evidence is safe, keyboard-accessible and supports persisted verdicts
   await reflow(page);await accessible(page);await screenshot(page,info,'turn-conversation');
   await page.getByRole('tab',{name:'Conversation',exact:true}).focus();await page.keyboard.press('ArrowRight');await expect(page.getByRole('tab',{name:'Tools',exact:true})).toBeFocused();
   await expect(page.locator('#pane-tools .tool-item')).toHaveCount(50);await page.getByRole('button',{name:'Show 50 more tools'}).click();await expect(page.locator('#pane-tools .tool-item')).toHaveCount(100);
-  await page.getByRole('tab',{name:'Signals',exact:true}).click();await page.getByRole('button',{name:'MATCH',exact:true}).click();await expect(page.locator('#review-status')).toContainText('Verdict saved');
-  await expect(page.locator('#pane-signals')).toContainText('Saved: MATCH');await accessible(page);await screenshot(page,info,'signal-verdict');
+  await page.getByRole('tab',{name:'Signals',exact:true}).click();await page.getByRole('button',{name:'Yes, this matches',exact:true}).click();await expect(page.locator('#review-status')).toContainText('Decision saved');
+  await expect(page.locator('#pane-signals')).toContainText('Saved: Matches');await accessible(page);await screenshot(page,info,'signal-verdict');
   await page.keyboard.press('Escape');await expect(page.locator('#inspector')).toBeHidden();await expect(page.locator('#activity-results [data-event="fixture-000"]')).toBeFocused();
   const reviews=await (await fetch(service.base+'/v1/reviews',{headers:service.headers})).json();expect(reviews.reviews.some(r=>r.request.event_id==='fixture-000'&&r.request.verdict==='match'&&r.request.turn_digest.length===64)).toBe(true);
-  await navigate(page,'learning');await expect(page.locator('#learning-reviews')).toContainText('MATCH');
+  await navigate(page,'learning');await expect(page.locator('#learning-reviews')).toContainText('Matches');
 });
 test('all workspace destinations reflow without automatic accessibility violations',async({page,service},info)=>{
   await signIn(page,service);
-  for(const route of ['signals','sources','learning','settings','research']){await navigate(page,route);await reflow(page);await accessible(page);await screenshot(page,info,route);}
+  for(const route of ['signals','sources','projects','library','datasets','learning','settings','research']){await navigate(page,route);await reflow(page);await accessible(page);await screenshot(page,info,route);}
 });
 test('settings persist, dark appearance reflows and research opens without leaving the app',async({page,service},info)=>{
   await signIn(page,service);await navigate(page,'settings');
@@ -65,3 +65,34 @@ test('phone navigation is removed from focus while closed and sign-out clears th
   expect(await page.evaluate(()=>sessionStorage.getItem('rroflow.key'))).toBeNull();await expect(page.locator('#overview-stats')).toBeEmpty();
 });
 
+
+
+test('a person creates, tests, uses and pauses an organized custom signal',async({page,service},info)=>{
+  await signIn(page,service);await navigate(page,'library');
+  await expect(page.getByRole('heading',{name:'Blocked handoff',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Create a signal',exact:true}).click();
+  await page.getByLabel('Signal name',{exact:true}).fill('Deployment warning');await page.locator('#custom-group').fill('Release checks');
+  await page.locator('#custom-kind').selectOption('response_contains');await page.locator('#custom-text').fill('permission');
+  await page.getByText('Optional: choose agents or projects',{exact:true}).click();await page.locator('#custom-agent').selectOption('codex');await page.locator('#custom-project').selectOption('Fixture / release-service');
+  await expect(page.getByRole('button',{name:'Save and turn on',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'Try on recent activity',exact:true}).click();
+  await expect(page.locator('#builder-status')).toContainText('1 match');await expect(page.locator('#builder-status')).toContainText('1 could not be checked');
+  await reflow(page);await accessible(page);await screenshot(page,info,'custom-signal-preview');
+  await page.getByRole('button',{name:'Save and turn on',exact:true}).click();await expect(page.locator('#signal-builder')).toBeHidden();await settled(page);
+  const card=page.locator('.library-card').filter({has:page.getByRole('heading',{name:'Deployment warning',exact:true})});
+  await expect(card).toContainText('0 recorded matches');
+  const config=await (await fetch(service.base+'/v1/signals/settings',{headers:service.headers})).json();const rule=config.settings.custom.find(s=>s.name==='Deployment warning');expect(rule).toBeTruthy();
+  const turn={...structuredClone(service.turns[0]),event_id:'fixture-custom-arrival'};
+  expect((await fetch(service.base+'/v1/turns',{method:'POST',headers:service.headers,body:JSON.stringify({turns:[turn]})})).ok).toBe(true);
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);await expect(card).toContainText('1 recorded match');
+  await screenshot(page,info,'signal-library');await card.getByRole('link',{name:'View findings',exact:true}).click();await settled(page);
+  await page.locator('#signal-results').getByRole('button',{name:'Inspect evidence',exact:false}).click();
+  const finding=page.locator('#pane-signals .signal-card').filter({has:page.getByRole('heading',{name:'Deployment warning',exact:true})});
+  await expect(finding).toContainText('permission');await finding.getByRole('button',{name:'Yes, this matches',exact:true}).click();await expect(page.locator('#review-status')).toContainText('Decision saved');
+  await screenshot(page,info,'custom-signal-evidence');await page.getByRole('button',{name:'Close turn',exact:true}).click();
+  await navigate(page,'library');await card.getByRole('button',{name:'Pause Deployment warning',exact:true}).click();await expect(card).toContainText('Paused');
+  turn.event_id='fixture-custom-paused';expect((await fetch(service.base+'/v1/turns',{method:'POST',headers:service.headers,body:JSON.stringify({turns:[turn]})})).ok).toBe(true);
+  const history=await (await fetch(service.base+'/v1/turns?signal='+rule.id,{headers:service.headers})).json();expect(history.turns).toHaveLength(1);
+  await page.reload();await expect(page.locator('#app')).toBeVisible();await settled(page);await expect(card).toContainText('Paused');
+  await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('Saved decisions');await expect(page.locator('#dataset-readiness')).toContainText('Not available');
+});

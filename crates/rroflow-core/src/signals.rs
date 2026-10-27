@@ -160,6 +160,12 @@ pub fn spec(id: &str) -> Option<&'static SignalSpec> {
 /// back to the catalogue defaults; values outside an option's range are clamped.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SignalConfig {
+    /// Optimistic concurrency token for workspace edits.
+    #[serde(default)]
+    pub revision: u64,
+    /// Cloud rules run only on received projections, not private collector text.
+    #[serde(default)]
+    pub custom: Vec<crate::custom::CustomSignal>,
     /// Signal ids switched off.
     #[serde(default)]
     pub disabled: std::collections::BTreeSet<String>,
@@ -172,6 +178,16 @@ impl SignalConfig {
     /// Check a config someone submitted: every signal and option must be in the catalogue
     /// and every value inside its range. Returns the first problem in plain words.
     pub fn validate(&self) -> Result<(), String> {
+        if self.revision >= 9_007_199_254_740_991 || self.custom.len() > 32 {
+            return Err("At most 32 custom signals are supported in this version.".into());
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        for signal in &self.custom {
+            signal.validate()?;
+            if !ids.insert(&signal.id) {
+                return Err("Custom signal IDs must be unique.".into());
+            }
+        }
         for id in &self.disabled {
             if spec(id).is_none() {
                 return Err(format!("unknown signal {id:?}"));
@@ -191,6 +207,22 @@ impl SignalConfig {
                         o.min, o.max
                     ));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Keep rule identities meaningful for old findings. Pause instead of deleting;
+    /// create a fresh ID for a changed definition.
+    pub fn validate_update(&self, old: &Self) -> Result<(), String> {
+        for previous in &old.custom {
+            let Some(next) = self.custom.iter().find(|s| s.id == previous.id) else {
+                return Err("Pause an existing signal instead of removing its definition.".into());
+            };
+            let mut comparable = next.clone();
+            comparable.enabled = previous.enabled;
+            if comparable != *previous {
+                return Err("Create a new signal to change a saved definition.".into());
             }
         }
         Ok(())

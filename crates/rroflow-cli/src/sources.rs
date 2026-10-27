@@ -109,12 +109,30 @@ fn batch_paths(store: &Path) -> Result<Vec<PathBuf>> {
 
 impl Journal {
     fn open(store: &Path) -> Result<Self> {
-        let binding: Binding = serde_json::from_slice(&fs::read(store.join("source.json"))?)?;
+        let mut binding: Binding = serde_json::from_slice(&fs::read(store.join("source.json"))?)?;
         ensure!(
             binding.schema == "rroflow.source/v1",
             "unknown source binding version"
         );
         capture::endpoint(&binding.endpoint)?;
+        let mut cached = vec![];
+        for entry in fs::read_dir(store)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("settings-") && name.ends_with(".json") {
+                ensure!(
+                    entry.file_type()?.is_file(),
+                    "settings cache must be a regular file"
+                );
+                cached.push(entry.path());
+            }
+        }
+        cached.sort();
+        if let Some(path) = cached.last() {
+            let cfg: SignalConfig = serde_json::from_slice(&fs::read(path)?)?;
+            cfg.validate().map_err(anyhow::Error::msg)?;
+            binding.signals = cfg;
+        }
         let mut journal = Self {
             store: store.into(),
             binding,
@@ -136,6 +154,41 @@ impl Journal {
             }
         }
         Ok(journal)
+    }
+
+    fn accept_settings(&mut self, response: Value) -> Result<()> {
+        ensure!(
+            response["devspace"].as_str() == Some(&self.binding.devspace),
+            "settings belong to another devspace"
+        );
+        let cfg: SignalConfig = serde_json::from_value(response["settings"].clone())?;
+        cfg.validate().map_err(anyhow::Error::msg)?;
+        ensure!(
+            cfg.revision >= self.binding.signals.revision,
+            "server settings revision moved backwards; cached choices retained"
+        );
+        capture::write_once(
+            &self
+                .store
+                .join(format!("settings-{:020}.json", cfg.revision)),
+            &serde_json::to_vec(&cfg)?,
+        )?;
+        if cfg.disabled != self.binding.signals.disabled
+            || cfg.options != self.binding.signals.options
+        {
+            self.files.clear();
+        }
+        self.binding.signals = cfg;
+        Ok(())
+    }
+
+    fn refresh_settings(&mut self, sender: &account::Sender) -> Result<()> {
+        ensure!(
+            capture::endpoint(&sender.base)? == self.binding.endpoint,
+            "signed-in endpoint changed; settings not fetched"
+        );
+        let response = get(&client(), sender, "/v1/signals/settings")?;
+        self.accept_settings(response)
     }
 
     fn read_batch(&self, path: &Path) -> Result<Batch> {
@@ -475,19 +528,35 @@ pub(crate) fn run(command: Command) -> Result<()> {
             let mut cycle = 0u64;
             let mut retry_at = std::time::Instant::now();
             let mut backoff = interval_secs;
+            let mut settings_at = std::time::Instant::now();
             loop {
                 let mut report = journal.scan(cycle.is_multiple_of(60))?;
                 let capture_ok = report["errors"].as_array().is_some_and(|a| a.is_empty());
                 let mut upload_ok = true;
                 if !offline && std::time::Instant::now() >= retry_at {
-                    let result = (|| -> Result<usize> {
+                    let result = (|| -> Result<(usize, Option<String>)> {
                         let sender = account::sender()?
                             .context("sign-in unavailable; local queue retained")?;
-                        journal.deliver(&sender)
+                        let count = journal.deliver(&sender)?;
+                        let settings_error = if std::time::Instant::now() >= settings_at {
+                            settings_at = std::time::Instant::now() + Duration::from_secs(60);
+                            journal
+                                .refresh_settings(&sender)
+                                .err()
+                                .map(|e| format!("{e:#}"))
+                        } else {
+                            None
+                        };
+                        Ok((count, settings_error))
                     })();
                     match result {
-                        Ok(count) => {
+                        Ok((count, settings_error)) => {
                             report["acknowledged_revisions"] = count.into();
+                            report["signal_settings_revision"] =
+                                journal.binding.signals.revision.into();
+                            if let Some(error) = settings_error {
+                                report["settings_error"] = error.into();
+                            }
                             backoff = interval_secs;
                         }
                         Err(error) => {
@@ -550,6 +619,41 @@ mod tests {
         )
         .unwrap();
         Journal::open(root).unwrap()
+    }
+
+    #[test]
+    fn refreshed_signal_choices_are_bound_durable_and_monotonic() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = setup(dir.path(), "http://127.0.0.1:1");
+        let response =
+            json!({"devspace":"owner","settings":{"revision":2,"disabled":["mood"],"options":{}}});
+        journal.accept_settings(response.clone()).unwrap();
+        journal.accept_settings(response).unwrap();
+        assert!(
+            !Journal::open(dir.path())
+                .unwrap()
+                .binding
+                .signals
+                .enabled("mood")
+        );
+        assert!(
+            journal
+                .accept_settings(json!({"devspace":"other","settings":{"revision":3}}))
+                .is_err()
+        );
+        assert!(
+            journal
+                .accept_settings(json!({"devspace":"owner","settings":{"revision":1}}))
+                .is_err()
+        );
+        assert_eq!(journal.binding.signals.revision, 2);
+        assert!(
+            journal
+                .accept_settings(
+                    json!({"devspace":"owner","settings":{"revision":2,"disabled":[]}})
+                )
+                .is_err()
+        );
     }
 
     fn claude(root: &Path, id: usize) -> PathBuf {

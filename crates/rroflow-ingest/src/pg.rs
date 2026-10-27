@@ -512,12 +512,26 @@ impl PgStore {
         &self,
         devspace: &str,
         cfg: &SignalConfig,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("INSERT INTO devspaces (id) VALUES ($1) ON CONFLICT DO NOTHING")
             .bind(devspace)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("SELECT id FROM devspaces WHERE id=$1 FOR UPDATE")
+            .bind(devspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        let old: Option<Json<SignalConfig>> =
+            sqlx::query_scalar("SELECT config FROM signal_settings WHERE devspace_id=$1")
+                .bind(devspace)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if old.map(|j| j.0.revision).unwrap_or(0) != cfg.revision {
+            return Ok(false);
+        }
+        let mut saved = cfg.clone();
+        saved.revision += 1;
         sqlx::query(
             r#"
             INSERT INTO signal_settings (devspace_id, config) VALUES ($1, $2)
@@ -525,10 +539,10 @@ impl PgStore {
             "#,
         )
         .bind(devspace)
-        .bind(Json(cfg))
+        .bind(Json(&saved))
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
 }
