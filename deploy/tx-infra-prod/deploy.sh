@@ -14,9 +14,11 @@ ROOT=/opt/rroflow
 export RUSTUP_HOME=$ROOT/rust/rustup CARGO_HOME=$ROOT/rust/cargo
 export PATH=$CARGO_HOME/bin:$PATH
 LISTEN="${LISTEN:-127.0.0.1:8787}"
-# Public hostnames Caddy serves with TLS, all proxied to $LISTEN: the API and the dashboard.
-# Empty skips the proxy. Certificates are issued once each name's A record points here.
-PUBLIC_HOSTS="${PUBLIC_HOSTS-api.rroflow.ai app.rroflow.ai}"
+# Public hostnames a Caddy on this host serves with TLS, all proxied to $LISTEN. Empty (the
+# default) skips it. Not for Texas: there 443 is forwarded to the edge container, which ends
+# TLS for every service, so a Caddy on the host never gets a certificate. The Texas layout is
+# in docs/deploy/README.md; set this only on a host whose own ports 80/443 face the internet.
+PUBLIC_HOSTS="${PUBLIC_HOSTS-}"
 # Nomen sign-in for this host (project `rroflow`, Shippin Platform org). Used when the
 # ingest app's key file is present at $NOMEN_KEY_FILE.
 NOMEN_ISSUER="${NOMEN_ISSUER:-https://id.shippin.cloud}"
