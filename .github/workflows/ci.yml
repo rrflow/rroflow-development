@@ -57,3 +57,16 @@ jobs:
       - name: Parse a fixture transcript (no network)
         shell: bash
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
+
+  # One tag releases every package dist publishes, so their versions must move together:
+  # release-on-version reads the CLI's version, and a package left behind would never ship.
+  release-versions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Released packages share one version
+        run: |
+          v() { sed -n 's/^version = "\(.*\)"$/\1/p' "$1" | head -n 1; }
+          cli=$(v crates/rroflow-cli/Cargo.toml); ingest=$(v crates/rroflow-ingest/Cargo.toml)
+          echo "rroflow $cli, rroflow-ingest $ingest"
+          [ -n "$cli" ] && [ "$cli" = "$ingest" ]
