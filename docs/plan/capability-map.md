@@ -58,5 +58,5 @@ Sources:
 |---|---|---|---|---|
 | Tenancy | org → projects (unclaimed slugs hidden) | org → projects | **devspace** owned by the user's Nomen account, attachable to their Shippin.cloud tenant → projects; the credential decides the devspace, so a client cannot write elsewhere | built (keys); Nomen sign-in planned |
 | Store | SaaS | SaaS | Postgres (devspaces, turns, signal hits, settings) with embedded migrations; JSONL for single-user local runs | built |
-| Hosting | SaaS | SaaS | rroflow.ai ingest on tx-infra-prod with Postgres; local-first collector works without it | built (verified locally on Postgres); host deploy pending the root run |
+| Hosting | SaaS | SaaS | rroflow.ai ingest on tx-infra-prod with Postgres; local-first collector works without it | built; running on the Texas host since 2026-10-26 (self-test passed); moving into its own VM behind the edge ([../deploy/README.md](../deploy/README.md)) |
 | MCP monitoring | — | MCP server tools, resources, errors | MCP tool calls appear as tool spans in the turn (`mcp__*` names) | built (as tool spans) |
