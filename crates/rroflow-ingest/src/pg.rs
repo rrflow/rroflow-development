@@ -391,11 +391,17 @@ impl PgStore {
               AND ($4::text IS NULL OR t.agent = $4)
               AND ($5::text IS NULL OR coalesce(nullif(t.project, ''), nullif(t.record->>'cwd', ''), '(none)') = $5)
               AND ($6::text IS NULL OR t.record->>'session_id' = $6)
+              AND ($7::text IS NULL OR position(lower($7) in lower(concat_ws(E'\n', t.record->>'session_id', t.record->>'model', t.record#>>'{content,input}', t.record#>>'{content,output}'))) > 0)
+              AND ($8::timestamptz IS NULL OR t.started_at >= $8)
+              AND (NOT $9::boolean OR
+                   ($10::timestamptz IS NOT NULL AND (t.started_at < $10 OR t.started_at IS NULL)) OR
+                   (t.started_at IS NOT DISTINCT FROM $10 AND t.event_id COLLATE "C" > $11))
+              AND ($12::text IS NULL OR t.event_id = $12)
               AND ($2::text IS NULL OR EXISTS (
                     SELECT 1 FROM signal_hits h
                     WHERE h.devspace_id = t.devspace_id AND h.event_id = t.event_id
                       AND h.signal = $2))
-            ORDER BY t.started_at DESC NULLS LAST, t.event_id
+            ORDER BY t.started_at DESC NULLS LAST, t.event_id COLLATE "C"
             LIMIT $3
             "#,
         )
@@ -405,6 +411,12 @@ impl PgStore {
         .bind(f.agent)
         .bind(f.project)
         .bind(f.session)
+        .bind(f.search)
+        .bind(f.since)
+        .bind(f.before.is_some())
+        .bind(f.before.and_then(|(at, _)| at))
+        .bind(f.before.map(|(_, id)| id))
+        .bind(f.event)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|j| j.0).collect())

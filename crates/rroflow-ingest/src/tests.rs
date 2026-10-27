@@ -400,13 +400,142 @@ async fn dashboard_is_served_without_a_key_and_reads_only_with_one() {
             .contains("connect-src 'self'")
     );
     let html = resp.into_body().collect().await.unwrap().to_bytes();
-    assert!(std::str::from_utf8(&html).unwrap().contains("/v1/summary"));
+    assert!(
+        std::str::from_utf8(&html)
+            .unwrap()
+            .contains("/assets/dashboard.js")
+    );
+    for (path, kind, needle) in [
+        ("/assets/dashboard.js", "text/javascript", "/v1/summary"),
+        ("/assets/dashboard.css", "text/css", "@media"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with(kind)
+        );
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(std::str::from_utf8(&bytes).unwrap().contains(needle));
+    }
     let (code, _) = call(
         &app,
         Request::get("/v1/summary").body(Body::empty()).unwrap(),
     )
     .await;
     assert_eq!(code, StatusCode::UNAUTHORIZED);
+    let (code, _) = call(
+        &app,
+        Request::get("/assets/research.json")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+    let (code, notes) = call(&app, get("key-jesse", "/assets/research.json")).await;
+    assert_eq!(code, StatusCode::OK);
+    assert!(notes.as_array().unwrap().iter().any(|note| note["path"]
+        == "docs/research/raindrop/ux-settings.md"
+        && !note["text"].as_str().unwrap().is_empty()));
+}
+
+#[tokio::test]
+async fn turn_pages_keep_timestamp_ties_and_undated_records_without_duplicates() {
+    for backend in backends() {
+        let app = Env::new(backend, "pages").app().await;
+        let mut turns: Vec<_> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|id| rec(id, None))
+            .collect();
+        turns[0].started_at = "2026-10-27T00:00:00Z".into();
+        turns[1].started_at = "2026-10-26T20:00:00-04:00".into();
+        turns[2].started_at = "2026-10-26T20:00:00Z".into();
+        turns[3].started_at.clear();
+        turns[4].started_at.clear();
+        assert_eq!(
+            call(&app, post("key-jesse", &turns)).await.0,
+            StatusCode::OK
+        );
+        let mut url = "/v1/turns?limit=1".to_string();
+        let mut found = Vec::new();
+        for _ in 0..6 {
+            let (status, body) = call(&app, get("key-jesse", &url)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["turns"].as_array().unwrap().len(), 1);
+            found.push(body["turns"][0]["event_id"].as_str().unwrap().to_string());
+            if let Some(cursor) = body["next_cursor"].as_str() {
+                url = format!("/v1/turns?limit=1&cursor={cursor}");
+                let (_, other) = call(&app, get("key-other", &url)).await;
+                assert_eq!(other["turns"], serde_json::json!([]));
+            } else {
+                break;
+            }
+        }
+        assert_eq!(found, ["a", "b", "c", "d", "e"]);
+    }
+}
+
+#[tokio::test]
+async fn turn_search_is_literal_date_filtered_and_exact_lookup_is_tenant_scoped() {
+    for backend in backends() {
+        let app = Env::new(backend, "search").app().await;
+        let mut a = rec("a", Some("blocked_handoff"));
+        a.model = Some("Model-%_One".into());
+        a.started_at = "2026-10-27T00:00:00Z".into();
+        let mut b = rec("b", None);
+        b.model = Some("other".into());
+        b.started_at = "2026-10-20T00:00:00Z".into();
+        call(&app, post("key-jesse", &[a, b])).await;
+        for query in [
+            "search=%25_",
+            "search=MODEL-%25_ONE",
+            "since=2026-10-26T00%3A00%3A00Z",
+            "event=a",
+        ] {
+            let (status, body) = call(
+                &app,
+                get("key-jesse", &format!("/v1/turns?{query}&limit=1")),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["turns"][0]["event_id"], "a");
+            assert!(body["next_cursor"].is_null());
+            let (_, other) = call(&app, get("key-other", &format!("/v1/turns?{query}"))).await;
+            assert_eq!(other["turns"], serde_json::json!([]));
+        }
+        let (_, body) = call(
+            &app,
+            get("key-jesse", "/v1/turns?search=other&signal=blocked_handoff"),
+        )
+        .await;
+        assert_eq!(body["turns"], serde_json::json!([]));
+    }
+}
+
+#[tokio::test]
+async fn invalid_turn_navigation_is_rejected_instead_of_silently_widening_the_view() {
+    let app = Env::new(Backend::Jsonl, "bad-nav").app().await;
+    for query in ["cursor=bad", "since=yesterday", "seach=typo"] {
+        assert_eq!(
+            call(&app, get("key-jesse", &format!("/v1/turns?{query}")))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let long = "x".repeat(201);
+    assert_eq!(
+        call(&app, get("key-jesse", &format!("/v1/turns?search={long}")))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
 }
 
 #[tokio::test]

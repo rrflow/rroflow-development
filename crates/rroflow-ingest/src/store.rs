@@ -45,6 +45,10 @@ pub struct TurnFilter<'a> {
     pub signal: Option<&'a str>,
     pub project: Option<&'a str>,
     pub session: Option<&'a str>,
+    pub search: Option<&'a str>,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub before: Option<(Option<chrono::DateTime<chrono::Utc>>, &'a str)>,
+    pub event: Option<&'a str>,
 }
 
 fn project(r: &TurnRecord) -> &str {
@@ -313,6 +317,32 @@ impl JsonlStore {
                     .filter(|r| f.agent.is_none_or(|a| r.agent == a))
                     .filter(|r| f.project.is_none_or(|p| project(r) == p))
                     .filter(|r| f.session.is_none_or(|s| r.session_id == s))
+                    .filter(|r| f.event.is_none_or(|id| r.event_id == id))
+                    .filter(|r| {
+                        f.since.is_none_or(|since| {
+                            crate::pg::timestamp(&r.started_at).is_some_and(|at| at >= since)
+                        })
+                    })
+                    .filter(|r| {
+                        f.before.is_none_or(|(at, id)| {
+                            let time = crate::pg::timestamp(&r.started_at);
+                            time < at || (time == at && r.event_id.as_str() > id)
+                        })
+                    })
+                    .filter(|r| {
+                        f.search.is_none_or(|query| {
+                            let content = r.content.as_ref();
+                            [
+                                r.session_id.as_str(),
+                                r.model.as_deref().unwrap_or(""),
+                                content.map_or("", |c| c.input.as_str()),
+                                content.map_or("", |c| c.output.as_str()),
+                            ]
+                            .join("\n")
+                            .to_lowercase()
+                            .contains(&query.to_lowercase())
+                        })
+                    })
                     .filter(|r| {
                         f.signal
                             .is_none_or(|s| r.signals.iter().any(|h| h.signal == s))
@@ -321,7 +351,11 @@ impl JsonlStore {
                     .collect()
             })
             .unwrap_or_default();
-        v.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        v.sort_by(|a, b| {
+            crate::pg::timestamp(&b.started_at)
+                .cmp(&crate::pg::timestamp(&a.started_at))
+                .then_with(|| a.event_id.cmp(&b.event_id))
+        });
         v.truncate(limit);
         v
     }
