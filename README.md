@@ -33,6 +33,13 @@ The SDK capture branch adds [continuous session collection](docs/plan/source-col
 and project/session dashboard navigation. This is not yet an installed background
 service or a production hosted release.
 
+The [dashboard experience increment](docs/ux/dashboard-experience.md) adds focused
+navigation, searchable paginated activity, a turn inspector, signal reviews,
+settings and the complete research library. It is tested source on
+`codex/dashboard-experience`; local activation, visual acceptance and Texas hosted
+delivery remain open. Released v0.3.0 predates the `sources` workflow; use a build
+containing that feature before following its development setup commands.
+
 ```bash
 cargo build --release
 # See what your agents did, locally, sending nothing:

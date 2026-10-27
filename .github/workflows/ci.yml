@@ -32,8 +32,10 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Dashboard sign-in states
+      - name: Dashboard navigation, evidence and authentication states
         run: node --test scripts/test-dashboard.mjs
+      - name: Research source inventory is current
+        run: node scripts/index-research.mjs --check
       - name: Test
         run: cargo test --workspace --locked
       - name: Build collector and ingest for SDK proof

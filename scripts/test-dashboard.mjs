@@ -1,114 +1,146 @@
-// UI request/state tests using the shipped HTML, without a browser dependency.
-import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
+﻿// State, request and content-safety checks against the shipped script. No browser or provider network.
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-
-const html = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.html', import.meta.url), 'utf8');
-const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-async function page({ signedIn = false, enabled = true, turns = 2, previousKey = false, records = [] } = {}) {
-  const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, {
-    value: '', textContent: '', innerHTML: '', hidden: id === 'app' || id === 'signin', open: false,
-    replaceChildren() { this.innerHTML = ''; this.textContent = ''; },
-  }]));
-  const requests = [], storage = new Map(previousKey ? [["rroflow.key", "old-key"]] : []);
-  const sum = { devspace: 'mine', catalogue: { categories: [], signals: [] },
-    settings: { disabled: [], options: {} }, summary: {
-      turns, by_agent: turns ? { 'claude-code': 1, codex: 1 } : {}, signals_by_agent: {},
-      signals: {}, by_project: {}, tool_calls: 0, tool_errors: 0, input_tokens: 0,
-      output_tokens: 0, cache_read_tokens: 0, turns_without_usage: turns,
-    } };
-  const fetch = async (path, init = {}) => {
-    requests.push({ path, init });
-    let status = 200, data = {};
-    if (path === '/auth/config') data = { enabled };
-    else if (path === '/auth/logout') { signedIn = false; status = 204; }
-    else if (!signedIn) status = 401;
-    else if (path === '/v1/whoami') data = { devspace: 'mine', name: '<script>name</script>', via: 'nomen' };
-    else if (path.startsWith('/v1/events')) data = { events: [] };
-    else if (path === '/v1/summary') data = sum;
-    else if (path.startsWith('/v1/turns')) data = { turns: records };
-    return { ok: status < 400, status, json: async () => data };
+const html = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.html',import.meta.url),'utf8');
+const script = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.js',import.meta.url),'utf8');
+const settle = () => new Promise(resolve => setImmediate(resolve));
+function node(id = '', attrs = '') {
+  const data = Object.fromEntries([...attrs.matchAll(/data-([\w-]+)="([^"]*)"/g)].map(([,k,v]) => [k.replace(/-([a-z])/g,(_,c) => c.toUpperCase()),v]));
+  const values = new Map(), classes = new Set();
+  return {id,dataset:data,value:'',textContent:'',innerHTML:'',hidden:false,disabled:false,open:false,checked:attrs.includes('checked'),tabIndex:0,
+    setAttribute(k,v) { values.set(k,String(v)); },getAttribute(k) { return values.get(k); },removeAttribute(k) { values.delete(k); },
+    hasAttribute(k) { return k.startsWith('data-') ? Object.hasOwn(data,k.slice(5).replace(/-([a-z])/g,(_,c) => c.toUpperCase())) : values.has(k); },
+    replaceChildren() { this.innerHTML = ''; this.textContent = ''; },close() { this.open = false; },showModal() { this.open = true; },focus() {},
+    closest() { return this; },classList:{add(c){classes.add(c);},remove(c){classes.delete(c);},toggle(c){if(classes.has(c)){classes.delete(c);return false;}classes.add(c);return true;}},
   };
-  runInNewContext(script, {
-    document: { getElementById: id => elements.get(id), querySelectorAll: () => [] },
-    fetch, URLSearchParams, location: { search: '' }, history: { replaceState() {} },
-    sessionStorage: { getItem: k => storage.get(k), setItem: (k,v) => storage.set(k,v), removeItem: k => storage.delete(k) },
-  });
-  await new Promise(resolve => setImmediate(resolve));
-  return { elements, requests, storage };
+}
+const sample = (id='one') => ({event_id:id,session_id:'session<&>',project:'project<&>',agent:'codex',started_at:'2026-10-27T10:00:00Z',model:'fixture',collector:'test',termination:'completed',usage:{},signals:[],tools:[],tools_unfinished:0});
+async function page({signedIn=false,enabled=true,turns=2,previousKey=false,records=[],hash='#overview',intercept,reviewRows=[]}={}) {
+  const elements = new Map([...html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)].map(([tag,id]) => [id,node(id,tag)]));
+  elements.get('app').hidden = true;
+  const staticNodes = [...html.matchAll(/<[^>]+data-[^>]*>/g)].map(([tag]) => node('',tag));
+  const dynamic = new Map();
+  const querySelectorAll = selector => {
+    const attr = selector.slice(1,-1), key = attr.slice(5).replace(/-([a-z])/g,(_,c) => c.toUpperCase());
+    const nodes = [...staticNodes,...elements.values()];
+    for (const e of elements.values()) for (const [tag] of e.innerHTML.matchAll(/<[^>]+data-[^>]*>/g)) {
+      if (!dynamic.has(tag)) { const n=node('',tag); n.value=tag.match(/ value="([^"]*)"/)?.[1] || ''; dynamic.set(tag,n); }
+      nodes.push(dynamic.get(tag));
+    }
+    return [...new Set(nodes)].filter(n => Object.hasOwn(n.dataset,key));
+  };
+  const documentEvents = {}, windowEvents = {}, requests = [], storage = new Map(previousKey ? [['rroflow.key','old-key']] : []);
+  const summary = {devspace:'mine',catalogue:{categories:[],signals:[{id:'blocked_handoff',meaning:'Blocked work',version:1,options:[]}]},settings:{disabled:[],options:{}},summary:{turns,by_agent:turns ? {'claude-code':1,codex:1} : {},signals_by_agent:{},signals:{},by_project:{},tool_calls:0,tool_errors:0}};
+  const location = {search:'',hash,hostname:'127.0.0.1',origin:'http://test.invalid'};
+  const fetch = async (path,init={}) => {
+    requests.push({path,init});
+    if (intercept) { const result = await intercept(path,init); if (result) return result; }
+    let status=200, data={};
+    if (path === '/auth/config') data={enabled};
+    else if (path === '/auth/logout') { signedIn=false;status=204; }
+    else if (!signedIn) status=401;
+    else if (path === '/v1/whoami') data={devspace:'mine',via:'nomen'};
+    else if (path === '/v1/summary') data=summary;
+    else if (path.startsWith('/v1/turns')) { const q=new URL(path,'https://test.invalid').searchParams; data={turns:q.get('event') ? records.filter(t=>t.event_id===q.get('event')) : records,revisions:Object.fromEntries(records.map(t=>[t.event_id,'digest-'+t.event_id])),next_cursor:records.length ? 'older' : null}; }
+    else if (path.startsWith('/v1/reviews')) data={reviews:reviewRows};
+    else if (path.startsWith('/v1/events')) data={events:[]};
+    else if (path === '/v1/signals/settings') data={settings:JSON.parse(init.body)};
+    else if (path === '/assets/research.json') data=JSON.parse(readFileSync(new URL('../crates/rroflow-ingest/src/research.json',import.meta.url),'utf8'));
+    return {ok:status<400,status,json:async()=>data};
+  };
+  const document={getElementById:id=>elements.get(id),querySelectorAll,documentElement:{dataset:{}},addEventListener:(name,fn)=>{documentEvents[name]=fn;}};
+  runInNewContext(script,{document,fetch,URLSearchParams,location,history:{replaceState(){}},window:{addEventListener:(name,fn)=>{windowEvents[name]=fn;},matchMedia:()=>({matches:false,addEventListener(){}})},navigator:{clipboard:{writeText:async()=>{}}},AbortController,crypto:{randomUUID:()=> 'test-uuid'},setTimeout:()=>0,clearTimeout(){},
+    sessionStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},localStorage:{getItem:()=>null,setItem(){}}});
+  await settle(); await settle();
+  return {el:elements,requests,storage,location,document,summary,async route(hash){location.hash=hash;await windowEvents.hashchange();},async click(dataset,id=''){const n=node(id);n.dataset=dataset;await documentEvents.click({target:n});},settle};
 }
 
-test('signed-in landing shows both agents from the account summary without exposing a token', async () => {
-  const { elements: el, requests, storage } = await page({ signedIn: true, previousKey: true });
-  assert.equal(el.get('app').hidden, false);
-  assert.equal(el.get('login').hidden, true);
-  assert.match(el.get('agents').innerHTML, /Claude Code/);
-  assert.match(el.get('agents').innerHTML, /Codex/);
-  assert.equal((el.get('agents').innerHTML.match(/Captured activity/g) || []).length, 2);
-  assert.equal(storage.size, 0);
-  assert.equal(requests.some(r => r.init.headers?.Authorization), false);
-  await el.get('logout').onclick();
-  assert.equal(el.get('app').hidden, true);
-  assert.equal(el.get('agents').innerHTML, '');
-  assert.equal(requests.at(-1).init.method, 'POST');
-  assert.equal(requests.at(-1).init.headers['X-Rroflow-Request'], 'dashboard');
+test('account sign-in wins over a stale key; logout clears private data',async()=>{
+  const p=await page({signedIn:true,previousKey:true});
+  assert.equal(p.el.get('app').hidden,false);assert.equal(p.el.get('login').hidden,true);
+  assert.match(p.el.get('overview-sources').innerHTML,/Claude Code/);assert.match(p.el.get('overview-sources').innerHTML,/Codex/);
+  assert.equal(p.storage.size,0);assert.equal(p.requests.some(r=>r.init.headers?.Authorization),false);
+  await p.el.get('logout').onclick();assert.equal(p.el.get('app').hidden,true);assert.equal(p.el.get('overview-sources').innerHTML,'');
+  assert.equal(p.requests.at(-1).init.method,'POST');assert.equal(p.requests.at(-1).init.headers['X-Rroflow-Request'],'dashboard');
 });
-
-test('empty devspace labels both agents as having no captured activity', async () => {
-  const { elements: el } = await page({ signedIn: true, turns: 0 });
-  assert.equal((el.get('agents').innerHTML.match(/No activity in this view/g) || []).length, 3);
-  assert.doesNotMatch(el.get('agents').innerHTML, /Captured activity/);
+test('anonymous and unconfigured sign-in remain outside the dashboard',async()=>{
+  const p=await page();assert.equal(p.el.get('app').hidden,true);assert.equal(p.el.get('signin').hidden,false);
+  const disabled=await page({enabled:false});assert.equal(disabled.el.get('signin').hidden,true);assert.match(disabled.el.get('signin-status').textContent,/not enabled/);
 });
-
-test('anonymous and unconfigured states do not expose an empty signed-in dashboard', async () => {
-  const { elements: el } = await page();
-  assert.equal(el.get('login').hidden, false);
-  assert.equal(el.get('app').hidden, true);
-  assert.equal(el.get('signin').hidden, false);
-  const disabled = await page({ enabled: false });
-  assert.equal(disabled.elements.get('signin').hidden, true);
-  assert.match(disabled.elements.get('signin-status').textContent, /not been enabled/);
+test('empty workspace offers connection without claiming online sources',async()=>{
+  const p=await page({signedIn:true,turns:0});assert.equal(p.el.get('getting-started').hidden,false);
+  assert.equal((p.el.get('overview-sources').innerHTML.match(/No recorded activity/g)||[]).length,3);
+  assert.doesNotMatch(p.el.get('overview-sources').innerHTML,/Online/);
 });
-
-test('choosing account sign-in discards a stale key so it cannot override the account', async () => {
-  const { elements, storage } = await page();
-  storage.set('rroflow.key', 'old-key');
-  elements.get('signin').onclick();
-  assert.equal(storage.has('rroflow.key'), false);
+test('turn inspection escapes prompt, response and tool payloads, preserving missing content',async()=>{
+  const t={...sample(),content:{input:'Inspect <script>bad()</script>',output:'<img src=x onerror=bad()>'},tools:[{id:'tool',name:'exec',status:'error',input:'<unsafe>',output:'<output>'}]};
+  const p=await page({signedIn:true,records:[t,{...sample('two'),content:null}]});await p.click({event:'one'});
+  assert.equal(p.el.get('inspector').open,true);assert.match(p.el.get('pane-conversation').innerHTML,/&lt;script&gt;/);assert.match(p.el.get('pane-conversation').innerHTML,/&lt;img/);
+  assert.doesNotMatch(p.el.get('pane-conversation').innerHTML,/<script>|<img/);assert.match(p.el.get('pane-tools').innerHTML,/&lt;unsafe&gt;/);
+  await p.click({event:'two'});assert.match(p.el.get('pane-conversation').innerHTML,/Content capture is opt-in/);
 });
-
-test('turn inspector exposes captured text and tools safely and distinguishes absent content', async () => {
-  const record = {event_id:'turn-1',session_id:'session-1',agent:'codex',started_at:'2026-10-27T10:00:00Z',model:'fixture',collector:'test',termination:'completed',usage:{},signals:[],tools_unfinished:0,
-    content:{input:'Please inspect <script>secret()</script>',output:'Completed <img src=x onerror=alert(1)>'},
-    tools:[{id:'tool-1',name:'exec',status:'error',input:'<unsafe-input>',output:'<unsafe-output>'}]};
-  const result=await page({signedIn:true,records:[record,{...record,event_id:'turn-2',content:null}]});
-  const rendered=result.elements.get('turns').innerHTML;
-  assert.match(rendered,/Please inspect &lt;script&gt;/);
-  assert.match(rendered,/Completed &lt;img/);
-  assert.match(rendered,/&lt;unsafe-input&gt;/);
-  assert.match(rendered,/&lt;unsafe-output&gt;/);
-  assert.match(rendered,/Text was not included in this capture/);
-  assert.doesNotMatch(rendered,/<script>|<img src/);
-  assert(html.indexOf('id="activity"')<html.indexOf('id="signal-inbox"'));
-  assert.match(html,/href="#activity"/);
+test('search, project, session, time and cursor go to the scoped API; route changes preserve URL filters',async()=>{
+  const p=await page({signedIn:true,records:[sample()]});
+  const q=new URLSearchParams({project:'project<&>',session:'session<&>',search:'fix %_',agent:'codex',since:'2026-10-20T00:00:00Z'});
+  await p.route('#activity?'+q);
+  const request=new URL(p.requests.filter(r=>r.path.startsWith('/v1/turns')).at(-1).path,'https://test.invalid').searchParams;
+  for (const [k,v] of q) assert.equal(request.get(k),v);
+  assert.equal(p.el.get('search').value,'fix %_');assert.match(p.el.get('session-scope').textContent,/session<&>/);
+  const first=p.location.hash;p.el.get('next-page').onclick();assert.match(p.location.hash,/cursor=older/);await p.route(p.location.hash);p.el.get('previous-page').onclick();assert.equal(p.location.hash,first);
 });
-
-test('project/session filters request server-side selection and activity uses only returned records', async () => {
-  const record={event_id:'one',session_id:'session<&>',project:'project<&>',agent:'codex',started_at:'2026-10-27T10:00:00Z',collector:'test',termination:'completed',usage:{},signals:[],tools:[]};
-  const {elements:el,requests}=await page({signedIn:true,records:[record]});
-  assert.match(el.get('sessions').innerHTML,/session&lt;&amp;&gt;/);
-  assert.match(el.get('activity-chart').innerHTML,/value="1"/);
-  assert.match(el.get('activity-chart').innerHTML,/current view/);
-  el.get('projectFilter').value='project<&>';
-  el.get('sessionFilter').value='session<&>';
-  await el.get('projectFilter').onchange();
-  const query=new URL(requests.filter(r=>r.path.startsWith('/v1/turns')).at(-1).path,'https://test.invalid').searchParams;
-  assert.equal(query.get('project'),'project<&>');
-  assert.equal(query.get('session'),'session<&>');
-  await el.get('clearFilters').onclick();
-  assert.equal(requests.filter(r=>r.path.startsWith('/v1/turns')).at(-1).path,'/v1/turns?limit=100');
-  await el.get('logout').onclick();
-  assert.equal(el.get('sessions').innerHTML,'');
-  assert.equal(el.get('activity-chart').innerHTML,'');
+test('deep links retrieve one authorized event, never an unrelated workspace-wide record',async()=>{
+  const p=await page({signedIn:true,records:[sample()],hash:'#learning'});await p.click({event:'one'});
+  assert(p.requests.some(r=>r.path==='/v1/turns?event=one&limit=1'));assert.equal(p.el.get('inspector').open,true);
+});
+test('review writes the exact evidence digest and rule version, then shows saved verdict',async()=>{
+  const t={...sample(),signals:[{signal:'blocked_handoff',rule_version:7,severity:'warn',summary:'Blocked',evidence:[]}]};
+  const p=await page({signedIn:true,records:[t]});await p.click({event:'one',openTab:'signals'});await p.click({review:'not_match',signal:'blocked_handoff'});
+  const r=p.requests.find(r=>r.path==='/v1/reviews'&&r.init.method==='POST');
+  assert.deepEqual(JSON.parse(r.init.body),{review_id:'test-uuid',event_id:'one',turn_digest:'digest-one',signal:'blocked_handoff',rule_version:7,verdict:'not_match'});
+  assert.match(p.el.get('pane-signals').innerHTML,/Saved: NOT MATCH/);assert.match(p.el.get('review-status').textContent,/No training/);
+});
+test('settings use saved API state and make an authenticated PUT',async()=>{
+  const p=await page({signedIn:true,hash:'#settings'});
+  p.document.querySelectorAll('[data-toggle]')[0].checked=false;
+  await p.el.get('settings-form').onsubmit({preventDefault(){}});
+  const r=p.requests.find(r=>r.init.method==='PUT');assert.deepEqual(JSON.parse(r.init.body),{disabled:['blocked_handoff'],options:{}});
+  assert.match(p.el.get('settings-status').textContent,/Saved/);
+});
+test('late requests cannot repopulate the workspace after sign-out',async()=>{
+  let release, hold=false;
+  const p=await page({signedIn:true,records:[sample()],intercept:async path=>{if(hold&&path==='/v1/summary')return await new Promise(resolve=>{release=resolve;});}});
+  hold=true;const pending=p.el.get('refresh').onclick();await settle();await p.el.get('logout').onclick();
+  release({ok:true,status:200,json:async()=>p.summary});await pending;
+  assert.equal(p.el.get('app').hidden,true);assert.equal(p.el.get('overview-stats').innerHTML,'');
+});
+test('late filter responses cannot replace a newer route',async()=>{
+  let release;
+  const p=await page({signedIn:true,records:[sample()],intercept:async path=>{if(path.includes('search=slow'))return await new Promise(resolve=>{release=resolve;});}});
+  const pending=p.route('#activity?search=slow');await settle();await p.route('#sources');
+  release({ok:true,status:200,json:async()=>({turns:[sample('wrong')],revisions:{}})});await pending;
+  assert.equal(p.el.get('page-title').textContent,'Sources');assert.doesNotMatch(p.el.get('activity-results').innerHTML,/wrong/);
+});
+test('an unavailable optional journal does not hide turn activity',async()=>{
+  const p=await page({signedIn:true,records:[sample()],hash:'#activity',intercept:async path=>path.startsWith('/v1/events')?{ok:false,status:503,json:async()=>({})}:null});
+  assert.match(p.el.get('activity-results').innerHTML,/data-event="one"/);assert.equal(p.el.get('app').hidden,false);
+  await p.route('#sources');assert.match(p.el.get('sdk-events').innerHTML,/unavailable/);
+});
+test('research library preserves all eight Raindrop sources and supports filtering',async()=>{
+  const p=await page({signedIn:true,hash:'#research'});assert.match(p.el.get('research-count').textContent,/34 of 34/);
+  await p.click({category:'Raindrop'});assert.match(p.el.get('research-count').textContent,/8 of 34/);
+  assert.match(p.el.get('research-list').innerHTML,/signal-authoring-capture/);assert.match(p.el.get('research-list').innerHTML,/ux-settings/);
+  await p.click({note:'docs/research/raindrop/ux-settings.md'});assert.equal(p.el.get('research-dialog').open,true);
+  assert.equal(p.el.get('research-text').textContent,readFileSync(new URL('../docs/research/raindrop/ux-settings.md',import.meta.url),'utf8').replaceAll('\r\n','\n'));
+});
+test('large tool traces are bounded until explicitly expanded',async()=>{
+  const p=await page({signedIn:true,records:[{...sample(),tools:Array.from({length:1300},(_,i)=>({id:'tool-'+i,name:'exec',status:'ok'}))}]});
+  await p.click({event:'one'});assert.equal((p.el.get('pane-tools').innerHTML.match(/class="tool-item"/g)||[]).length,50);
+  await p.click({},'more-tools');assert.equal((p.el.get('pane-tools').innerHTML.match(/class="tool-item"/g)||[]).length,100);
+});
+test('dashboard assets are external and tab panels have explicit accessible relationships',()=>{
+  assert.doesNotMatch(html,/<style>|<script>/);assert.match(html,/src="\/assets\/dashboard.js"/);
+  for(const tab of ['conversation','tools','signals','details']) {assert.match(html,new RegExp('aria-controls="pane-'+tab+'"'));assert.match(html,new RegExp('aria-labelledby="tab-'+tab+'"'));}
+  assert.match(html,/href="#main-content"/);assert.match(html,/aria-label="Main navigation"/);
 });

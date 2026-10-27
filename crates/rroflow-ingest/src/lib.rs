@@ -342,12 +342,17 @@ async fn post_turns(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListQuery {
     pub limit: Option<usize>,
     pub agent: Option<String>,
     pub signal: Option<String>,
     pub project: Option<String>,
     pub session: Option<String>,
+    pub search: Option<String>,
+    pub since: Option<String>,
+    pub cursor: Option<String>,
+    pub event: Option<String>,
 }
 
 /// Most records one read returns.
@@ -359,23 +364,81 @@ async fn get_turns(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let devspace = st.caller(&headers).await?.devspace;
-    let limit = q.limit.unwrap_or(50).min(LIST_MAX);
-    let turns = st
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    let limit = q.limit.unwrap_or(50).clamp(1, LIST_MAX);
+    let search = q.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if search.is_some_and(|s| s.chars().count() > 200) {
+        return Err(ApiError::BadRequest(
+            "Search must be 200 characters or fewer".into(),
+        ));
+    }
+    let since = q
+        .since
+        .as_deref()
+        .map(|value| {
+            pg::timestamp(value).ok_or_else(|| ApiError::BadRequest("Invalid start date".into()))
+        })
+        .transpose()?;
+    let cursor: Option<(String, String)> = q
+        .cursor
+        .as_deref()
+        .map(|value| {
+            if value.len() > 4096 {
+                return Err(ApiError::BadRequest("Invalid page cursor".into()));
+            }
+            URL_SAFE_NO_PAD
+                .decode(value)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .ok_or_else(|| ApiError::BadRequest("Invalid page cursor".into()))
+        })
+        .transpose()?;
+    let before = cursor
+        .as_ref()
+        .map(|(at, id)| {
+            if id.is_empty() || (!at.is_empty() && pg::timestamp(at).is_none()) {
+                return Err(ApiError::BadRequest("Invalid page cursor".into()));
+            }
+            Ok((pg::timestamp(at), id.as_str()))
+        })
+        .transpose()?;
+    let mut turns = st
         .store
         .list(
             &devspace,
-            limit,
+            limit + 1,
             &TurnFilter {
                 agent: q.agent.as_deref().filter(|a| !a.is_empty()),
                 signal: q.signal.as_deref().filter(|s| !s.is_empty()),
                 project: q.project.as_deref().filter(|s| !s.is_empty()),
                 session: q.session.as_deref().filter(|s| !s.is_empty()),
+                search,
+                since,
+                before,
+                event: q.event.as_deref().filter(|s| !s.is_empty()),
             },
         )
         .await
         .map_err(internal)?;
+    let has_more = turns.len() > limit;
+    turns.truncate(limit);
+    let next_cursor = if has_more {
+        turns.last().map(|turn| {
+            URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(&(
+                    pg::timestamp(&turn.started_at)
+                        .map(|at| at.to_rfc3339())
+                        .unwrap_or_default(),
+                    &turn.event_id,
+                ))
+                .expect("string tuple serializes"),
+            )
+        })
+    } else {
+        None
+    };
     Ok(Json(
-        serde_json::json!({ "devspace": devspace, "revisions":turns.iter().map(|t| (t.event_id.clone(), reviews::digest(t))).collect::<std::collections::BTreeMap<_,_>>(), "turns": turns }),
+        serde_json::json!({ "devspace": devspace, "next_cursor": next_cursor, "revisions":turns.iter().map(|t| (t.event_id.clone(), reviews::digest(t))).collect::<std::collections::BTreeMap<_,_>>(), "turns": turns }),
     ))
 }
 
@@ -448,21 +511,36 @@ async fn get_summary(
     })))
 }
 
-/// The devspace dashboard: one self-contained page (no external scripts) that asks for the
-/// ingest key, keeps it in the tab's session storage, and reads the API.
+/// Same-origin dashboard assets; no third-party scripts or client-side provider credentials.
 async fn dashboard() -> impl IntoResponse {
     (
         [
             ("content-type", "text/html; charset=utf-8"),
             (
                 "content-security-policy",
-                "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+                "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
             ),
             ("x-content-type-options", "nosniff"),
             ("referrer-policy", "no-referrer"),
         ],
         include_str!("dashboard.html"),
     )
+}
+
+/// Source notes are visible only after workspace authentication.
+async fn research_notes(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    st.caller(&headers).await?;
+    Ok((
+        [
+            ("content-type", "application/json; charset=utf-8"),
+            ("cache-control", "no-store"),
+            ("x-content-type-options", "nosniff"),
+        ],
+        include_str!("research.json"),
+    ))
 }
 
 /// Who the credential belongs to and which devspace it opens.
@@ -493,6 +571,31 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         )
         .route("/healthz", get(|| async { "ok" }))
         .route("/", get(dashboard))
+        .route(
+            "/assets/dashboard.css",
+            get(|| async {
+                (
+                    [
+                        ("content-type", "text/css; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                    include_str!("dashboard.css"),
+                )
+            }),
+        )
+        .route(
+            "/assets/dashboard.js",
+            get(|| async {
+                (
+                    [
+                        ("content-type", "text/javascript; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                    include_str!("dashboard.js"),
+                )
+            }),
+        )
+        .route("/assets/research.json", get(research_notes))
         .layer(axum::middleware::from_fn_with_state(
             st.clone(),
             web_auth::browser_session,
