@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-const BATCH_LIMIT: usize = 2 * 1024 * 1024;
+const BATCH_LIMIT: usize = 4 * 1024 * 1024;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -47,6 +47,11 @@ pub(crate) enum Command {
     },
     /// Read delivery counts and linked roots from disk. Does not claim the process is alive.
     Status {
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Retry up to sixteen queued batches without rescanning session files.
+    Flush {
         #[arg(long)]
         store: Option<PathBuf>,
     },
@@ -227,7 +232,7 @@ impl Journal {
                         let bytes = serde_json::to_vec(&turn)?.len() + 1;
                         ensure!(
                             bytes <= BATCH_LIMIT,
-                            "turn exceeds upload bound; coverage incomplete"
+                            "turn is {bytes} bytes, exceeding upload bound {BATCH_LIMIT}; coverage incomplete"
                         );
                         if batch.len() == 100 || size + bytes > BATCH_LIMIT {
                             queued += self.persist(std::mem::take(&mut batch))?;
@@ -386,9 +391,10 @@ fn lock(store: &Path) -> Result<fs::File> {
 
 pub(crate) fn run(command: Command) -> Result<()> {
     let dir = match &command {
-        Command::Link { store, .. } | Command::Run { store, .. } | Command::Status { store } => {
-            store.clone()
-        }
+        Command::Link { store, .. }
+        | Command::Run { store, .. }
+        | Command::Status { store }
+        | Command::Flush { store } => store.clone(),
     }
     .or_else(|| account::config_dir().map(|p| p.join("sources")))
     .context("source store unavailable")?;
@@ -448,6 +454,16 @@ pub(crate) fn run(command: Command) -> Result<()> {
             println!("{}", Journal::open(&dir)?.status()?);
         }
         Command::Status { .. } => println!("{}", Journal::open(&dir)?.status()?),
+        Command::Flush { .. } => {
+            let _lock = lock(&dir)?;
+            let journal = Journal::open(&dir)?;
+            let sender = account::sender()?.context("sign-in unavailable; local queue retained")?;
+            let acknowledged = journal.deliver(&sender)?;
+            println!(
+                "{}",
+                json!({"acknowledged_revisions":acknowledged,"state":journal.status()?})
+            );
+        }
         Command::Run {
             interval_secs,
             once,
@@ -623,6 +639,44 @@ mod tests {
         )
         .unwrap();
         assert!(Journal::open(dir.path()).is_err());
+    }
+
+    #[test]
+    fn multi_megabyte_turn_preserves_all_finished_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = setup(dir.path(), "http://127.0.0.1:1");
+        let turn = transcript::Turn {
+            key: "large".into(),
+            session: "s".into(),
+            agent: "codex",
+            input: "inspect".into(),
+            tools: (0..1300)
+                .map(|i| transcript::Tool {
+                    id: i.to_string(),
+                    name: "shell".into(),
+                    input: "inspect the source file\n".repeat(50),
+                    output: "observed a tool result\n".repeat(50),
+                    end: Some("2026-10-25T00:00:01Z".into()),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let records = record::records(
+            &[turn],
+            None,
+            true,
+            &Redactor::new(),
+            &SignalConfig::default(),
+        );
+        assert!(serde_json::to_vec(&records).unwrap().len() > 2 * 1024 * 1024);
+        assert_eq!(journal.persist(records).unwrap(), 1);
+        let recovered = Journal::open(dir.path()).unwrap();
+        let path = batch_paths(dir.path()).unwrap().remove(0);
+        assert_eq!(
+            recovered.read_batch(&path).unwrap().turns[0].tools.len(),
+            1300
+        );
     }
 
     #[test]

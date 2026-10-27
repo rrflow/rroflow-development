@@ -24,6 +24,7 @@ and signal results are retained. `--claude-root`, `--codex-root` and `--store` s
 explicit absolute roots and the journal location. An existing binding cannot be
 silently changed. `sources status` reports disk state, not process liveness.
 `sources run --once --offline` is a network-free capture pass after initial linking.
+`sources flush` retries up to sixteen pending batches without reparsing transcripts.
 
 The default store is `sources/` under the existing RROFLOW account configuration
 directory. Its binding contains a source UUID, endpoint, devspace, roots, content
@@ -50,7 +51,7 @@ Parsers stream JSON records, including compressed Codex rollouts, instead of
 loading the entire transcript into one string. Source collection bounds retained
 strings before constructing turns. Existing per-turn text limits still apply.
 A partial final JSON line is revisited on a later pass; a malformed complete line
-fails visibly. A JSON record over 64 MiB or a turn larger than the upload bound
+fails visibly. A JSON record over 64 MiB or a turn larger than the 4 MiB upload bound
 also fails visibly. Symlinks are reported and not followed. No error is a claim
 that the source was completely captured.
 
