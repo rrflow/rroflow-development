@@ -4,6 +4,11 @@ Date: 2026-10-26. Status: plan. Goal (Jesse, 2026-10-26): install the rroflow SD
 
 ## The path (Jesse, 2026-10-26)
 
+Implementation update (2026-10-27): the SDK capture branch now contains
+[continuous source collection](source-collection.md), with account binding and a
+durable retry journal across Claude/Codex project directories. It still needs
+startup installation and the guided setup experience; it is not a hosted release.
+
 rroflow.ai is built in the open: the repository is public, so every build, test and release runs on GitHub Actions at no cost, and the repository is the record.
 
 1. rroflow.ai running: ingest, Nomen sign-in, public TLS (identity-and-devspaces.md).

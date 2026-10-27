@@ -346,6 +346,8 @@ pub struct ListQuery {
     pub limit: Option<usize>,
     pub agent: Option<String>,
     pub signal: Option<String>,
+    pub project: Option<String>,
+    pub session: Option<String>,
 }
 
 /// Most records one read returns.
@@ -366,6 +368,8 @@ async fn get_turns(
             &TurnFilter {
                 agent: q.agent.as_deref().filter(|a| !a.is_empty()),
                 signal: q.signal.as_deref().filter(|s| !s.is_empty()),
+                project: q.project.as_deref().filter(|s| !s.is_empty()),
+                session: q.session.as_deref().filter(|s| !s.is_empty()),
             },
         )
         .await

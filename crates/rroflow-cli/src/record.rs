@@ -47,7 +47,11 @@ pub(crate) fn to_record(t: &Turn, project: Option<&str>, r: &Redactor) -> TurnRe
         ended_at: t.end.clone(),
         cwd: t.cwd.clone(),
         git_branch: t.branch.clone(),
-        project: project.map(str::to_string),
+        // Without an explicit label, keep working directories distinct. This is
+        // a directory grouping, not a claim that we discovered the Git root.
+        project: project
+            .map(str::to_string)
+            .or_else(|| (!t.cwd.is_empty()).then(|| r.apply(&t.cwd))),
         usage: Usage {
             input_tokens: some(t.in_tokens),
             output_tokens: some(t.out_tokens),

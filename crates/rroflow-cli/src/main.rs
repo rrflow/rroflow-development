@@ -27,6 +27,7 @@ mod doctor;
 mod otlp;
 mod record;
 mod redact;
+mod sources;
 mod transcript;
 
 use anyhow::{Context, Result, bail};
@@ -43,7 +44,7 @@ use transcript::{collect, parse_transcript, ts_nanos};
 #[command(
     name = "rroflow",
     version,
-    about = "rroflow.ai collector: Sentry for your AI agents (Claude Code, Codex)"
+    about = "rroflow.ai: capture and inspect your AI activity"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -99,6 +100,11 @@ enum Agent {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Link and continuously collect Claude/Codex sessions across projects.
+    Sources {
+        #[command(subcommand)]
+        command: sources::Command,
+    },
     /// Durably record SDK events and deliver acknowledged events to your devspace.
     Capture {
         #[command(subcommand)]
@@ -426,6 +432,7 @@ fn report_signals(
 
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
+        Cmd::Sources { command } => sources::run(command)?,
         Cmd::Capture { command } => capture::run(command)?,
         Cmd::Login {
             issuer,

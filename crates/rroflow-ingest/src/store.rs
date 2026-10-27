@@ -43,6 +43,16 @@ pub struct TurnFilter<'a> {
     pub agent: Option<&'a str>,
     /// Only turns where this signal fired.
     pub signal: Option<&'a str>,
+    pub project: Option<&'a str>,
+    pub session: Option<&'a str>,
+}
+
+fn project(r: &TurnRecord) -> &str {
+    r.project
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| (!r.cwd.is_empty()).then_some(r.cwd.as_str()))
+        .unwrap_or("(none)")
 }
 
 /// The configured backend.
@@ -301,6 +311,8 @@ impl JsonlStore {
             .map(|m| {
                 m.values()
                     .filter(|r| f.agent.is_none_or(|a| r.agent == a))
+                    .filter(|r| f.project.is_none_or(|p| project(r) == p))
+                    .filter(|r| f.session.is_none_or(|s| r.session_id == s))
                     .filter(|r| {
                         f.signal
                             .is_none_or(|s| r.signals.iter().any(|h| h.signal == s))
@@ -320,9 +332,7 @@ impl JsonlStore {
         for r in index.get(devspace).into_iter().flat_map(|m| m.values()) {
             s.turns += 1;
             *s.by_agent.entry(r.agent.clone()).or_default() += 1;
-            *s.by_project
-                .entry(r.project.clone().unwrap_or_else(|| "(none)".into()))
-                .or_default() += 1;
+            *s.by_project.entry(project(r).into()).or_default() += 1;
             for h in &r.signals {
                 *s.signals.entry(h.signal.clone()).or_default() += 1;
                 *s.signals_by_agent

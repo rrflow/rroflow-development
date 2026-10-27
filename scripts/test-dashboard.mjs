@@ -93,3 +93,22 @@ test('turn inspector exposes captured text and tools safely and distinguishes ab
   assert(html.indexOf('id="activity"')<html.indexOf('id="signal-inbox"'));
   assert.match(html,/href="#activity"/);
 });
+
+test('project/session filters request server-side selection and activity uses only returned records', async () => {
+  const record={event_id:'one',session_id:'session<&>',project:'project<&>',agent:'codex',started_at:'2026-10-27T10:00:00Z',collector:'test',termination:'completed',usage:{},signals:[],tools:[]};
+  const {elements:el,requests}=await page({signedIn:true,records:[record]});
+  assert.match(el.get('sessions').innerHTML,/session&lt;&amp;&gt;/);
+  assert.match(el.get('activity-chart').innerHTML,/value="1"/);
+  assert.match(el.get('activity-chart').innerHTML,/current view/);
+  el.get('projectFilter').value='project<&>';
+  el.get('sessionFilter').value='session<&>';
+  await el.get('projectFilter').onchange();
+  const query=new URL(requests.filter(r=>r.path.startsWith('/v1/turns')).at(-1).path,'https://test.invalid').searchParams;
+  assert.equal(query.get('project'),'project<&>');
+  assert.equal(query.get('session'),'session<&>');
+  await el.get('clearFilters').onclick();
+  assert.equal(requests.filter(r=>r.path.startsWith('/v1/turns')).at(-1).path,'/v1/turns?limit=100');
+  await el.get('logout').onclick();
+  assert.equal(el.get('sessions').innerHTML,'');
+  assert.equal(el.get('activity-chart').innerHTML,'');
+});

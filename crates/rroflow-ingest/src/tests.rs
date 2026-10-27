@@ -86,6 +86,46 @@ fn backends() -> Vec<Backend> {
     }
 }
 
+#[tokio::test]
+async fn project_and_session_filters_apply_before_limit_and_remain_tenant_scoped() {
+    for backend in backends() {
+        let env = Env::new(backend, "navigation");
+        let app = env.app().await;
+        let mut old = rec("old", None);
+        old.project = None;
+        old.cwd = "/project-a".into();
+        old.session_id = "session-a".into();
+        let mut newer = rec("newer", None);
+        newer.project = Some("project-b".into());
+        newer.session_id = "session-b".into();
+        assert_eq!(
+            call(&app, post("key-jesse", &[old.clone(), newer])).await.0,
+            StatusCode::OK
+        );
+        let (status, body) = call(
+            &app,
+            get(
+                "key-jesse",
+                "/v1/turns?project=%2Fproject-a&session=session-a&limit=1",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["turns"].as_array().unwrap().len(), 1);
+        assert_eq!(body["turns"][0]["event_id"], old.event_id);
+        let (_, empty) = call(
+            &app,
+            get("key-jesse", "/v1/turns?project=project-b&session=session-a"),
+        )
+        .await;
+        assert_eq!(empty["turns"], serde_json::json!([]));
+        let (_, other) = call(&app, get("key-other", "/v1/turns?project=%2Fproject-a")).await;
+        assert_eq!(other["turns"], serde_json::json!([]));
+        let (_, sum) = call(&app, get("key-jesse", "/v1/summary")).await;
+        assert_eq!(sum["summary"]["by_project"]["/project-a"], 1);
+    }
+}
+
 /// A test service with two devspaces, `<tag>_jesse` and `<tag>_other`.
 struct Env {
     cfg: Config,

@@ -389,6 +389,8 @@ impl PgStore {
             SELECT t.record FROM turns t
             WHERE t.devspace_id = $1
               AND ($4::text IS NULL OR t.agent = $4)
+              AND ($5::text IS NULL OR coalesce(nullif(t.project, ''), nullif(t.record->>'cwd', ''), '(none)') = $5)
+              AND ($6::text IS NULL OR t.record->>'session_id' = $6)
               AND ($2::text IS NULL OR EXISTS (
                     SELECT 1 FROM signal_hits h
                     WHERE h.devspace_id = t.devspace_id AND h.event_id = t.event_id
@@ -401,6 +403,8 @@ impl PgStore {
         .bind(f.signal)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .bind(f.agent)
+        .bind(f.project)
+        .bind(f.session)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|j| j.0).collect())
@@ -446,7 +450,7 @@ impl PgStore {
         let (by_agent, by_project, signals) = tokio::try_join!(
             grouped("SELECT agent, count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"),
             grouped(
-                "SELECT coalesce(project, '(none)'), count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"
+                "SELECT coalesce(nullif(project, ''), nullif(record->>'cwd', ''), '(none)'), count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"
             ),
             grouped("SELECT signal, count(*) FROM signal_hits WHERE devspace_id = $1 GROUP BY 1"),
         )?;

@@ -45,7 +45,7 @@ struct Queued {
     event: CaptureEvent,
 }
 
-fn endpoint(s: &str) -> Result<String> {
+pub(crate) fn endpoint(s: &str) -> Result<String> {
     let uri: ureq::http::Uri = s.parse().context("invalid ingest endpoint")?;
     ensure!(
         uri.authority().is_some_and(|a| !a.as_str().contains('@'))
@@ -63,7 +63,7 @@ fn endpoint(s: &str) -> Result<String> {
     Ok(s.trim_end_matches('/').into())
 }
 
-fn private_dir(path: &Path) -> Result<()> {
+pub(crate) fn private_dir(path: &Path) -> Result<()> {
     std::fs::create_dir_all(path)?;
     ensure!(
         !std::fs::symlink_metadata(path)?.file_type().is_symlink(),
@@ -77,7 +77,7 @@ fn private_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_once(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_once(path: &Path, bytes: &[u8]) -> Result<()> {
     if path.exists() {
         ensure!(
             std::fs::read(path)? == bytes,

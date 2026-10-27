@@ -1,12 +1,12 @@
 # rroflow-development
 
-**RROFLOW (rroflow.ai): Sentry for your AI.** It captures what your coding agents actually do, finds where they fail, stall or waste your money, and learns from your corrections. It runs on Shippin.cloud / shippin.ai. The reasoning engine, RRFlow (rrflow.ai), lives in [rrflow/rrflow-development](https://github.com/rrflow/rrflow-development). This repo is the RROFLOW lab and site; it moves to `rrflow/rroflow` at alpha.
+**RROFLOW (rroflow.ai): AI monitoring, with the evidence.** It captures coding-agent activity and produces behaviour signals for review. Automatic datasets and supervised/unsupervised learning are planned; they are not active. Hosted delivery targets Shippin.cloud / shippin.ai on Texas, whose deployment remains unverified. The reasoning engine, RRFlow (rrflow.ai), lives in [rrflow/rrflow-development](https://github.com/rrflow/rrflow-development). This repo is the RROFLOW lab and site; it moves to `rrflow/rroflow` at alpha.
 
 | Path | What it is | State |
 |---|---|---|
 | [`crates/rroflow-core`](crates/rroflow-core) | `rroflow.turn/v1` record and behaviour signals v0 (deterministic, with evidence) | Working; signals measured on real Claude Code and Codex sessions |
 | [`crates/rroflow-cli`](crates/rroflow-cli) | `rroflow`, the SDK: reads Claude Code and Codex sessions, evaluates signals locally, sends to your rroflow.ai devspace (or Raindrop); `login` with your Shippin account; `doctor` | Working; released for Windows and Linux, x86_64 and ARM64 |
-| [`crates/rroflow-ingest`](crates/rroflow-ingest) | rroflow.ai ingest: Postgres store, devspaces owned by Nomen accounts, signal catalogue and per-devspace settings, dashboard | Deployed on tx-infra-prod; public TLS pending DNS |
+| [`crates/rroflow-ingest`](crates/rroflow-ingest) | rroflow.ai ingest: Postgres store, devspaces owned by Nomen accounts, signal catalogue and per-devspace settings, dashboard | Implemented and locally tested; Texas identity, deployment and public account flow not verified |
 | [`docs`](docs) | Every plan, spec and research record ([index](docs/README.md)) | Plan decisions D-1 to D-6 answered |
 
 ## Install
@@ -28,6 +28,10 @@ rroflow whoami           # which devspace your turns land in
 ```
 
 ## Build from source
+
+The SDK capture branch adds [continuous session collection](docs/plan/source-collection.md)
+and project/session dashboard navigation. This is not yet an installed background
+service or a production hosted release.
 
 ```bash
 cargo build --release
