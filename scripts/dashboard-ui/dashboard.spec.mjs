@@ -73,10 +73,10 @@ test('a person creates, tests, uses and pauses an organized custom signal',async
   await page.getByRole('button',{name:'Create a signal',exact:true}).click();
   await page.getByLabel('Signal name',{exact:true}).fill('Deployment warning');await page.locator('#custom-group').fill('Release checks');
   await page.locator('#custom-kind').selectOption('response_contains');await page.locator('#custom-text').fill('permission');
-  await page.locator('#custom-agent').selectOption('codex');await page.locator('#custom-project').selectOption('Fixture / release-service');
+  await page.getByText('Optional: choose agents or projects',{exact:true}).click();await page.locator('#custom-agent').selectOption('codex');await page.locator('#custom-project').selectOption('Fixture / release-service');
   await expect(page.getByRole('button',{name:'Save and turn on',exact:true})).toBeDisabled();
   await page.getByRole('button',{name:'Try on recent activity',exact:true}).click();
-  await expect(page.locator('#builder-status')).toContainText('1 matches');await expect(page.locator('#builder-status')).toContainText('1 could not be checked');
+  await expect(page.locator('#builder-status')).toContainText('1 match');await expect(page.locator('#builder-status')).toContainText('1 could not be checked');
   await reflow(page);await accessible(page);await screenshot(page,info,'custom-signal-preview');
   await page.getByRole('button',{name:'Save and turn on',exact:true}).click();await expect(page.locator('#signal-builder')).toBeHidden();await settled(page);
   const card=page.locator('.library-card').filter({has:page.getByRole('heading',{name:'Deployment warning',exact:true})});
@@ -84,7 +84,7 @@ test('a person creates, tests, uses and pauses an organized custom signal',async
   const config=await (await fetch(service.base+'/v1/signals/settings',{headers:service.headers})).json();const rule=config.settings.custom.find(s=>s.name==='Deployment warning');expect(rule).toBeTruthy();
   const turn={...structuredClone(service.turns[0]),event_id:'fixture-custom-arrival'};
   expect((await fetch(service.base+'/v1/turns',{method:'POST',headers:service.headers,body:JSON.stringify({turns:[turn]})})).ok).toBe(true);
-  await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);await expect(card).toContainText('1 recorded matches');
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);await expect(card).toContainText('1 recorded match');
   await screenshot(page,info,'signal-library');await card.getByRole('link',{name:'View findings',exact:true}).click();await settled(page);
   await page.locator('#signal-results').getByRole('button',{name:'Inspect evidence',exact:false}).click();
   const finding=page.locator('#pane-signals .signal-card').filter({has:page.getByRole('heading',{name:'Deployment warning',exact:true})});

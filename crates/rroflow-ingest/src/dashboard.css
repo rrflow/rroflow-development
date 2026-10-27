@@ -14,3 +14,5 @@
 @media(max-width:760px){.builder-fields{grid-template-columns:1fr}#signal-builder{padding:20px}.panel-heading{flex-wrap:wrap}.sidebar nav a{padding:9px 12px}.workspace-card{margin:22px 0 18px}.sidebar-bottom{padding-top:16px}}
 
 .research-card h2{overflow-wrap:anywhere}
+
+.builder-scope{grid-column:1 / -1}.builder-scope summary{font-size:13px;color:var(--muted)}
