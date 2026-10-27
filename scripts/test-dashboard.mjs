@@ -6,7 +6,7 @@ import test from 'node:test';
 
 const html = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-async function page({ signedIn = false, enabled = true, turns = 2, previousKey = false } = {}) {
+async function page({ signedIn = false, enabled = true, turns = 2, previousKey = false, records = [] } = {}) {
   const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, {
     value: '', textContent: '', innerHTML: '', hidden: id === 'app' || id === 'signin', open: false,
     replaceChildren() { this.innerHTML = ''; this.textContent = ''; },
@@ -27,7 +27,7 @@ async function page({ signedIn = false, enabled = true, turns = 2, previousKey =
     else if (path === '/v1/whoami') data = { devspace: 'mine', name: '<script>name</script>', via: 'nomen' };
     else if (path.startsWith('/v1/events')) data = { events: [] };
     else if (path === '/v1/summary') data = sum;
-    else if (path.startsWith('/v1/turns')) data = { turns: [] };
+    else if (path.startsWith('/v1/turns')) data = { turns: records };
     return { ok: status < 400, status, json: async () => data };
   };
   runInNewContext(script, {
@@ -76,4 +76,20 @@ test('choosing account sign-in discards a stale key so it cannot override the ac
   storage.set('rroflow.key', 'old-key');
   elements.get('signin').onclick();
   assert.equal(storage.has('rroflow.key'), false);
+});
+
+test('turn inspector exposes captured text and tools safely and distinguishes absent content', async () => {
+  const record = {event_id:'turn-1',session_id:'session-1',agent:'codex',started_at:'2026-10-27T10:00:00Z',model:'fixture',collector:'test',termination:'completed',usage:{},signals:[],tools_unfinished:0,
+    content:{input:'Please inspect <script>secret()</script>',output:'Completed <img src=x onerror=alert(1)>'},
+    tools:[{id:'tool-1',name:'exec',status:'error',input:'<unsafe-input>',output:'<unsafe-output>'}]};
+  const result=await page({signedIn:true,records:[record,{...record,event_id:'turn-2',content:null}]});
+  const rendered=result.elements.get('turns').innerHTML;
+  assert.match(rendered,/Please inspect &lt;script&gt;/);
+  assert.match(rendered,/Completed &lt;img/);
+  assert.match(rendered,/&lt;unsafe-input&gt;/);
+  assert.match(rendered,/&lt;unsafe-output&gt;/);
+  assert.match(rendered,/Text was not included in this capture/);
+  assert.doesNotMatch(rendered,/<script>|<img src/);
+  assert(html.indexOf('id="activity"')<html.indexOf('id="signal-inbox"'));
+  assert.match(html,/href="#activity"/);
 });
