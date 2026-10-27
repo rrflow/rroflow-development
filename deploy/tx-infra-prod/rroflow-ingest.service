@@ -1,0 +1,37 @@
+[Unit]
+Description=RROFLOW hosted ingest and dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/rroflow/current/rroflow-ingest serve --config /etc/rroflow/ingest.toml
+User=rroflow
+Group=rroflow
+StateDirectory=rroflow
+WorkingDirectory=/var/lib/rroflow
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
