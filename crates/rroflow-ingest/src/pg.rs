@@ -12,7 +12,49 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 pub struct PgStore {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
+}
+
+impl PgStore {
+    pub(crate) async fn capture_insert(
+        &self,
+        ds: &str,
+        events: &[rroflow_core::capture::CaptureEvent],
+    ) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT id FROM devspaces WHERE id = $1 FOR UPDATE")
+            .bind(ds)
+            .fetch_one(&mut *tx)
+            .await?;
+        for e in events {
+            sqlx::query("INSERT INTO capture_events (devspace_id,event_id,capture_id,sequence,agent,observed_at,record) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING")
+                .bind(ds).bind(&e.event_id).bind(&e.capture_id).bind(e.sequence as i64).bind(&e.agent)
+                .bind(timestamp(&e.observed_at)).bind(Json(e)).execute(&mut *tx).await?;
+            let stored: Option<Json<rroflow_core::capture::CaptureEvent>> = sqlx::query_scalar(
+                "SELECT record FROM capture_events WHERE devspace_id=$1 AND event_id=$2",
+            )
+            .bind(ds)
+            .bind(&e.event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if stored.as_ref().map(|s| &s.0) != Some(e) {
+                return Err(crate::capture::Conflict.into());
+            }
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+    pub(crate) async fn capture_list(
+        &self,
+        ds: &str,
+        agent: Option<&str>,
+        capture: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<rroflow_core::capture::CaptureEvent>> {
+        let rows: Vec<Json<rroflow_core::capture::CaptureEvent>> = sqlx::query_scalar("SELECT record FROM capture_events WHERE devspace_id=$1 AND ($2::text IS NULL OR agent=$2) AND ($3::text IS NULL OR capture_id=$3) ORDER BY observed_at DESC, capture_id, sequence DESC LIMIT $4")
+            .bind(ds).bind(agent).bind(capture).bind(limit as i64).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
 }
 
 /// Parse an RFC 3339 timestamp; empty or unparseable is `None` (the handler rejects
@@ -156,7 +198,7 @@ impl PgStore {
             // A devspace made by signing in before claiming is empty: it gives way. One
             // that holds turns does not; merging data is not done here.
             let turns: i64 =
-                sqlx::query_scalar("SELECT count(*) FROM turns WHERE devspace_id = $1")
+                sqlx::query_scalar("SELECT (SELECT count(*) FROM turns WHERE devspace_id = $1) + (SELECT count(*) FROM capture_events WHERE devspace_id = $1) + (SELECT count(*) FROM signal_reviews WHERE devspace_id = $1)")
                     .bind(&other)
                     .fetch_one(&mut *tx)
                     .await?;
@@ -347,6 +389,8 @@ impl PgStore {
             SELECT t.record FROM turns t
             WHERE t.devspace_id = $1
               AND ($4::text IS NULL OR t.agent = $4)
+              AND ($5::text IS NULL OR coalesce(nullif(t.project, ''), nullif(t.record->>'cwd', ''), '(none)') = $5)
+              AND ($6::text IS NULL OR t.record->>'session_id' = $6)
               AND ($2::text IS NULL OR EXISTS (
                     SELECT 1 FROM signal_hits h
                     WHERE h.devspace_id = t.devspace_id AND h.event_id = t.event_id
@@ -359,6 +403,8 @@ impl PgStore {
         .bind(f.signal)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .bind(f.agent)
+        .bind(f.project)
+        .bind(f.session)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|j| j.0).collect())
@@ -404,7 +450,7 @@ impl PgStore {
         let (by_agent, by_project, signals) = tokio::try_join!(
             grouped("SELECT agent, count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"),
             grouped(
-                "SELECT coalesce(project, '(none)'), count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"
+                "SELECT coalesce(nullif(project, ''), nullif(record->>'cwd', ''), '(none)'), count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"
             ),
             grouped("SELECT signal, count(*) FROM signal_hits WHERE devspace_id = $1 GROUP BY 1"),
         )?;

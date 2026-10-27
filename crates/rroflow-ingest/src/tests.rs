@@ -86,6 +86,46 @@ fn backends() -> Vec<Backend> {
     }
 }
 
+#[tokio::test]
+async fn project_and_session_filters_apply_before_limit_and_remain_tenant_scoped() {
+    for backend in backends() {
+        let env = Env::new(backend, "navigation");
+        let app = env.app().await;
+        let mut old = rec("old", None);
+        old.project = None;
+        old.cwd = "/project-a".into();
+        old.session_id = "session-a".into();
+        let mut newer = rec("newer", None);
+        newer.project = Some("project-b".into());
+        newer.session_id = "session-b".into();
+        assert_eq!(
+            call(&app, post("key-jesse", &[old.clone(), newer])).await.0,
+            StatusCode::OK
+        );
+        let (status, body) = call(
+            &app,
+            get(
+                "key-jesse",
+                "/v1/turns?project=%2Fproject-a&session=session-a&limit=1",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["turns"].as_array().unwrap().len(), 1);
+        assert_eq!(body["turns"][0]["event_id"], old.event_id);
+        let (_, empty) = call(
+            &app,
+            get("key-jesse", "/v1/turns?project=project-b&session=session-a"),
+        )
+        .await;
+        assert_eq!(empty["turns"], serde_json::json!([]));
+        let (_, other) = call(&app, get("key-other", "/v1/turns?project=%2Fproject-a")).await;
+        assert_eq!(other["turns"], serde_json::json!([]));
+        let (_, sum) = call(&app, get("key-jesse", "/v1/summary")).await;
+        assert_eq!(sum["summary"]["by_project"]["/project-a"], 1);
+    }
+}
+
 /// A test service with two devspaces, `<tag>_jesse` and `<tag>_other`.
 struct Env {
     cfg: Config,
@@ -630,4 +670,118 @@ fn account_ids_that_are_not_valid_devspace_ids_get_a_digest() {
         odd,
         crate::pg::owner_devspace_id("https://other", "user:with/odd.chars")
     );
+}
+
+#[tokio::test]
+async fn capture_events_are_immutable_isolated_and_survive_restart() {
+    for backend in backends() {
+        let env = Env::new(backend, "capture");
+        let app = env.app().await;
+        let e = serde_json::json!({"schema":"rroflow.capture/v1","event_id":"11111111-1111-4111-8111-111111111111","capture_id":"22222222-2222-4222-8222-222222222222","sequence":0,"agent":"grok","session_id":"s","operation_id":"op","parent_operation_id":null,"observed_at":"2026-10-26T00:00:00Z","kind":"stream.event","native_type":"response.created","payload":null});
+        let send = |events: Vec<serde_json::Value>| {
+            Request::post("/v1/events")
+                .header("authorization", "Bearer key-jesse")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"events":events}).to_string()))
+                .unwrap()
+        };
+        for _ in 0..2 {
+            let (code, receipt) = call(&app, send(vec![e.clone()])).await;
+            assert_eq!(code, StatusCode::OK, "{receipt}");
+            assert_eq!(receipt["accepted_ids"], serde_json::json!([e["event_id"]]));
+        }
+        let mut conflict = e.clone();
+        conflict["kind"] = "call.failed".into();
+        assert_eq!(
+            call(&app, send(vec![conflict])).await.0,
+            StatusCode::CONFLICT
+        );
+        let mut slot = e.clone();
+        slot["event_id"] = "33333333-3333-4333-8333-333333333333".into();
+        assert_eq!(call(&app, send(vec![slot])).await.0, StatusCode::CONFLICT);
+        let (_, other) = call(&app, get("key-other", "/v1/events")).await;
+        assert_eq!(other["events"], serde_json::json!([]));
+        drop(app);
+        let app = env.app().await;
+        let (_, rows) = call(&app, get("key-jesse", "/v1/events?agent=grok")).await;
+        assert_eq!(rows["events"].as_array().unwrap().len(), 1);
+        assert_eq!(rows["events"][0]["kind"], "stream.event");
+        if let Store::Postgres(pg) = env.cfg.open_store().await.unwrap() {
+            pg.claim_devspace(&env.jesse, "https://issuer.example.test", "capture-owner")
+                .await
+                .unwrap();
+            let err = pg
+                .claim_devspace(&env.other, "https://issuer.example.test", "capture-owner")
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("one devspace per account"));
+        }
+        let mut invalid = e.clone();
+        invalid["event_id"] = "../escape".into();
+        assert_eq!(
+            call(&app, send(vec![invalid])).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+}
+
+#[tokio::test]
+async fn reviews_pin_evidence_reject_stale_and_isolate_owners() {
+    for b in backends() {
+        let env = Env::new(b, "reviews");
+        let app = env.app().await;
+        let turn = rec("review-turn", Some("blocked_handoff"));
+        call(&app, post("key-jesse", std::slice::from_ref(&turn))).await;
+        let (_, readback) = call(&app, get("key-jesse", "/v1/turns")).await;
+        let mut review = serde_json::json!({"review_id":"11111111-1111-4111-8111-111111111111","event_id":turn.event_id,"turn_digest":readback["revisions"][&turn.event_id],"signal":"blocked_handoff","rule_version":1,"verdict":"not_match"});
+        let request = |key: &str, body: &serde_json::Value| {
+            Request::post("/v1/reviews")
+                .header("authorization", format!("Bearer {key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(body).unwrap()))
+                .unwrap()
+        };
+        assert_eq!(
+            call(&app, request("key-other", &review)).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            call(&app, request("key-jesse", &review)).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(&app, request("key-jesse", &review)).await.0,
+            StatusCode::OK
+        );
+        let mut changed = turn.clone();
+        changed.tools_unfinished = 1;
+        call(&app, post("key-jesse", &[changed])).await;
+        // Same receipt is idempotent even after the turn changes.
+        assert_eq!(
+            call(&app, request("key-jesse", &review)).await.0,
+            StatusCode::OK
+        );
+        review["verdict"] = serde_json::json!("match");
+        assert_eq!(
+            call(&app, request("key-jesse", &review)).await.0,
+            StatusCode::CONFLICT
+        );
+        review["review_id"] = serde_json::json!("22222222-2222-4222-8222-222222222222");
+        assert_eq!(
+            call(&app, request("key-jesse", &review)).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        review["review_id"] = serde_json::json!("../../outside");
+        assert_eq!(
+            call(&app, request("key-jesse", &review)).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        drop(app);
+        let app = env.app().await;
+        let (_, rows) = call(&app, get("key-jesse", "/v1/reviews")).await;
+        assert_eq!(rows["reviews"].as_array().unwrap().len(), 1);
+        assert_eq!(rows["reviews"][0]["request"]["verdict"], "not_match");
+        let (_, other) = call(&app, get("key-other", "/v1/reviews")).await;
+        assert!(other["reviews"].as_array().unwrap().is_empty());
+    }
 }

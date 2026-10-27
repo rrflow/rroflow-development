@@ -6,7 +6,7 @@ import test from 'node:test';
 
 const html = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-async function page({ signedIn = false, enabled = true, turns = 2, previousKey = false } = {}) {
+async function page({ signedIn = false, enabled = true, turns = 2, previousKey = false, records = [] } = {}) {
   const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, {
     value: '', textContent: '', innerHTML: '', hidden: id === 'app' || id === 'signin', open: false,
     replaceChildren() { this.innerHTML = ''; this.textContent = ''; },
@@ -25,8 +25,9 @@ async function page({ signedIn = false, enabled = true, turns = 2, previousKey =
     else if (path === '/auth/logout') { signedIn = false; status = 204; }
     else if (!signedIn) status = 401;
     else if (path === '/v1/whoami') data = { devspace: 'mine', name: '<script>name</script>', via: 'nomen' };
+    else if (path.startsWith('/v1/events')) data = { events: [] };
     else if (path === '/v1/summary') data = sum;
-    else if (path.startsWith('/v1/turns')) data = { turns: [] };
+    else if (path.startsWith('/v1/turns')) data = { turns: records };
     return { ok: status < 400, status, json: async () => data };
   };
   runInNewContext(script, {
@@ -56,7 +57,7 @@ test('signed-in landing shows both agents from the account summary without expos
 
 test('empty devspace labels both agents as having no captured activity', async () => {
   const { elements: el } = await page({ signedIn: true, turns: 0 });
-  assert.equal((el.get('agents').innerHTML.match(/No captured activity yet/g) || []).length, 2);
+  assert.equal((el.get('agents').innerHTML.match(/No activity in this view/g) || []).length, 3);
   assert.doesNotMatch(el.get('agents').innerHTML, /Captured activity/);
 });
 
@@ -75,4 +76,39 @@ test('choosing account sign-in discards a stale key so it cannot override the ac
   storage.set('rroflow.key', 'old-key');
   elements.get('signin').onclick();
   assert.equal(storage.has('rroflow.key'), false);
+});
+
+test('turn inspector exposes captured text and tools safely and distinguishes absent content', async () => {
+  const record = {event_id:'turn-1',session_id:'session-1',agent:'codex',started_at:'2026-10-27T10:00:00Z',model:'fixture',collector:'test',termination:'completed',usage:{},signals:[],tools_unfinished:0,
+    content:{input:'Please inspect <script>secret()</script>',output:'Completed <img src=x onerror=alert(1)>'},
+    tools:[{id:'tool-1',name:'exec',status:'error',input:'<unsafe-input>',output:'<unsafe-output>'}]};
+  const result=await page({signedIn:true,records:[record,{...record,event_id:'turn-2',content:null}]});
+  const rendered=result.elements.get('turns').innerHTML;
+  assert.match(rendered,/Please inspect &lt;script&gt;/);
+  assert.match(rendered,/Completed &lt;img/);
+  assert.match(rendered,/&lt;unsafe-input&gt;/);
+  assert.match(rendered,/&lt;unsafe-output&gt;/);
+  assert.match(rendered,/Text was not included in this capture/);
+  assert.doesNotMatch(rendered,/<script>|<img src/);
+  assert(html.indexOf('id="activity"')<html.indexOf('id="signal-inbox"'));
+  assert.match(html,/href="#activity"/);
+});
+
+test('project/session filters request server-side selection and activity uses only returned records', async () => {
+  const record={event_id:'one',session_id:'session<&>',project:'project<&>',agent:'codex',started_at:'2026-10-27T10:00:00Z',collector:'test',termination:'completed',usage:{},signals:[],tools:[]};
+  const {elements:el,requests}=await page({signedIn:true,records:[record]});
+  assert.match(el.get('sessions').innerHTML,/session&lt;&amp;&gt;/);
+  assert.match(el.get('activity-chart').innerHTML,/value="1"/);
+  assert.match(el.get('activity-chart').innerHTML,/current view/);
+  el.get('projectFilter').value='project<&>';
+  el.get('sessionFilter').value='session<&>';
+  await el.get('projectFilter').onchange();
+  const query=new URL(requests.filter(r=>r.path.startsWith('/v1/turns')).at(-1).path,'https://test.invalid').searchParams;
+  assert.equal(query.get('project'),'project<&>');
+  assert.equal(query.get('session'),'session<&>');
+  await el.get('clearFilters').onclick();
+  assert.equal(requests.filter(r=>r.path.startsWith('/v1/turns')).at(-1).path,'/v1/turns?limit=100');
+  await el.get('logout').onclick();
+  assert.equal(el.get('sessions').innerHTML,'');
+  assert.equal(el.get('activity-chart').innerHTML,'');
 });

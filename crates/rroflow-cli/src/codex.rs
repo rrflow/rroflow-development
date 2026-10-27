@@ -20,7 +20,7 @@
 //! - Model from `turn_context.model`; tokens summed from `token_count`
 //!   `info.last_token_usage` (OpenAI's `input_tokens` already includes cached input).
 
-use crate::transcript::{Tool, Turn, read_text};
+use crate::transcript::{Tool, Turn, read_records};
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -105,7 +105,14 @@ struct Session {
 }
 
 pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
-    let raw = read_text(path)?;
+    parse(path, false)
+}
+
+pub(crate) fn collect_rollout(path: &Path) -> Result<Vec<Turn>> {
+    parse(path, true)
+}
+
+fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
     let mut s = Session {
         provider: "openai".into(),
         ..Default::default()
@@ -140,10 +147,8 @@ pub(crate) fn parse_rollout(path: &Path) -> Result<Vec<Turn>> {
         });
     };
 
-    for line in raw.lines() {
-        let Ok(d) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for entry in read_records(path, bounded_text)? {
+        let (_, d) = entry?;
         let ts = d["timestamp"].as_str().unwrap_or("").to_string();
         let p = &d["payload"];
         let kind = d["type"].as_str().unwrap_or("");

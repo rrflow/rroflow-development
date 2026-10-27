@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rroflow devspace</title>
+<title>RROFLOW · Signals</title>
 <style>
 :root{--bg:#0d1117;--panel:#161b22;--line:#2a313c;--text:#e6edf3;--muted:#8b949e;--warn:#e3b341;--crit:#f85149;--info:#58a6ff;--ok:#3fb950}
 @media (prefers-color-scheme: light){:root{--bg:#f6f8fa;--panel:#fff;--line:#d0d7de;--text:#1f2328;--muted:#59636e;--warn:#9a6700;--crit:#cf222e;--info:#0969da;--ok:#1a7f37}}
@@ -25,10 +25,13 @@ details{margin-top:4px}summary{cursor:pointer;color:var(--muted);font-size:13px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .cat{color:var(--muted);font-size:13px;margin:0 0 4px}
 table.sig{table-layout:fixed;min-width:760px}
+.hero{padding:32px max(24px,calc((100vw - 1180px)/2));background:linear-gradient(115deg,#132c31,#121922);color:#edf7f7}.hero h1{font-size:28px;letter-spacing:-.7px}.hero p{max-width:720px;color:#a6c3c6}.eyebrow{text-transform:uppercase;letter-spacing:2px;font-size:11px;color:#69d9c8;margin-bottom:12px}.panel{border-radius:14px;padding:22px}main{max-width:1228px;padding:24px}h2{font-size:19px}.signal-inbox{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:14px}.signal-card{border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:10px;padding:18px;background:var(--bg)}.signal-card h3{font-size:17px;margin:8px 0}.signal-card p{margin:8px 0}.signal-card .source{font-size:12px;color:var(--muted);overflow-wrap:anywhere}.signal-card details{border-top:1px solid var(--line);padding-top:10px;margin-top:14px}.signal-card summary{color:var(--text);font-size:14px}.signal-card ul{padding-left:20px}.status-strip{border-left:3px solid var(--info);padding:10px 14px;background:var(--bg);margin-top:14px}.journey{display:flex;gap:8px;flex-wrap:wrap}.journey span{border:1px solid var(--line);border-radius:7px;padding:6px 10px;font-size:13px}.signal-link{border:0;padding:0;color:var(--info);background:none;text-align:left;font-size:inherit}.agent{padding:18px}.agent b{font-size:19px}button:hover{border-color:var(--info)}button:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--info);outline-offset:4px}@media(max-width:600px){main{padding:12px}.panel{padding:16px}.hero{padding:24px 18px}.grid{grid-template-columns:1fr}}
+.app-nav{position:sticky;top:0;z-index:2;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:16px}.app-nav a{padding:6px 14px;color:var(--text);text-decoration:none}.app-nav a:hover{color:var(--info)}a{color:var(--info)}[id]{scroll-margin-top:85px}.turn-list{margin-top:18px}.turn-card{border:1px solid var(--line);border-radius:10px;margin:10px 0;padding:15px;background:var(--bg)}.turn-card>details>summary{color:var(--text);font-size:15px;line-height:1.7}.turn-card .preview{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.turn-body{margin-top:20px}.turn-body pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:520px;overflow:auto;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:8px;font:13px/1.6 ui-monospace,monospace}.turn-body .meta{overflow-wrap:anywhere;color:var(--muted);font-size:12px}.tool-item{padding:8px;border-bottom:1px solid var(--line)}
+.activity-bar{display:grid;grid-template-columns:120px minmax(80px,1fr) 150px;gap:12px;align-items:center;margin:8px 0;font-size:12px;color:var(--muted)}.activity-bar meter{width:100%;height:20px;accent-color:var(--info)}.session-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px}.session-item{text-align:left;padding:16px;display:flex;flex-direction:column;gap:6px;overflow-wrap:anywhere}.session-item span,.session-item small{color:var(--muted);font-size:12px}#projectFilter{max-width:320px}@media(max-width:600px){.activity-bar{grid-template-columns:100px 1fr}.activity-bar span:last-child{grid-column:2}#projectFilter{max-width:100%}}
 </style>
 </head>
 <body>
-<header><h1>rroflow · Sentry for your AI</h1><p>Your devspace: what Claude Code and Codex did, where they failed, and what it cost. Every number on this page comes from records you sent.</p></header>
+<header class="hero"><div class="eyebrow">RROFLOW / Reason Ready Objects and flow</div><h1>AI monitoring, with the evidence.</h1><p>See where your agents get stuck. Inspect the evidence. Build better behaviour from corrections.</p></header>
 <main>
 <section class="panel" id="login">
   <h2>Your Claude Code and Codex activity</h2>
@@ -41,8 +44,11 @@ table.sig{table-layout:fixed;min-width:760px}
   <p id="err" class="critical" role="alert"></p>
 </section>
 <section id="app" hidden>
-  <div class="panel"><div class="row"><b id="ds"></b><span class="muted" id="updated"></span><button id="refresh">Refresh</button><button id="logout">Sign out</button></div><p id="apperr" class="critical"></p></div>
-  <div class="panel"><h2>Your agents</h2><div class="grid" id="agents"></div>
+<nav class="row app-nav" aria-label="Workspace"><a href="#activity">Activity</a><a href="#sessions-panel">Sessions</a><a href="#signal-inbox">Signals</a><a href="#agent-sources">Sources</a><a href="#research">Research</a></nav>
+  <div class="panel"><div class="row"><b id="ds"></b><span class="muted" id="updated"></span><button id="refresh">Refresh</button><button id="logout">Sign out</button></div><p id="apperr" class="critical" role="alert"></p><div class="status-strip" id="coverage"></div></div>
+<div class="panel" id="activity"><div class="row"><h2 style="margin:0">Your turns</h2><select id="agentFilter" aria-label="Agent"><option value="">All agents</option></select><select id="projectFilter" aria-label="Project"><option value="">All projects</option></select><select id="filter" aria-label="Signal"><option value="">All turns</option></select><input id="sessionFilter" aria-label="Session ID" placeholder="Session ID"><button id="clearFilters">Clear filters</button></div><p class="muted">Latest 100 matching turns. Project groups use the captured working directory when no project label was supplied. Open a turn to read its captured prompt, response, tools and signal evidence.</p><div id="activity-chart"></div><div id="turns" class="turn-list"></div></div>
+<section class="panel" id="sessions-panel"><h2>Sessions in this view</h2><p class="muted">Grouped from the latest 100 matching turns. Select a session to inspect it. Counts are limited to this view, not the session's complete history.</p><div id="sessions"></div></section>
+  <div class="panel" id="agent-sources"><h2>Your agents</h2><div class="grid" id="agents"></div>
     <details><summary>Send activity from this computer</summary>
       <p>Install the rroflow collector, then sign in with the same Shippin account used here. Run these commands on the computer where you use your agents:</p>
       <pre><code>rroflow login
@@ -54,18 +60,18 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
     </details>
   </div>
   <div class="panel grid" id="stats"></div>
-  <div class="panel"><h2>Signals</h2><div id="signals"></div></div>
+  <div class="panel" id="signal-inbox"><h2>Signal inbox</h2><p class="muted">Rule matches from the latest 100 turns in your selected view. These are findings to review, not proven failures. Open a card to inspect its evidence.</p><p id="review-status" role="status"></p><div id="inbox" class="signal-inbox"></div></div>
+  <div class="panel"><h2>All captured signal counts</h2><div id="signals"></div></div>
   <div class="panel">
     <details id="settingsBox"><summary style="font-size:15px;color:var(--text)">Signal settings for this devspace</summary>
-      <p class="muted">Collectors read these before they evaluate, so a change applies to turns sent from now on.</p>
+      <p class="muted">One-shot ingest reads these before evaluation. Linked session collectors currently use the settings saved when linked; live settings refresh is not implemented.</p>
       <div id="settings"></div>
       <div class="row" style="margin-top:12px"><button id="save">Save settings</button><span id="saved" class="muted"></span></div>
     </details>
   </div>
-  <div class="panel"><div class="row"><h2 style="margin:0">Recent turns</h2>
-    <select id="agentFilter" aria-label="Agent"><option value="">All agents</option></select>
-    <select id="filter" aria-label="Signal"><option value="">All turns</option></select></div>
-  <table><thead><tr><th>When</th><th>Agent · project</th><th class="n">Tools</th><th class="n">Tokens in / out</th><th>Signals</th></tr></thead><tbody id="turns"></tbody></table></div>
+<div class="panel"><h2>SDK event journal</h2><p class="muted">Latest 100 received events. Stream completion means capture finished; native events report the agent outcome. Local queued events appear only after delivery.</p><div id="sdk-events"></div></div>
+<div class="panel"><h2>From evidence to learning</h2><div class="journey"><span class="ok">Capture</span><span class="ok">Signals + evidence</span><span>Labels</span><span>Datasets · being built</span><span>Evaluation + promotion · being built</span></div><p class="muted">Learning is not active. A signal match is not a training label. Future dataset builds require a saved consent policy; candidates must pass held-out evaluation before reversible promotion.</p></div>
+<section class="panel" id="research"><h2>Your Raindrop research</h2><p>The source notes remain in the repository. These are research documents, not captured user activity.</p><ul><li><a href="https://github.com/rrflow/rroflow-development/blob/main/docs/research/raindrop/live-capture-ledger.md">Live workspace capture ledger</a></li><li><a href="https://github.com/rrflow/rroflow-development/blob/main/docs/research/raindrop/signal-authoring-capture.md">Signal authoring and classifier review</a></li><li><a href="https://github.com/rrflow/rroflow-development/blob/main/docs/research/raindrop/ux-onboarding-and-gating.md">Onboarding and feature gating</a></li><li><a href="https://github.com/rrflow/rroflow-development/blob/main/docs/research/raindrop/ux-settings.md">Settings, privacy and redaction</a></li><li><a href="https://github.com/rrflow/rroflow-development/tree/main/docs/research/raindrop">All eight Raindrop research documents</a></li></ul></section>
 </section>
 </main>
 <script>
@@ -74,9 +80,11 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const fmt = (n) => n == null ? "—" : Number(n).toLocaleString();
   // Display names for the agents rroflow collects from; other agents show their id.
-  const AGENTS = { "claude-code": "Claude Code", "codex": "Codex" };
+  const AGENTS = { "claude-code": "Claude Code", "codex": "Codex", "grok": "Grok" };
   const agentName = (a) => AGENTS[a] || a;
   const plural = (n, word) => fmt(n) + " " + word + (n === 1 ? "" : "s");
+  let inboxHits = [], revisions = {}, reviewRows = [];
+  const pendingReviews = new Map();
   let key = "", catalogue = null, settings = { disabled: [], options: {} };
   try { key = sessionStorage.getItem("rroflow.key") || ""; } catch (_) {}
 
@@ -92,7 +100,41 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
     const q = new URLSearchParams({ limit: "100" });
     if ($("agentFilter").value) q.set("agent", $("agentFilter").value);
     if ($("filter").value) q.set("signal", $("filter").value);
+    if ($("projectFilter").value) q.set("project", $("projectFilter").value);
+    if ($("sessionFilter").value.trim()) q.set("session", $("sessionFilter").value.trim());
     return "/v1/turns?" + q;
+  }
+
+  function renderActivity(turns) {
+    const days = new Map(), sessions = new Map();
+    for (const turn of turns) {
+      const day = /^\d{4}-\d{2}-\d{2}T/.test(turn.started_at || '') ? turn.started_at.slice(0,10) : 'Date not reported';
+      const count = days.get(day) || {turns:0, signals:0};
+      count.turns++; count.signals += turn.signals.length; days.set(day,count);
+      const id = JSON.stringify([turn.agent,turn.session_id]);
+      const session = sessions.get(id) || {agent:turn.agent,id:turn.session_id,turns:0,signals:0,projects:new Set()};
+      session.turns++; session.signals += turn.signals.length;
+      session.projects.add(turn.project || turn.cwd || '(none)'); sessions.set(id,session);
+    }
+    const max = Math.max(1,...[...days.values()].map(d=>d.turns));
+    $('activity-chart').innerHTML = '<h3>Activity by day · current view</h3><p class="muted">Recorded turns by UTC date. Missing dates do not establish inactivity.</p>' +
+      [...days.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([day,d])=>'<div class="activity-bar"><span>' + esc(day) + '</span><meter min="0" max="' + max + '" value="' + d.turns + '" aria-label="' + esc(day) + ' turns">' + d.turns + '</meter><span>' + fmt(d.turns) + ' turns · ' + fmt(d.signals) + ' hits</span></div>').join('');
+    $('sessions').innerHTML = '<div class="session-grid">' + [...sessions.values()].map(s=>'<button class="session-item" data-session="' + esc(s.id) + '" data-agent="' + esc(s.agent) + '"><b>' + esc(agentName(s.agent)) + '</b><span>' + fmt(s.turns) + ' turns · ' + fmt(s.signals) + ' signal hits</span><span>' + esc([...s.projects].join(' · ')) + '</span><small>' + esc(s.id) + '</small></button>').join('') + '</div>' + (sessions.size ? '' : '<p class="muted">No sessions match these filters.</p>');
+  }
+
+
+  const signalTitle = id => ({blocked_handoff:'Blocked handoff',false_done:'Possible false completion',tool_error_streak:'Repeated tool failures',usage_limit_hit:'Usage limit reached',context_loss:'Context compaction marker',correction_spiral:'Possible correction spiral',aborted_turn:'Interrupted turn',mood:'Mood shift'}[id] || id.replaceAll('_',' '));
+  function renderInbox(turns) {
+    const hits = turns.flatMap(t => t.signals.map(h => ({t,h}))).sort((a,b) => Number(a.h.signal === 'mood') - Number(b.h.signal === 'mood')).slice(0,48);
+    inboxHits = hits;
+    $('inbox').innerHTML = hits.map(({t,h},index) => {
+      const reviewed = reviewRows.find(r => r.request.event_id === t.event_id && r.request.turn_digest === revisions[t.event_id] && r.request.signal === h.signal && r.request.rule_version === h.rule_version);
+      const evidence = h.evidence.map(e => {
+        const tool = t.tools.find(x => x.id === e.tool_id);
+        return '<li>' + esc(e.kind) + (tool ? ': <b>' + esc(tool.name) + '</b> · ' + esc(tool.status) : '') + (e.tool_id ? '<div class="ev">Tool ' + esc(e.tool_id) + '</div>' : '') + (e.excerpt ? '<div class="ev">' + esc(e.excerpt) + '</div>' : '<div class="muted">Text was not included in this capture.</div>') + '</li>';
+      }).join('');
+      return '<article class="signal-card"><div class="source">' + esc(agentName(t.agent)) + ' · ' + esc((t.started_at || '').replace('T',' ').slice(0,16)) + '</div><h3>' + esc(signalTitle(h.signal)) + '</h3><p>' + esc(h.summary) + '</p><span class="chip ' + esc(h.severity) + '">' + esc(h.severity) + '</span><span class="chip">Rule v' + esc(h.rule_version) + '</span><details><summary>Inspect evidence</summary><ul>' + evidence + '</ul><div class="source">Session ' + esc(t.session_id) + '<br>Turn ' + esc(t.event_id) + '<br>Source ' + esc(t.collector) + '<br>Outcome ' + esc(t.termination) + '</div><p class="muted">Review this rule match. A saved verdict does not start training.</p><div class="row"><button data-review="match" data-hit="' + index + '">MATCH</button><button data-review="not_match" data-hit="' + index + '">NOT MATCH</button></div><p class="source">' + (reviewed ? 'Latest saved verdict: ' + esc(reviewed.request.verdict.toUpperCase().replace('_',' ')) : 'No verdict on this revision in the latest 1,000 reviews.') + '</p></details></article>';
+    }).join('') || '<p class="muted">No signal matches in these recent turns. Choose a signal below to inspect older matching turns; the counts cover all received records.</p>';
   }
 
   function renderSignals(s, agents) {
@@ -102,7 +144,7 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
       const rows = c.signals.map((id) => {
         const spec = catalogue.signals.find((x) => x.id === id);
         const per = agents.map((a) => `<td class="n">${fmt((s.signals_by_agent[a] || {})[id] || 0)}</td>`).join("");
-        return `<tr><td>${esc(id)} <span class="muted">v${spec.version}</span></td>${per}<td class="n"><b>${fmt(s.signals[id] || 0)}</b></td><td>${off.has(id) ? '<span class="muted">off</span>' : '<span class="ok">on</span>'}</td><td>${esc(spec.meaning)}</td></tr>`;
+        return `<tr><td><button class="signal-link" data-inspect="${esc(id)}">${esc(signalTitle(id))}</button> <span class="muted">v${spec.version}</span></td>${per}<td class="n"><b>${fmt(s.signals[id] || 0)}</b></td><td>${off.has(id) ? '<span class="muted">off</span>' : '<span class="ok">on</span>'}</td><td>${esc(spec.meaning)}</td></tr>`;
       }).join("");
       return `<h3>${esc(c.label)}</h3><p class="cat">${esc(c.meaning)}</p><table class="sig"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
     }).join("");
@@ -134,23 +176,31 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
 
   async function load() {
     $("apperr").textContent = "";
-    const [sum, list, who] = await Promise.all([api("/v1/summary"), api(turnsQuery()), api("/v1/whoami")]);
+    const [sum, list, who, journal, reviews] = await Promise.all([api("/v1/summary"), api(turnsQuery()), api("/v1/whoami"), api("/v1/events?limit=100"), api("/v1/reviews")]);
+    revisions = list.revisions || {}; reviewRows = reviews.reviews || [];
+    $("sdk-events").innerHTML = journal.events.map(e => '<div><b>' + esc(agentName(e.agent === 'claude' ? 'claude-code' : e.agent)) + '</b> ? ' + esc(e.kind) + ' · ' + esc(e.native_type || '') + ' <span class="muted">' + esc(e.observed_at) + ' ? #' + esc(e.sequence) + '</span></div>').join('') || '<p class="muted">No SDK events received yet. Connect an instrumented SDK call and flush its local queue.</p>';
     const s = sum.summary;
+    const local = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+    $('coverage').textContent = (local ? 'Private local view · ' : 'Received cloud records · ') + 'Historical records do not prove a source is currently connected. Source heartbeats and pending queue counts are not available yet. Content is shown only when captured with opt-in.';
+    renderInbox(list.turns);
+    renderActivity(list.turns);
+
     catalogue = sum.catalogue;
     settings = sum.settings || settings;
-    $("ds").textContent = (who.name ? who.name + " ? " : "") + "Devspace " + sum.devspace;
+    $("ds").textContent = (who.name ? who.name + " · " : "") + "Devspace " + sum.devspace;
     $("updated").textContent = "loaded " + new Date().toLocaleTimeString();
     const agents = Array.from(new Set(Object.keys(AGENTS).concat(Object.keys(s.by_agent))));
     $("agents").innerHTML = agents.map((a) => {
+      const recentEvents = journal.events.filter(e => (e.agent === 'claude' ? 'claude-code' : e.agent) === a).length;
       const hits = Object.values(s.signals_by_agent[a] || {}).reduce((x, y) => x + y, 0);
-      return `<div class="agent"><b>${esc(agentName(a))}</b><div class="muted">${plural(s.by_agent[a] || 0, "turn")} · ${plural(hits, "signal hit")}</div>${s.by_agent[a] ? '<div class="ok">Captured activity</div>' : '<div class="muted">No captured activity yet: <code>rroflow ingest-' + (a === "codex" ? "codex" : "claude") + "</code></div>"}</div>`;
+      return `<div class="agent"><b>${esc(agentName(a))}</b><div class="muted">${plural(s.by_agent[a] || 0, "turn")} · ${plural(hits, "signal hit")} · ${plural(recentEvents, "recent SDK event")}</div>${s.by_agent[a] || recentEvents ? '<div class="ok">Captured activity</div>' : (a === 'grok' ? '<div class="muted">No activity in this view: connect the Grok SDK adapter.</div>' : '<div class="muted">No activity in this view: <code>rroflow ingest-' + (a === "codex" ? "codex" : "claude") + "</code></div>")}</div>`;
     }).join("");
     $("stats").innerHTML = [
       ["Turns", fmt(s.turns), Object.keys(s.by_project).length + " projects"],
       ["Signal hits", fmt(Object.values(s.signals).reduce((a, b) => a + b, 0)), Object.keys(s.signals).length + " kinds"],
       ["Tool calls", fmt(s.tool_calls), fmt(s.tool_errors) + " failed"],
-      ["Input tokens", fmt(s.input_tokens), fmt(s.cache_read_tokens) + " cache read"],
-      ["Output tokens", fmt(s.output_tokens), s.turns_without_usage ? s.turns_without_usage + " turns unreported" : "all reported"],
+      ["Usage accounting", "Under review", "Native token normalization needs validation"],
+      ["Spend", "Not priced", "No subscription charge is inferred"],
     ].map(([t, v, sub]) => `<div class="stat"><span>${esc(t)}</span><b>${esc(v)}</b><span>${esc(sub)}</span></div>`).join("");
     renderSignals(s, agents);
     if (!$("settingsBox").open) renderSettings();
@@ -160,13 +210,20 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
     const asel = $("agentFilter"), acur = asel.value;
     asel.innerHTML = '<option value="">All agents</option>' + agents.map((a) => `<option value="${esc(a)}">${esc(agentName(a))}</option>`).join("");
     asel.value = acur;
+    const psel = $('projectFilter'), pcur = psel.value;
+    psel.innerHTML = '<option value="">All projects</option>' + Object.entries(s.by_project).map(([p,n])=>'<option value="' + esc(p) + '">' + esc(p) + ' (' + fmt(n) + ')</option>').join('');
+    psel.value = pcur;
     $("turns").innerHTML = list.turns.map((t) => {
       const errs = t.tools.filter((x) => x.status === "error").length;
       const chips = t.signals.map((h) => `<span class="chip ${esc(h.severity)}" title="${esc(h.summary)}">${esc(h.signal)}${h.score != null && h.signal === "mood" ? " " + (h.score > 0 ? "+" : "") + h.score : ""}</span>`).join("") || '<span class="muted">none</span>';
       const ev = t.signals.map((h) => `<div><b>${esc(h.signal)}</b>: ${esc(h.summary)}${h.evidence.filter((e) => e.excerpt).map((e) => `<div class="ev">${esc(e.kind)}: ${esc(e.excerpt)}</div>`).join("")}</div>`).join("");
       const who = t.prompt_author ? ` <span class="muted">(prompt from ${esc(t.prompt_author)})</span>` : "";
-      return `<tr><td>${esc((t.started_at || "").replace("T", " ").slice(0, 16))}</td><td>${esc(agentName(t.agent))} · ${esc(t.project || "—")}${who}<br><span class="muted">${esc(t.model || "")}</span></td><td class="n">${t.tools.length}${errs ? ` <span class="warn">(${errs} failed)</span>` : ""}${t.tools_unfinished ? ` <span class="muted">+${t.tools_unfinished} running</span>` : ""}</td><td class="n">${fmt(t.usage.input_tokens)} / ${fmt(t.usage.output_tokens)}</td><td>${chips}${ev ? `<details><summary>evidence</summary>${ev}</details>` : ""}</td></tr>`;
-    }).join("") || '<tr><td colspan="5" class="muted">No turns match. Send some with <code>rroflow ingest-claude</code> or <code>rroflow ingest-codex</code>.</td></tr>';
+      const prompt = t.content?.input;
+      const response = t.content?.output;
+      const text = value => value == null ? '<p class="muted">Text was not included in this capture.</p>' : '<pre>' + esc(value || '(empty)') + '</pre>';
+      const tools = t.tools.map(tool => '<details class="tool-item"><summary>' + esc(tool.name) + ' · ' + esc(tool.status) + '</summary><p class="meta">' + esc(tool.id) + ' · ' + esc(tool.started_at) + '</p><h3>Input</h3>' + text(tool.input) + '<h3>Result</h3>' + text(tool.output) + '</details>').join('');
+      return '<article class="turn-card"><details><summary><b>' + esc(agentName(t.agent)) + '</b> · ' + esc((t.started_at || '').replace('T',' ').slice(0,16)) + ' · ' + esc(t.model || 'Model not reported') + '<span class="preview">' + esc(prompt ? prompt.slice(0,180) : 'Open turn · ' + t.tools.length + ' tool calls · content not captured') + '</span>' + chips + '</summary><div class="turn-body"><p class="meta">Session ' + esc(t.session_id) + '<br>Turn ' + esc(t.event_id) + '<br>Source ' + esc(t.collector) + ' · Outcome ' + esc(t.termination) + '</p><h3>Prompt</h3>' + text(prompt) + '<h3>Response</h3>' + text(response) + '<h3>Tools · ' + t.tools.length + ' finished' + (t.tools_unfinished ? ' · ' + t.tools_unfinished + ' unfinished' : '') + '</h3>' + (tools || '<p class="muted">No finished tool calls recorded.</p>') + '<h3>Signal evidence</h3>' + (ev || '<p class="muted">No signal matches.</p>') + '<p class="meta">Raw usage is unverified: ' + fmt(t.usage.input_tokens) + ' input / ' + fmt(t.usage.output_tokens) + ' output tokens.</p></div></details></article>';
+    }).join('') || '<p class="muted">No turns match this view.</p>';
   }
 
   async function open() {
@@ -178,18 +235,36 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
     } catch (e) { $("err").textContent = e.message; $("login").hidden = false; $("app").hidden = true; }
   }
   const reload = () => load().catch((e) => ($("apperr").textContent = e.message));
+  $('inbox').onclick = async (event) => {
+    const button = event.target.closest('[data-review]'); if (!button) return;
+    const hit = inboxHits[Number(button.dataset.hit)]; if (!hit) return;
+    const {t,h} = hit;
+    const intent = [t.event_id,revisions[t.event_id],h.signal,h.rule_version,button.dataset.review].join(':');
+    if (!pendingReviews.has(intent)) pendingReviews.set(intent,crypto.randomUUID());
+    button.disabled = true; $('review-status').textContent = 'Saving verdict…';
+    try {
+      await api('/v1/reviews',{method:'POST',body:JSON.stringify({review_id:pendingReviews.get(intent),event_id:t.event_id,turn_digest:revisions[t.event_id],signal:h.signal,rule_version:h.rule_version,verdict:button.dataset.review})});
+      pendingReviews.delete(intent);
+      await load(); $('review-status').textContent = 'Verdict saved against this evidence revision. No training or promotion started.';
+    } catch(e) { $('review-status').textContent = e.message; button.disabled = false; }
+  };
   $("signin").onclick = () => { key = ""; try { sessionStorage.removeItem("rroflow.key"); } catch (_) {} };
   $("go").onclick = () => { key = $("key").value.trim(); open(); };
   $("key").onkeydown = (e) => { if (e.key === "Enter") $("go").click(); };
   $("refresh").onclick = reload;
+  $('signals').onclick = (event) => { const button = event.target.closest('[data-inspect]'); if (button) { $('filter').value = button.dataset.inspect; reload().then(() => $('inbox').scrollIntoView({behavior:'smooth',block:'start'})); } };
   $("filter").onchange = reload;
   $("agentFilter").onchange = reload;
+  $('projectFilter').onchange = reload;
+  $('sessionFilter').onchange = reload;
+  $('clearFilters').onclick = () => { for (const id of ['agentFilter','projectFilter','filter','sessionFilter']) $(id).value = ''; return reload(); };
+  $('sessions').onclick = (event) => { const button = event.target.closest('[data-session]'); if (!button) return; $('sessionFilter').value = button.dataset.session; $('agentFilter').value = button.dataset.agent; return reload(); };
   $("save").onclick = async () => {
     $("saved").textContent = "";
     try {
       const r = await api("/v1/signals/settings", { method: "PUT", body: JSON.stringify(collectSettings()) });
       settings = r.settings;
-      $("saved").textContent = "Saved. Collectors use these from their next send.";
+      $("saved").textContent = "Saved. One-shot ingest uses these on its next run. Existing source links retain their saved settings.";
       $("settingsBox").open = false;
       await load();
     } catch (e) { $("saved").textContent = e.message; }
@@ -201,7 +276,8 @@ rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
       try { sessionStorage.removeItem("rroflow.key"); } catch (_) {}
       key = ""; $("key").value = "";
       $("app").hidden = true; $("login").hidden = false;
-      for (const id of ["ds", "agents", "stats", "signals", "turns", "settings"]) $(id).replaceChildren();
+      for (const id of ["ds", "agents", "stats", "signals", "turns", "settings", "sdk-events", "inbox", "coverage", "review-status", "sessions", "activity-chart"]) $(id).replaceChildren();
+      for (const id of ['agentFilter','projectFilter','filter','sessionFilter']) { $(id).value = ''; if (id !== 'sessionFilter') $(id).replaceChildren(); }
     } catch (e) { $("apperr").textContent = e.message; }
   };
   async function start() {

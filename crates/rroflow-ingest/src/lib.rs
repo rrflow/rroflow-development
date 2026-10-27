@@ -15,8 +15,10 @@
 
 mod web_auth;
 pub use web_auth::BrowserConfig;
+mod capture;
 pub mod nomen;
 pub mod pg;
+mod reviews;
 pub mod store;
 #[cfg(test)]
 mod test_keys;
@@ -257,6 +259,7 @@ impl AppState {
 #[derive(Debug)]
 pub enum ApiError {
     Unauthorized,
+    Conflict,
     /// Nomen could not be asked about a token; retry. Never a refusal.
     IssuerUnavailable,
     BadRequest(String),
@@ -266,6 +269,7 @@ pub enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (code, msg) = match self {
+            ApiError::Conflict => (StatusCode::CONFLICT, "capture identity conflict".into()),
             ApiError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "missing or unknown credential: an ingest key or a Nomen sign-in".to_string(),
@@ -342,6 +346,8 @@ pub struct ListQuery {
     pub limit: Option<usize>,
     pub agent: Option<String>,
     pub signal: Option<String>,
+    pub project: Option<String>,
+    pub session: Option<String>,
 }
 
 /// Most records one read returns.
@@ -362,12 +368,14 @@ async fn get_turns(
             &TurnFilter {
                 agent: q.agent.as_deref().filter(|a| !a.is_empty()),
                 signal: q.signal.as_deref().filter(|s| !s.is_empty()),
+                project: q.project.as_deref().filter(|s| !s.is_empty()),
+                session: q.session.as_deref().filter(|s| !s.is_empty()),
             },
         )
         .await
         .map_err(internal)?;
     Ok(Json(
-        serde_json::json!({ "devspace": devspace, "turns": turns }),
+        serde_json::json!({ "devspace": devspace, "revisions":turns.iter().map(|t| (t.event_id.clone(), reviews::digest(t))).collect::<std::collections::BTreeMap<_,_>>(), "turns": turns }),
     ))
 }
 
@@ -473,6 +481,8 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/auth/login", get(web_auth::login))
         .route("/auth/callback", get(web_auth::callback))
         .route("/auth/logout", post(web_auth::logout))
+        .route("/v1/events", post(capture::ingest).get(capture::list))
+        .route("/v1/reviews", post(reviews::save).get(reviews::list))
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
