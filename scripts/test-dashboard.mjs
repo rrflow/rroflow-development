@@ -94,11 +94,13 @@ test('turn inspection escapes prompt, response and tool payloads, preserving mis
   await p.click({event:'two'});assert.match(p.el.get('pane-conversation').innerHTML,/Content capture is opt-in/);
 });
 
-test('missing timestamps stay unknown instead of becoming dates in 1970',async()=>{
-  const p=await page({signedIn:true,records:[{...sample(),started_at:null,ended_at:null}]});
+test('empty timestamps and defensive null values stay unknown',async()=>{
+  for(const timestamp of ['',null]){
+  const p=await page({signedIn:true,records:[{...sample(),started_at:timestamp,ended_at:timestamp}]});
   assert.match(p.el.get('overview-chart').innerHTML,/Undated/);assert.doesNotMatch(p.el.get('overview-chart').innerHTML,/1970/);
   assert.match(p.el.get('overview-recent').innerHTML,/Time not reported/);
   await p.click({event:'one'});assert.match(p.el.get('inspector-title').textContent,/Time not reported/);
+  }
 });
 test('search, project, session, time and cursor go to the scoped API; route changes preserve URL filters',async()=>{
   const p=await page({signedIn:true,records:[sample()]});

@@ -34,14 +34,14 @@ export async function startFixture() {
     const prompts=['Check the deployment rollback procedure','Review the database indexing change','Explain the failed build and suggest a repair','Add a clear first-run checklist','Verify the account boundary'];
     const turns=Array.from({length:105},(_,i)=>{
       const at=new Date(now-i*3600000).toISOString(), agent=i%2?'claude-code':'codex';
-      return {schema:'rroflow.turn/v1',event_id:`fixture-${String(i).padStart(3,'0')}`,agent,agent_version:'fixture',provider:agent==='codex'?'openai':'anthropic',model:agent==='codex'?'fixture-codex':'fixture-claude',session_id:i<3?'fixture-session-review':`fixture-session-${i}`,turn_key:String(i),subagent:null,prompt_author:null,started_at:i===104?null:at,ended_at:i===104?null:at,cwd:'/fixture/workspace',git_branch:'fixture-only',project:i%2?'Fixture / storefront':'Fixture / release-service',usage:{input_tokens:null,output_tokens:null,cache_read_tokens:null,cache_write_tokens:null,input_includes_cache:false},termination:i%7===0?'tool_error':'completed',compacted:false,tools_unfinished:0,collector:'isolated-ui-test-fixture',
+      return {schema:'rroflow.turn/v1',event_id:`fixture-${String(i).padStart(3,'0')}`,agent,agent_version:'fixture',provider:agent==='codex'?'openai':'anthropic',model:agent==='codex'?'fixture-codex':'fixture-claude',session_id:i<3?'fixture-session-review':`fixture-session-${i}`,turn_key:String(i),subagent:null,prompt_author:null,started_at:i===104?'':at,ended_at:i===104?'':at,cwd:'/fixture/workspace',git_branch:'fixture-only',project:i%2?'Fixture / storefront':'Fixture / release-service',usage:{input_tokens:null,output_tokens:null,cache_read_tokens:null,cache_write_tokens:null,input_includes_cache:false},termination:i%7===0?'tool_error':'completed',compacted:false,tools_unfinished:0,collector:'isolated-ui-test-fixture',
         content:i===4?null:{input:i===1?'Review the database indexing change — unique search phrase':prompts[i%prompts.length],output:i===0?'The permission was denied. Please run this step. Literal evidence: <img src=x onerror="window.injected=true">':'This is a disposable UI test response, not captured user activity.'},
         tools:Array.from({length:i===0?125:2},(_,n)=>({id:`fixture-tool-${i}-${n}`,name:n?'read_file':'exec',status:i%7===0&&n===0?'error':'ok',started_at:at,ended_at:at,input:'{"fixture":true}',output:i%7===0&&n===0?'Permission denied (test fixture)':'Fixture result'})),
         signals:i%7===0?[{signal:'blocked_handoff',rule_version:1,severity:'warn',summary:'A denied tool was followed by a request for the user to run the step.',score:null,evidence:[{kind:'tool',tool_id:`fixture-tool-${i}-0`,excerpt:'Permission denied (test fixture)'}]}]:[],
       };
     });
     const seeded=await fetch(base+'/v1/turns',{method:'POST',headers,body:JSON.stringify({turns})});
-    if(!seeded.ok)throw new Error('Fixture seed refused: '+seeded.status);
+    if(!seeded.ok)throw new Error('Fixture seed refused: '+seeded.status+' '+(await seeded.text()).slice(0,1000));
     return {base,key,headers,close,turns};
   }catch(error){await close();throw error;}
 }
