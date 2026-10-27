@@ -98,7 +98,7 @@ This keeps the earlier rule "deploy from GitHub only, no hand-built copies". Bui
 ## Increments (one PR each)
 
 1. **This record:** deploy plan, D-7 and D-8, status page, docs index. (In review alongside it: #14 browser sign-in + Texas preflight, #15 durable capture + signal reviews.)
-2. **Release `rroflow-ingest`** for Linux x86_64 and aarch64 from GitHub Actions, with checksums and attestations, published automatically on a version bump (as the CLI is).
+2. **Release `rroflow-ingest`** for Linux x86_64 and aarch64 from GitHub Actions, with checksums and attestations, published automatically on a version bump. Done: from v0.3.0 the ingest and the CLI share one version and one release (`rroflow-ingest-<target>.tar.xz`), and CI fails if their versions differ.
 3. **`deploy/texas/`:** the bootstrap paste (preflight, VM, edge routes, hosts line, data move) and `rroflow-host` with pull updates. It will be tested against stand-ins for the Proxmox commands, the way Nomen's was.
 4. **`web/` dashboard** at parity, embedded in the ingest. Types are generated from Rust, with a CI drift check.
 5. **Key management in the page** (sign-in itself is #14).

@@ -16,6 +16,7 @@ Updated 2026-10-27. This page says where everything stands. The plan is [plan/rr
 - **v0.2.0** (2026-10-26): <https://github.com/rrflow/rroflow-development/releases/tag/v0.2.0>
   - `rroflow` for Windows x64 and ARM64, and Linux x64 and ARM64.
   - Shell and PowerShell installers, SHA-256 sums and GitHub build attestations.
+- **v0.3.0** (on merge of the ingest release PR): the same CLI, plus `rroflow-ingest` for Linux x64 and ARM64 with checksums and attestations, for servers to pull. From here the CLI and the ingest share one version, checked in CI.
 - **Publishing** is automatic: change the version in `crates/rroflow-cli/Cargo.toml` and merge. `release-on-version` then starts the release, which creates the tag.
 - **CI** runs on every pull request, all on GitHub Actions at no cost because the repository is public:
   - Linux x64: fmt, clippy and tests on Postgres.
@@ -59,10 +60,9 @@ Also decided:
 
 ## Next (one pull request each)
 
-1. Release `rroflow-ingest` for Linux x64 and ARM64 from GitHub Actions ([deploy/README.md](deploy/README.md), increment 2).
-2. `deploy/texas/`: the bootstrap paste and `rroflow-host` with pull updates (increment 3).
-3. A `web/` React dashboard at parity with the page as #14 and #15 leave it, embedded in the ingest, with types generated from Rust (increment 4).
-4. `rroflow setup`: detect Claude Code and Codex, then offer to link them, backfill and capture every turn ([plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md), increment 2), building on #15's outbox.
+1. `deploy/texas/`: the bootstrap paste and `rroflow-host` with pull updates (increment 3).
+2. A `web/` React dashboard at parity with the page as #14 and #15 leave it, embedded in the ingest, with types generated from Rust (increment 4).
+3. `rroflow setup`: detect Claude Code and Codex, then offer to link them, backfill and capture every turn ([plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md), increment 2), building on #15's outbox.
 
 ## Waiting on the owner
 
@@ -73,5 +73,4 @@ Also decided:
 
 ## Known leftovers
 
-- The help text for `rroflow doctor` still says it checks "what Raindrop stored".
 - `deploy/tx-infra-prod/deploy.sh` builds on the host. It is superseded by the VM layout, and it stays until the move is done.

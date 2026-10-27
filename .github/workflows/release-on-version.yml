@@ -1,7 +1,8 @@
 name: release-on-version
-# When main carries a `rroflow` SDK version that has no GitHub Release yet, start the release
-# workflow (dist, dispatch mode) with tag v<version>. The release job creates the tag on the
-# commit it builds, so publishing a version is: bump crates/rroflow-cli/Cargo.toml, merge.
+# When main carries a version with no GitHub Release yet, start the release workflow (dist,
+# dispatch mode) with tag v<version>. The `rroflow` SDK and `rroflow-ingest` share that version
+# (ci.yml checks it), so one release ships both. The release job creates the tag on the commit it
+# builds, so publishing is: bump both Cargo.toml versions, merge.
 on:
   push:
     branches: [main]
