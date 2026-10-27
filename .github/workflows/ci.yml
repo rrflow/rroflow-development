@@ -67,6 +67,24 @@ jobs:
         run: node scripts/package-ingest.mjs target/release/rroflow-ingest target/hosted "$RROFLOW_BUILD_REVISION" x86_64-unknown-linux-gnu
       - name: Verify the exact packaged server with disposable fixture data
         run: node scripts/test-ingest-artifact.mjs "target/hosted/rroflow-ingest-$RROFLOW_BUILD_REVISION-x86_64-unknown-linux-gnu.tar.gz" "$RROFLOW_BUILD_REVISION"
+      - name: Install pinned UI test tooling
+        working-directory: scripts/dashboard-ui
+        run: npm ci --ignore-scripts && npx --no-install playwright install --with-deps chromium
+      - name: Verify desktop and phone dashboard flows
+        working-directory: scripts/dashboard-ui
+        env:
+          RROFLOW_UI_BINARY: ${{ github.workspace }}/target/release/rroflow-ingest
+        run: npm test
+      - name: Retain UI screenshots and failure traces (fixture data only)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dashboard-ui-${{ env.RROFLOW_BUILD_REVISION }}
+          path: |
+            scripts/dashboard-ui/playwright-report/
+            scripts/dashboard-ui/test-results/
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Retain immutable review artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
