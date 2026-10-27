@@ -16,13 +16,18 @@ export PATH=$CARGO_HOME/bin:$PATH
 LISTEN="${LISTEN:-127.0.0.1:8787}"
 # Public hostnames Caddy serves with TLS, all proxied to $LISTEN: the API and the dashboard.
 # Empty skips the proxy. Certificates are issued once each name's A record points here.
-PUBLIC_HOSTS="${PUBLIC_HOSTS-api.rroflow.ai app.rroflow.ai}"
+PUBLIC_HOSTS="${PUBLIC_HOSTS:-}"
 # Nomen sign-in for this host (project `rroflow`, Shippin Platform org). Used when the
 # ingest app's key file is present at $NOMEN_KEY_FILE.
 NOMEN_ISSUER="${NOMEN_ISSUER:-https://id.shippin.cloud}"
 NOMEN_PROJECT="${NOMEN_PROJECT:-396821566727389188}"
 NOMEN_CLIENTS="${NOMEN_CLIENTS:-396821568421953540 396821568908492804}"
 NOMEN_KEY_FILE=/etc/rroflow/nomen-key.json
+
+# Resolve from this pinned checkout; piping deploy.sh alone to bash is not supported.
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+export REV LISTEN PUBLIC_HOSTS
+bash "$SCRIPT_DIR/preflight.sh"
 
 echo "== packages"
 export DEBIAN_FRONTEND=noninteractive

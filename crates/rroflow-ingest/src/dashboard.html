@@ -31,13 +31,28 @@ table.sig{table-layout:fixed;min-width:760px}
 <header><h1>rroflow · Sentry for your AI</h1><p>Your devspace: what Claude Code and Codex did, where they failed, and what it cost. Every number on this page comes from records you sent.</p></header>
 <main>
 <section class="panel" id="login">
+  <h2>Your Claude Code and Codex activity</h2>
+  <p id="signin-status" class="muted">Checking sign-in availability?</p>
+  <p><a id="signin" href="/auth/login" hidden>Sign in with Shippin</a></p>
+  <details><summary>Use a devspace key</summary>
   <div class="row"><input id="key" type="password" placeholder="Devspace ingest key" size="48" autocomplete="off" aria-label="Devspace ingest key"><button id="go">Open devspace</button></div>
   <p class="muted">The key stays in this browser tab only and is sent only to this server.</p>
-  <p id="err" class="critical"></p>
+  </details>
+  <p id="err" class="critical" role="alert"></p>
 </section>
 <section id="app" hidden>
-  <div class="panel"><div class="row"><b id="ds"></b><span class="muted" id="updated"></span><button id="refresh">Refresh</button><button id="logout">Forget key</button></div><p id="apperr" class="critical"></p></div>
-  <div class="panel"><h2>Agents</h2><div class="grid" id="agents"></div></div>
+  <div class="panel"><div class="row"><b id="ds"></b><span class="muted" id="updated"></span><button id="refresh">Refresh</button><button id="logout">Sign out</button></div><p id="apperr" class="critical"></p></div>
+  <div class="panel"><h2>Your agents</h2><div class="grid" id="agents"></div>
+    <details><summary>Send activity from this computer</summary>
+      <p>Install the rroflow collector, then sign in with the same Shippin account used here. Run these commands on the computer where you use your agents:</p>
+      <pre><code>rroflow login
+rroflow whoami
+rroflow ingest-claude &lt;Claude sessions folder&gt;
+rroflow ingest-codex &lt;Codex sessions folder&gt;</code></pre>
+      <p>Default folders: <code>~/.claude/projects</code> and <code>~/.codex/sessions</code> (on Windows, <code>$HOME/.claude/projects</code> and <code>$HOME/.codex/sessions</code>). Pass the actual folder path. Refresh this page after capture.</p>
+      <p class="muted">These commands send metrics and signal results; prompt, response and tool text stay local unless you add <code>--content</code>. Existing Claude and Codex sign-ins stay in their own apps. If you previously sent with an ingest key, that devspace needs to be claimed for your verified Shippin account.</p>
+    </details>
+  </div>
   <div class="panel grid" id="stats"></div>
   <div class="panel"><h2>Signals</h2><div id="signals"></div></div>
   <div class="panel">
@@ -66,8 +81,8 @@ table.sig{table-layout:fixed;min-width:760px}
   try { key = sessionStorage.getItem("rroflow.key") || ""; } catch (_) {}
 
   async function api(path, init) {
-    const r = await fetch(path, Object.assign({ headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" } }, init || {}));
-    if (r.status === 401) throw new Error("That key does not open a devspace on this server.");
+    const r = await fetch(path, Object.assign({ credentials: "same-origin", headers: { ...(key ? { Authorization: "Bearer " + key } : {}), "Content-Type": "application/json", "X-Rroflow-Request": "dashboard" } }, init || {}));
+    if (r.status === 401) throw new Error("Sign in again, or check the devspace key.");
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error || ("Server answered " + r.status));
     return body;
@@ -119,16 +134,16 @@ table.sig{table-layout:fixed;min-width:760px}
 
   async function load() {
     $("apperr").textContent = "";
-    const [sum, list] = await Promise.all([api("/v1/summary"), api(turnsQuery())]);
+    const [sum, list, who] = await Promise.all([api("/v1/summary"), api(turnsQuery()), api("/v1/whoami")]);
     const s = sum.summary;
     catalogue = sum.catalogue;
     settings = sum.settings || settings;
-    $("ds").textContent = "Devspace " + sum.devspace;
+    $("ds").textContent = (who.name ? who.name + " ? " : "") + "Devspace " + sum.devspace;
     $("updated").textContent = "loaded " + new Date().toLocaleTimeString();
     const agents = Array.from(new Set(Object.keys(AGENTS).concat(Object.keys(s.by_agent))));
     $("agents").innerHTML = agents.map((a) => {
       const hits = Object.values(s.signals_by_agent[a] || {}).reduce((x, y) => x + y, 0);
-      return `<div class="agent"><b>${esc(agentName(a))}</b><div class="muted">${plural(s.by_agent[a] || 0, "turn")} · ${plural(hits, "signal hit")}</div>${s.by_agent[a] ? "" : '<div class="muted">Nothing sent yet: <code>rroflow ingest-' + (a === "codex" ? "codex" : "claude") + "</code></div>"}</div>`;
+      return `<div class="agent"><b>${esc(agentName(a))}</b><div class="muted">${plural(s.by_agent[a] || 0, "turn")} · ${plural(hits, "signal hit")}</div>${s.by_agent[a] ? '<div class="ok">Captured activity</div>' : '<div class="muted">No captured activity yet: <code>rroflow ingest-' + (a === "codex" ? "codex" : "claude") + "</code></div>"}</div>`;
     }).join("");
     $("stats").innerHTML = [
       ["Turns", fmt(s.turns), Object.keys(s.by_project).length + " projects"],
@@ -158,11 +173,12 @@ table.sig{table-layout:fixed;min-width:760px}
     $("err").textContent = "";
     try {
       await load();
-      try { sessionStorage.setItem("rroflow.key", key); } catch (_) {}
+      try { if (key) sessionStorage.setItem("rroflow.key", key); } catch (_) {}
       $("login").hidden = true; $("app").hidden = false;
     } catch (e) { $("err").textContent = e.message; $("login").hidden = false; $("app").hidden = true; }
   }
   const reload = () => load().catch((e) => ($("apperr").textContent = e.message));
+  $("signin").onclick = () => { key = ""; try { sessionStorage.removeItem("rroflow.key"); } catch (_) {} };
   $("go").onclick = () => { key = $("key").value.trim(); open(); };
   $("key").onkeydown = (e) => { if (e.key === "Enter") $("go").click(); };
   $("refresh").onclick = reload;
@@ -178,8 +194,35 @@ table.sig{table-layout:fixed;min-width:760px}
       await load();
     } catch (e) { $("saved").textContent = e.message; }
   };
-  $("logout").onclick = () => { try { sessionStorage.removeItem("rroflow.key"); } catch (_) {} key = ""; $("app").hidden = true; $("login").hidden = false; };
-  if (key) open();
+  $("logout").onclick = async () => {
+    try {
+      const r = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", headers: { "X-Rroflow-Request": "dashboard" } });
+      if (!r.ok) throw new Error("Sign-out failed. Please retry.");
+      try { sessionStorage.removeItem("rroflow.key"); } catch (_) {}
+      key = ""; $("key").value = "";
+      $("app").hidden = true; $("login").hidden = false;
+      for (const id of ["ds", "agents", "stats", "signals", "turns", "settings"]) $(id).replaceChildren();
+    } catch (e) { $("apperr").textContent = e.message; }
+  };
+  async function start() {
+    try {
+      const r = await fetch("/auth/config", { credentials: "same-origin" });
+      if (!r.ok) throw new Error("Sign-in configuration is unavailable. Retry shortly.");
+      const c = await r.json();
+      $("signin").hidden = !c.enabled;
+      $("signin-status").textContent = c.enabled ? "Use your Shippin account to open your devspace." : "Account sign-in has not been enabled on this server yet. Devspace keys remain available.";
+      if (new URLSearchParams(location.search).has("signin")) {
+        history.replaceState(null, "", "/");
+        $("err").textContent = "Sign-in could not finish. Please try again.";
+      } else if (key) { await open(); }
+      else {
+        const who = await fetch("/v1/whoami", { credentials: "same-origin" });
+        if (who.ok) await open();
+        else if (who.status !== 401) $("err").textContent = "Your session could not be checked. Please retry shortly.";
+      }
+    } catch (e) { $("signin-status").textContent = e.message; }
+  }
+  start();
 })();
 </script>
 </body>

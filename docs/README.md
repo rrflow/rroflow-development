@@ -14,6 +14,12 @@ Everything that guides rroflow.ai and the RRFlow work lives here, in git, so not
 | [spec/mechanism-spec-v0.md](spec/mechanism-spec-v0.md) | RROFLOW mechanism spec v0 (behaviour signals, findings, experiments, the learning loops) | `claude/rroflow-mechanism-spec-v0.md` |
 | [ux/vibe-coder-onboarding.md](ux/vibe-coder-onboarding.md) | Onboarding plan for vibe coders | `claude/rroflow-vibe-coder-onboarding.md` |
 
+## Texas readiness and learning continuation
+
+- [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
+- [Subscription support](plan/subscription-support.md): capture, sign-in, history and inference capability status per surface.
+- [Automatic datasets v0](spec/automatic-datasets-v0.md): policy-authorized snapshots, labels, immutable splits and training boundaries.
+
 ## Research
 
 | File | What it is | Project name |

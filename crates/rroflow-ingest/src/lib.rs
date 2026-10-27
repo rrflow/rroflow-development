@@ -13,6 +13,8 @@
 //!   choices (on/off, thresholds) at `/v1/signals/settings`, which collectors read before
 //!   evaluating.
 
+mod web_auth;
+pub use web_auth::BrowserConfig;
 pub mod nomen;
 pub mod pg;
 pub mod store;
@@ -60,6 +62,8 @@ pub struct Config {
     /// access token opens the devspace its account owns (created on first sign-in).
     /// Requires `database_url`.
     pub nomen: Option<NomenConfig>,
+    /// Optional HTTPS dashboard sign-in through Nomen.
+    pub browser: Option<BrowserConfig>,
 }
 
 /// How the ingest checks Nomen tokens (RFC 7662 introspection, private-key JWT).
@@ -86,6 +90,7 @@ impl Default for Config {
             max_body_bytes: 16 * 1024 * 1024,
             devspace: vec![],
             nomen: None,
+            browser: None,
         }
     }
 }
@@ -144,6 +149,7 @@ pub struct Caller {
 #[derive(Clone)]
 pub struct AppState {
     keys: Arc<HashMap<String, String>>,
+    web: Option<Arc<web_auth::WebAuth>>,
     nomen: Option<Arc<NomenVerifier>>,
     store: Arc<Store>,
     max_batch: usize,
@@ -193,6 +199,7 @@ impl AppState {
         };
         Ok(Self {
             keys: Arc::new(keys),
+            web: web_auth::WebAuth::new(cfg)?,
             nomen,
             store,
             max_batch: cfg.max_batch,
@@ -462,6 +469,10 @@ async fn get_whoami(
 /// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /v1/whoami`, `GET /healthz`.
 pub fn router(st: AppState, max_body_bytes: usize) -> Router {
     Router::new()
+        .route("/auth/config", get(web_auth::config))
+        .route("/auth/login", get(web_auth::login))
+        .route("/auth/callback", get(web_auth::callback))
+        .route("/auth/logout", post(web_auth::logout))
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
@@ -472,6 +483,10 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         )
         .route("/healthz", get(|| async { "ok" }))
         .route("/", get(dashboard))
+        .layer(axum::middleware::from_fn_with_state(
+            st.clone(),
+            web_auth::browser_session,
+        ))
         .layer(DefaultBodyLimit::max(max_body_bytes))
         .with_state(st)
 }

@@ -20,7 +20,7 @@ Nomen account (issuer, sub)  ──owns──▶  devspace  ──holds──▶
 | Who | Today (built) | Next (Nomen) |
 |---|---|---|
 | Collector (`rroflow ingest-claude`, `ingest-codex`) | ingest key; server stores only its SHA-256 | `rroflow login` via the OAuth device flow, like `devagotchi-cli@shippin`; refresh token kept in the OS keychain |
-| Dashboard | ingest key pasted into the tab (session storage only) | sign in with Nomen: authorization code + PKCE |
+| Dashboard | Nomen authorization code + PKCE when configured; ingest key fallback | account-owned devspace, server-held token and HttpOnly session cookie |
 | Server check | key hash lookup, then Nomen (built) | opaque token introspection (RFC 7662) with private-key JWT client auth, answers cached 60 s; Nomen unreachable → 503 `issuer_unavailable`. Same pattern as the Devagotchi hub (`crates/hub/src/nomen.rs`). Required: issuer, `aud` = the rroflow project, `client_id` in the allowed list, `exp`, `sub` |
 
 Keys stay supported after sign-in exists, for headless machines and CI, but are minted by a signed-in user for their own devspace.
@@ -42,7 +42,7 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 1. **Built:** Postgres store with migrations, signal catalogue grouped with options, per-devspace settings, dashboard with Claude Code and Codex side by side, deploy script with Postgres for tx-infra-prod.
 2. **Built:** Nomen token introspection on the ingest (ported from the Devagotchi hub, same checks and caching); first sign-in creates the devspace for that `sub`; `rroflow-ingest claim` gives an existing key devspace to an account; Nomen down → 503 `issuer_unavailable`, keys keep working.
 3. **Built:** `rroflow login` / `logout` / `whoami` (device flow ported from the Devagotchi CLI, refresh within 5 min of expiry, 7-day offline grace, tokens in `account.json` 0600). The collector sends as the signed-in account; `RROFLOW_INGEST_KEY` still wins for headless machines.
-4. Dashboard sign-in (authorization code + PKCE); key management in the page.
+4. **Implemented, deployment unverified:** Dashboard sign-in (authorization code + PKCE), opaque browser session, account-owned Claude Code/Codex views. See [browser-sign-in.md](browser-sign-in.md). Key management in the page remains future work.
 5. Public: `api.rroflow.ai` (API) and `app.rroflow.ai` (dashboard), both A records to 23.156.136.173, TLS at Caddy in front of `127.0.0.1:8787`. Both hosts reach the same service, so the dashboard's API calls are same-origin.
 6. Attach a devspace to a Shippin tenant (`shippin_tenant_id`), started from the Shippin console.
 
