@@ -128,8 +128,9 @@ test('an unavailable optional journal does not hide turn activity',async()=>{
   await p.route('#sources');assert.match(p.el.get('sdk-events').innerHTML,/unavailable/);
 });
 test('research library preserves all eight Raindrop sources and supports filtering',async()=>{
-  const p=await page({signedIn:true,hash:'#research'});assert.match(p.el.get('research-count').textContent,/34 of 34/);
-  await p.click({category:'Raindrop'});assert.match(p.el.get('research-count').textContent,/8 of 34/);
+  const count=JSON.parse(readFileSync(new URL('../crates/rroflow-ingest/src/research.json',import.meta.url),'utf8')).length;
+  const p=await page({signedIn:true,hash:'#research'});assert.equal(p.el.get('research-count').textContent,`${count} of ${count} source notes`);
+  await p.click({category:'Raindrop'});assert.equal(p.el.get('research-count').textContent,`8 of ${count} source notes`);
   assert.match(p.el.get('research-list').innerHTML,/signal-authoring-capture/);assert.match(p.el.get('research-list').innerHTML,/ux-settings/);
   await p.click({note:'docs/research/raindrop/ux-settings.md'});assert.equal(p.el.get('research-dialog').open,true);
   assert.equal(p.el.get('research-text').textContent,readFileSync(new URL('../docs/research/raindrop/ux-settings.md',import.meta.url),'utf8').replaceAll('\r\n','\n'));

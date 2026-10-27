@@ -53,6 +53,12 @@ remains open. The older reconciliation's JSONL-only observations are historical.
 
 ## Known work before public release
 
+The [hosted release increment](hosted-releases.md) adds a CI-built server artifact,
+embedded build identity, store readiness and managed activation/rollback. It is
+review-stage work; its fixture tests do not confirm a Texas deployment. Use that
+path for reviewed upgrades after provisioning, rather than the source-build
+bootstrap described below.
+
 - Original installer could mutate a host before checking proxy conflicts, allowed
   public exposure by default, and had no application-VM identity guard. The new
   preflight runs before package/service/config changes and defaults to loopback.

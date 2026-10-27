@@ -40,6 +40,29 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Embedded at build time, independent of the serving host's checkout or environment.
+#[derive(Serialize)]
+pub struct BuildInfo {
+    pub revision: &'static str,
+    pub target: &'static str,
+    pub migrations: &'static str,
+}
+
+pub fn build_info() -> BuildInfo {
+    BuildInfo {
+        revision: env!("RROFLOW_RELEASE_REVISION"),
+        target: env!("RROFLOW_RELEASE_TARGET"),
+        migrations: env!("RROFLOW_MIGRATIONS_SHA256"),
+    }
+}
+
+async fn ready(State(st): State<AppState>) -> impl IntoResponse {
+    match tokio::time::timeout(std::time::Duration::from_secs(2), st.store.ready()).await {
+        Ok(Ok(())) => (StatusCode::OK, "ready"),
+        _ => (StatusCode::SERVICE_UNAVAILABLE, "store unavailable"),
+    }
+}
+
 /// Service configuration (TOML). Every value is configuration; defaults are in [`Config::default`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -570,6 +593,8 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
             get(get_signal_settings).put(put_signal_settings),
         )
         .route("/healthz", get(|| async { "ok" }))
+        .route("/readyz", get(ready))
+        .route("/build-info", get(|| async { Json(build_info()) }))
         .route("/", get(dashboard))
         .route(
             "/assets/dashboard.css",

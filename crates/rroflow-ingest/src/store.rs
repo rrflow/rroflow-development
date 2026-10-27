@@ -66,6 +66,21 @@ pub enum Store {
 }
 
 impl Store {
+    /// Connectivity/readability only; does not claim free disk, backup health or write success.
+    pub async fn ready(&self) -> anyhow::Result<()> {
+        match self {
+            Store::Jsonl(store) => anyhow::ensure!(
+                std::fs::metadata(&store.root)?.is_dir(),
+                "store directory unavailable"
+            ),
+            Store::Postgres(store) => {
+                sqlx::query("SELECT event_id FROM turns LIMIT 0")
+                    .execute(&store.pool)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
     /// Make sure each devspace exists (devspaces registered by key in the config).
     pub async fn ensure_devspaces(&self, ids: &[String]) -> anyhow::Result<()> {
         match self {

@@ -17,6 +17,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Print immutable release identity without reading configuration or opening a store.
+    BuildInfo,
     /// Serve the ingest API.
     Serve {
         /// TOML config (listen, database_url or data_dir, max_batch, max_body_bytes, [[devspace]]).
@@ -58,9 +60,26 @@ fn load_config(path: &PathBuf, database_url: Option<String>) -> anyhow::Result<C
     Ok(cfg)
 }
 
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        if let Ok(mut terminate) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = terminate.recv() => {},
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
+        Cmd::BuildInfo => println!("{}", serde_json::to_string(&rroflow_ingest::build_info())?),
         Cmd::Keygen { devspace } => {
             let mut bytes = [0u8; 32];
             rand::rng().fill_bytes(&mut bytes);
@@ -116,9 +135,7 @@ async fn main() -> anyhow::Result<()> {
                 cfg.devspace.len()
             );
             axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = tokio::signal::ctrl_c().await;
-                })
+                .with_graceful_shutdown(shutdown_signal())
                 .await?;
         }
     }
