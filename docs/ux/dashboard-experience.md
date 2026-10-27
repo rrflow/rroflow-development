@@ -5,6 +5,9 @@ Date: 2026-10-27. Status: implemented on `codex/dashboard-experience`, based on
 The local serving process has not been replaced. Texas deployment and hosted
 account activation remain unverified. No personal browser was controlled during
 this increment; the checks below do not establish visual acceptance in a browser.
+The follow-up `codex/dashboard-ui-verification` branch adds isolated browser tests
+in CI; their reports must pass and their screenshots be reviewed before that
+acceptance advances.
 
 ## What the user can do in this build
 
@@ -74,6 +77,22 @@ logout/filter changes, content escaping, exact-review writes, settings writes,
 research access and bounded tool rendering. They are not screenshot or browser
 layout tests. A responsive layout, focus treatment and tab semantics are present
 in the implementation; visual and assistive-technology acceptance remains open.
+
+The follow-up suite in `scripts/dashboard-ui/` exercises the actual server and
+dashboard at desktop and phone widths using disposable fixture records. It checks
+page reflow, keyboard interaction, persisted labels/settings, research navigation,
+logout and automatically detectable WCAG A/AA issues, and retains screenshots for
+review. It uses a fresh server/store in CI, never the private serving preview or
+personal browser. Fixture screenshots are not evidence of real captured activity.
+Manual visual/assistive-technology review and hosted sign-in remain separate gates.
+
+The first rendered CI run passed eight of twelve scenarios. It exposed insufficient
+contrast on light status badges; two pagination scenarios also failed because of
+incorrectly encoded labels in the test. Corrections darken the accent, keep skip
+navigation on visible content without changing the current route, and repair the
+test labels. Screenshot review also moved the phone menu shadow to its open state
+and arranged overview sources/signals beside recent activity instead of stretching
+one short panel down the page. These changes require the follow-up CI result.
 
 ## Remaining product acceptance
 
