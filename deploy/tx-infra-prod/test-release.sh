@@ -99,8 +99,25 @@ unset MOCK_UNIT_ROOT
 chmod 0644 "$RROFLOW_SMOKE_KEY_FILE"
 reject 'Smoke key must be private' activate "$new"
 chmod 0600 "$RROFLOW_SMOKE_KEY_FILE"
+printf 'unexpected member\n' > "$fixture/source-$new/unexpected"
+tar -czf "$fixture/extra.tar.gz" -C "$fixture/source-$new" build-info.json migrations revision rroflow-ingest target SHA256SUMS unexpected
+reject 'Archive has unexpected or duplicate members' bash "$script_dir/activate-release.sh" "$fixture/extra.tar.gz" "$(sha256sum "$fixture/extra.tar.gz" | cut -d' ' -f1)" "$new"
+printf 'outside sentinel\n' > "$fixture/outside"
+rm "$fixture/source-$new/rroflow-ingest"
+ln -s "$fixture/outside" "$fixture/source-$new/rroflow-ingest"
+tar -czf "$fixture/symlink.tar.gz" -C "$fixture/source-$new" build-info.json migrations revision rroflow-ingest target SHA256SUMS
+reject 'Archive members must be regular files' bash "$script_dir/activate-release.sh" "$fixture/symlink.tar.gz" "$(sha256sum "$fixture/symlink.tar.gz" | cut -d' ' -f1)" "$new"
+[[ $(cat "$fixture/outside") == 'outside sentinel' ]]
 printf 'tamper\n' >> "$RROFLOW_RELEASE_ROOT/releases/$new/rroflow-ingest"
 reject 'Existing immutable release differs' activate "$new"
 [[ $(wc -l < "$RROFLOW_RELEASE_ROOT/service-calls") == "$calls" ]]
 grep -qF "active=releases/$old" "$RROFLOW_RELEASE_ROOT/last-rollback.receipt"
-echo 'PASS: first activation, upgrade, explicit rollback, readiness/auth failure rollback, checksum/migration/pending/lock/unit/key/immutable-release refusal.'
+original_root=$RROFLOW_RELEASE_ROOT
+export RROFLOW_RELEASE_ROOT="$fixture/first-failure"
+mkdir "$RROFLOW_RELEASE_ROOT" "$RROFLOW_RELEASE_ROOT/releases"
+export MOCK_READY_FAILURE=$new
+reject 'First activation failed; service stopped, pending receipt retained.' activate "$new"
+[[ -f "$RROFLOW_RELEASE_ROOT/activation.pending" && ! -L "$RROFLOW_RELEASE_ROOT/current" ]]
+export RROFLOW_RELEASE_ROOT=$original_root
+unset MOCK_READY_FAILURE
+echo 'PASS: first activation/failure, upgrade, explicit rollback, readiness/auth failure rollback, checksum/migration/pending/lock/unit/key/archive/immutable-release refusal.'
