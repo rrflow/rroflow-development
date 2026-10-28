@@ -12,6 +12,9 @@
   const plain = v => !!v && typeof v === 'object' && !Array.isArray(v);
   const exact = (v,keys) => plain(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v,k));
   const text = (v,min,max) => typeof v === 'string' && v.length >= min && v.length <= max;
+  const timestamp = v => typeof v === 'string' &&
+    /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(v) &&
+    Number.isFinite(Date.parse(v)) && new Date(v.slice(0,10)+'T00:00:00Z').toISOString().slice(0,10) === v.slice(0,10);
   function create(apply) {
     let last = -1;
     const seen = new Set();
@@ -21,9 +24,9 @@
         const error = code => ({ok:false,code});
         if (!exact(e,['schema_version','interaction_id','surface_id','sequence','issued_at','actor','narration','action']) ||
             e.schema_version !== 'shippin.a2ui.v1' || e.surface_id !== catalog.surface_id ||
-            !/^int_[a-z0-9][a-z0-9_-]{5,63}$/.test(e.interaction_id) || !Number.isSafeInteger(e.sequence) || e.sequence < 0 ||
-            typeof e.issued_at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(e.issued_at) || !Number.isFinite(Date.parse(e.issued_at)) ||
-            !exact(e.actor,['kind','id']) || e.actor.kind !== 'local-operator' || !/^[a-z][a-z0-9-]{1,63}$/.test(e.actor.id) ||
+            typeof e.interaction_id !== 'string' || !/^int_[a-z0-9][a-z0-9_-]{5,63}$/.test(e.interaction_id) || !Number.isSafeInteger(e.sequence) || e.sequence < 0 ||
+            !timestamp(e.issued_at) ||
+            !exact(e.actor,['kind','id']) || e.actor.kind !== 'local-operator' || typeof e.actor.id !== 'string' || !/^[a-z][a-z0-9-]{1,63}$/.test(e.actor.id) ||
             !text(e.narration,1,280) || !plain(e.action)) return error('INVALID_ENVELOPE');
         const a = e.action, target = catalog.targets.find(t => t.target_id === a.target_id);
         if (!target) return error('UNKNOWN_TARGET');

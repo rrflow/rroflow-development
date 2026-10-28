@@ -214,6 +214,10 @@ test('A2UI guidance enforces registered targets, supported values, replay and or
     [{...interaction(3),action:{kind:'view.select',target_id:'workspace.views',view_id:'signals',script:'alert(1)'}},'INVALID_VALUE'],
     [{...interaction(3),actor:{kind:'provider-agent',id:'model-agent'}},'INVALID_ENVELOPE'],
     [{...interaction(3),issued_at:'tomorrow'},'INVALID_ENVELOPE'],
+    [{...interaction(3),issued_at:'2026-02-31T12:00:00Z'},'INVALID_ENVELOPE'],
+    [{...interaction(3),issued_at:'2026-10-27T24:00:00Z'},'INVALID_ENVELOPE'],
+    [{...interaction(3),interaction_id:['int_fixture_3']},'INVALID_ENVELOPE'],
+    [{...interaction(3),actor:{kind:'local-operator',id:['workspace-user']}},'INVALID_ENVELOPE'],
     [{...interaction(3),sequence:1.5},'INVALID_ENVELOPE'],
     [{...interaction(3),extra:'surprise'},'INVALID_ENVELOPE'],
   ];
