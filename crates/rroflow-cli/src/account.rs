@@ -575,6 +575,22 @@ pub(crate) fn sender() -> anyhow::Result<Option<Sender>> {
     }))
 }
 
+/// Background collectors use only the referenced saved sign-in, never ambient keys.
+pub(crate) fn saved_sender(path: &Path) -> anyhow::Result<Option<Sender>> {
+    let Some(account) = current(path).map_err(anyhow::Error::msg)? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        account.standing(unix_now()) != Standing::Expired,
+        "saved sign-in expired; run rroflow login"
+    );
+    Ok(Some(Sender {
+        base: account.ingest_url.clone(),
+        token: account.access_token().to_owned(),
+        via: "saved account".into(),
+    }))
+}
+
 /// `rroflow login`: device sign-in, the account written owner-only, then the devspace
 /// the ingest opens for it.
 pub(crate) fn login(

@@ -15,9 +15,22 @@ use std::{
 };
 
 const BATCH_LIMIT: usize = 4 * 1024 * 1024;
+mod service;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    #[command(hide = true, name = "managed-run")]
+    Worker {
+        #[arg(long)]
+        manifest: PathBuf,
+    },
+    /// Manage automatic startup for this user's linked session collector.
+    Service {
+        #[arg(long)]
+        store: Option<PathBuf>,
+        #[command(subcommand)]
+        command: service::Action,
+    },
     /// Bind session roots to the signed-in devspace. Existing bindings are immutable.
     Link {
         /// Local journal directory, separate from the SDK event spool.
@@ -45,6 +58,12 @@ pub(crate) enum Command {
         /// Collect to disk without reading credentials or making network requests.
         #[arg(long)]
         offline: bool,
+        /// Use this saved account file only, ignoring temporary ingest-key/URL overrides.
+        #[arg(long)]
+        account_file: Option<PathBuf>,
+        /// Emit occasional counts instead of local paths and detailed scan errors.
+        #[arg(long)]
+        quiet: bool,
     },
     /// Read delivery counts and linked roots from disk. Does not claim the process is alive.
     Status {
@@ -538,15 +557,22 @@ fn lock(store: &Path) -> Result<fs::File> {
 }
 
 pub(crate) fn run(command: Command) -> Result<()> {
+    if let Command::Worker { manifest } = &command {
+        return service::worker(manifest);
+    }
     let dir = match &command {
         Command::Link { store, .. }
         | Command::Run { store, .. }
+        | Command::Service { store, .. }
         | Command::Status { store }
         | Command::Flush { store } => store.clone(),
+        Command::Worker { .. } => unreachable!(),
     }
     .or_else(|| account::config_dir().map(|p| p.join("sources")))
     .context("source store unavailable")?;
     match command {
+        Command::Worker { .. } => unreachable!(),
+        Command::Service { command, .. } => return service::run(&dir, command),
         Command::Link {
             claude_root,
             codex_root,
@@ -616,8 +642,17 @@ pub(crate) fn run(command: Command) -> Result<()> {
             interval_secs,
             once,
             offline,
+            account_file,
+            quiet,
             ..
         } => {
+            if let Some(path) = &account_file {
+                ensure!(path.is_absolute(), "account file must be absolute");
+            }
+            let sender = || match &account_file {
+                Some(path) => account::saved_sender(path),
+                None => account::sender(),
+            };
             let _lock = lock(&dir)?;
             let mut journal = Journal::open(&dir)?;
             let mut cycle = 0u64;
@@ -633,8 +668,8 @@ pub(crate) fn run(command: Command) -> Result<()> {
                 let mut health_ok = true;
                 if !offline && std::time::Instant::now() >= retry_at {
                     let result = (|| -> Result<(usize, Option<String>)> {
-                        let sender = account::sender()?
-                            .context("sign-in unavailable; local queue retained")?;
+                        let sender =
+                            sender()?.context("sign-in unavailable; local queue retained")?;
                         let count = journal.deliver(&sender)?;
                         let settings_error = if std::time::Instant::now() >= settings_at {
                             settings_at = std::time::Instant::now() + Duration::from_secs(60);
@@ -673,8 +708,7 @@ pub(crate) fn run(command: Command) -> Result<()> {
                             u32::try_from(errors).unwrap_or(u32::MAX),
                             last_delivery_ok,
                         )?;
-                        let sender =
-                            account::sender()?.context("sign-in unavailable for source health")?;
+                        let sender = sender()?.context("sign-in unavailable for source health")?;
                         journal.send_health(&sender, &health)
                     })();
                     if let Err(error) = result {
@@ -690,7 +724,14 @@ pub(crate) fn run(command: Command) -> Result<()> {
                 }
                 .into();
                 report["state"] = journal.status()?;
-                println!("{report}");
+                if !quiet {
+                    println!("{report}");
+                } else if cycle.is_multiple_of(12) || !capture_ok || !upload_ok || !health_ok {
+                    println!(
+                        "{}",
+                        json!({"source_id":journal.binding.source_id,"capture_errors":report["errors"].as_array().map_or(0,Vec::len),"pending_revisions":report["state"]["pending_revisions"],"delivery_ok":last_delivery_ok,"health_ok":health_ok})
+                    );
+                }
                 if once {
                     ensure!(
                         capture_ok && upload_ok && health_ok,
@@ -733,6 +774,8 @@ mod tests {
             interval_secs: 1,
             once: true,
             offline: true,
+            account_file: None,
+            quiet: false,
         })
         .unwrap();
         let journal = Journal::open(dir.path()).unwrap();

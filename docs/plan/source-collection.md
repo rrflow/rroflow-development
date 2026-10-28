@@ -1,7 +1,7 @@
 # Continuous session collection
 
-Status: implemented on the SDK capture branch; not installed as a startup service
-and not deployed to Texas. This is a step toward the setup flow in
+Status: collection and per-user startup commands implemented on development branches;
+not activated on the user's machine or deployed to Texas. This is a step toward the setup flow in
 [sdk-install-and-linking.md](sdk-install-and-linking.md), not completed turnkey setup.
 
 The one-off preview selected twelve files per agent and a date cutoff. It could
@@ -61,8 +61,8 @@ session filters apply before the result limit in both JSONL and Postgres stores.
 The dashboard groups sessions and plots UTC daily activity from the returned view;
 these are explicitly not complete-history totals or source heartbeat indicators.
 
-Still required before turnkey acceptance: per-agent setup choices; startup/service
-installation and upgrades;
+Still required before turnkey acceptance: per-agent setup choices; released and
+activated startup installation;
 compaction-safe hooks; incremental cursor performance under sustained load; disk
 quotas and retention; ordered revisions across
 multiple collectors; large individual turn handling; hosted Texas deployment.
@@ -92,4 +92,4 @@ retain link-time settings and need an upgrade. See [signal workspace](../ux/sign
 
 ## Source health reports
 
-The source-health increment sends bounded latest-only reports with a durable sequence, pending queue counts, retained bytes, scan-error count and last upload result. The Sources page distinguishes recent reports from stale or unavailable status; old activity is never a heartbeat. See [source reporting and recovery](../ux/source-health.md). Startup installation and hosted activation remain unfinished.
+The source-health increment sends bounded latest-only reports with a durable sequence, pending queue counts, retained bytes, scan-error count and last upload result. The Sources page distinguishes recent reports from stale or unavailable status; old activity is never a heartbeat. See [source reporting and recovery](../ux/source-health.md). See [collector startup](../ux/collector-startup.md) for native per-user installation, lifecycle and logout limitations. Hosted activation remains unfinished.
