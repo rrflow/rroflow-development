@@ -174,7 +174,7 @@ test('source reports separate stale receipt, queued work and unavailable health 
   const p=await page({signedIn:true,hash:'#sources',intercept:async path=>path==='/v1/sources/health'?{ok:true,status:200,json:async()=>({sources:[{report,received_at:'2026-10-27T00:00:00Z'}],as_of:'2026-10-27T00:03:00Z',recent_for_seconds:120})}:null});
   assert.match(p.el.get('source-health').innerHTML,/No recent report/);
   assert.match(p.el.get('source-health').innerHTML,/4 KB|4.0 KB/);
-  assert.match(p.el.get('source-health').innerHTML,/Last upload attempt failed/);
+  assert.match(p.el.get('source-health').innerHTML,/Last delivery check failed/);
   assert.match(p.el.get('source-health').innerHTML,/Time unavailable/);
   assert.doesNotMatch(p.el.get('source-health').innerHTML,/Reporting recently/);
   await p.el.get('logout').onclick();assert.equal(p.el.get('source-health').innerHTML,'');

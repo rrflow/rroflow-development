@@ -14,7 +14,7 @@ every 30 seconds. The page shows three states:
   scanning. Displayed counts are its last report, not current queue measurements.
 
 The report shows waiting turn revisions and bytes, last-scan error count, and the
-last upload result. Queue details include the oldest waiting batch timestamp,
+last delivery check result. Queue details include the oldest waiting batch timestamp,
 retained journal size, collector version and saved signal-settings revision.
 The oldest timestamp comes from the local batch file's modification time; restored
 or copied journals may change it. Retained bytes include acknowledged records.

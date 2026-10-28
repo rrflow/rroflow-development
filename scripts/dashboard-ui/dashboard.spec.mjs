@@ -105,7 +105,7 @@ test('source reports show queue problems, age without fresh reports and clear sa
   const report={schema:'rroflow.source-health/v1',source_id:'00000000-0000-4000-8000-000000000001',sequence:1,observed_at:new Date().toISOString(),collector_version:'0.3.0',pending_revisions:7,pending_bytes:4096,journal_bytes:8192,oldest_pending_at:new Date(Date.now()-3600000).toISOString(),capture_errors:2,delivery_ok:false,signal_settings_revision:1};
   const send=async()=>{const response=await fetch(service.base+'/v1/sources/health',{method:'POST',headers:service.headers,body:JSON.stringify(report)});expect(response.ok).toBe(true);return response.json();};
   const first=await send();await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);
-  await expect(page.locator('#source-health')).toContainText('Reporting with a problem');await expect(page.locator('#source-health')).toContainText('Last upload attempt failed');
+  await expect(page.locator('#source-health')).toContainText('Reporting with a problem');await expect(page.locator('#source-health')).toContainText('Last delivery check failed');
   await page.getByText('Queue and collector details',{exact:true}).click();await expect(page.locator('#source-health')).toContainText('Retained journal: 8.0 KB');
   await reflow(page);await accessible(page);await screenshot(page,info,'source-queue-problem');
   expect((await send()).observation.received_at).toBe(first.observation.received_at);
