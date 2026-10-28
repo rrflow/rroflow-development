@@ -129,4 +129,4 @@ main{max-width:1580px;margin:0 auto}
 .focus-actions .tooltip{left:auto;right:0;transform:none}
 .hero-art>svg{max-height:220px}
 @media(max-width:760px){.workspace-hero{position:relative;display:block;padding:22px 20px}.hero-copy .eyebrow{font-size:8px;max-width:180px;letter-spacing:1px}.hero-copy h2{font-size:25px;max-width:210px;min-height:82px;letter-spacing:-.8px;margin:16px 0 12px}.hero-copy>p{font-size:13px;margin-bottom:16px;line-height:1.65}.hero-art{position:absolute;width:96px;right:12px;top:44px;background:none;padding:0}.hero-art .art-caption{display:none}.hero-copy .text-button{font-size:11px}.focus-actions .tooltip{right:0;left:auto;transform:none}}
-:root[data-tooltip-dismissed=true] .tooltip{visibility:hidden;opacity:0;pointer-events:none}
+.help-wrap[data-dismissed=true] .tooltip{visibility:hidden;opacity:0;pointer-events:none}

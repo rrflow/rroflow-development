@@ -536,9 +536,22 @@
       catch (_) { toast('The browser could not copy the link.'); }
     }
   });
-  document.addEventListener('keydown',e => { if (e.key === 'Escape') { closeNavigation(); document.documentElement.dataset.tooltipDismissed = 'true'; } });
-  document.addEventListener('pointerover',() => { delete document.documentElement.dataset.tooltipDismissed; });
-  document.addEventListener('focusin',() => { delete document.documentElement.dataset.tooltipDismissed; });
+  document.addEventListener('keydown',e => {
+    if (e.key === 'Escape') {
+      closeNavigation();
+      all('.help-wrap').filter(w => w.matches(':hover') || w.contains(document.activeElement)).forEach(w => { w.dataset.dismissed = 'true'; });
+    }
+  });
+  // A layout/overlay change can emit pointer events without the user moving.
+  // Keep dismissal until both hover and focus have left this particular help control.
+  document.addEventListener('pointerout',e => {
+    const wrap = e.target.closest('.help-wrap');
+    if (wrap && !wrap.contains(e.relatedTarget) && !wrap.contains(document.activeElement)) delete wrap.dataset.dismissed;
+  });
+  document.addEventListener('focusout',e => {
+    const wrap = e.target.closest('.help-wrap');
+    if (wrap && !wrap.contains(e.relatedTarget) && !wrap.matches(':hover')) delete wrap.dataset.dismissed;
+  });
   window.addEventListener('hashchange',() => { if (signedIn) { window.scrollTo(0,0); $('main-content').focus({preventScroll:true}); } return load(); });
   const media = window.matchMedia('(prefers-color-scheme: dark)');
   function setTheme(value) { document.documentElement.dataset.theme = value === 'system' ? (media.matches ? 'dark' : 'light') : value; }

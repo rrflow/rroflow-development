@@ -133,7 +133,9 @@ test('guided next steps open evidence, accessible help and the right connection 
   await expect(page.getByRole('tab',{name:'Signals',exact:true})).toHaveAttribute('aria-selected','true');
   await page.keyboard.press('Escape');await expect(next).toBeFocused();
   const help=page.getByRole('button',{name:'What do these numbers mean?',exact:true});await help.focus();
-  await expect(page.locator('#coverage-tip')).toBeVisible();await page.keyboard.press('Escape');await expect(page.locator('#coverage-tip')).toBeHidden();await page.keyboard.press('Enter');
+  await expect(page.locator('#coverage-tip')).toBeVisible();await page.keyboard.press('Escape');await expect(page.locator('#coverage-tip')).toBeHidden();
+  await page.locator('#page-title').dispatchEvent('pointerover');await expect(page.locator('#coverage-tip')).toBeHidden();
+  await page.mouse.move(0,0);await page.locator('#refresh').focus();await help.focus();await expect(page.locator('#coverage-tip')).toBeVisible();await page.keyboard.press('Enter');
   await expect(page.locator('#guide-dialog')).toBeVisible();await expect(page.locator('#guide-body')).toContainText('received records');
   await accessible(page);await reflow(page);await screenshot(page,info,'contextual-guide');
   await page.keyboard.press('Escape');await expect(help).toBeFocused();
