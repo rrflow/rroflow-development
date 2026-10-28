@@ -19,6 +19,7 @@ mod capture;
 pub mod nomen;
 pub mod pg;
 mod reviews;
+mod source_health;
 pub mod store;
 #[cfg(test)]
 mod test_keys;
@@ -284,6 +285,7 @@ pub enum ApiError {
     Unauthorized,
     Conflict,
     SettingsConflict,
+    SourceConflict,
     /// Nomen could not be asked about a token; retry. Never a refusal.
     IssuerUnavailable,
     BadRequest(String),
@@ -294,6 +296,10 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (code, msg) = match self {
             ApiError::Conflict => (StatusCode::CONFLICT, "capture identity conflict".into()),
+            ApiError::SourceConflict => (
+                StatusCode::CONFLICT,
+                "source report sequence is stale or conflicting".into(),
+            ),
             ApiError::SettingsConflict => (
                 StatusCode::CONFLICT,
                 "Signal settings changed in another tab. Refresh before saving.".into(),
@@ -654,6 +660,10 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/whoami", get(get_whoami))
         .route("/v1/signals", get(get_signals))
         .route("/v1/signals/preview", post(preview_signal))
+        .route(
+            "/v1/sources/health",
+            get(source_health::list).post(source_health::ingest),
+        )
         .route(
             "/v1/signals/settings",
             get(get_signal_settings).put(put_signal_settings),

@@ -24,6 +24,7 @@
   };
   let key = '', signedIn = false, generation = 0, controller, metadata;
   let records = [], revisions = {}, reviews = [], reviewError = '', journal = [], journalError = '';
+  let healthData = null, healthError = '', healthLoadedAt = 0, healthTimer;
   let nextCursor = null, currentTurn = null, toolLimit = 50, research = [], researchCategory = 'All', inspection = 0;
   let currentRoute = {view:'overview', params:new URLSearchParams()}, toastTimer, reviewSaving = false;
   const pendingReviews = new Map(), previousPages = new Map();
@@ -68,6 +69,7 @@
     return body;
   }
   function clearPrivateView() {
+    clearTimeout(healthTimer); healthData = null; healthError = ''; $('source-health').replaceChildren();
     signedIn = false; generation++; controller?.abort();
     metadata = undefined; records = []; revisions = {}; reviews = []; journal = []; currentTurn = null; research = [];
     for (const id of ['research-list','research-title','research-path','research-text','research-count','research-categories']) $(id).replaceChildren();
@@ -148,8 +150,26 @@
     $('page-label').textContent = currentRoute.params.has('cursor') ? 'Older captured turns' : 'Newest matching turns';
   }
   function renderSources() {
+    renderSourceHealth();
     $('source-cards').innerHTML = sourceList().map(({agent,turns,events}) => `<article class="source-card">${agentIcon(agent)}<h2>${esc(name(agent))}</h2><span class="badge ${turns || events ? 'positive' : 'neutral'}">${turns || events ? 'Activity received' : 'Awaiting activity'}</span><div class="source-count">${fmt(turns)}</div><p>captured turns · ${journalError ? 'SDK count unavailable' : fmt(events) + ' events in latest 100'}</p><p>${agent === 'grok' ? 'SDK adapter tested with fixtures. Subscription app capture is not available.' : 'CLI session capture and instrumented SDK events. Browser history is not linked.'}</p><a class="button" href="${link('activity',{agent})}">View activity →</a></article>`).join('');
     $('sdk-events').innerHTML = journalError ? empty('SDK journal unavailable',journalError) : journal.map(e => `<div class="list-row"><div><strong>${esc(name(e.agent === 'claude' ? 'claude-code' : e.agent))} · ${esc(e.kind)}</strong><small>${esc(e.native_type || '')} · ${esc(date(e.observed_at))} · #${esc(e.sequence)}</small></div></div>`).join('') || empty('No SDK events received','Instrumented calls appear here after their local queue delivers them.');
+  }
+  function renderSourceHealth() {
+    clearTimeout(healthTimer);
+    if (!signedIn || currentRoute.view !== 'sources') return;
+    if (healthError) { $('source-health').innerHTML = empty('Source reporting unavailable',healthError); return; }
+    const sources = healthData?.sources || [];
+    const bytes = n => n == null ? 'Unknown' : n < 1024 ? fmt(n) + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+    const elapsed = Math.max(0, performance.now() - healthLoadedAt);
+    $('source-health').innerHTML = sources.map(({report:r,received_at}) => {
+      const age = Date.parse(healthData.as_of) - Date.parse(received_at) + elapsed;
+      const recent = Number.isFinite(age) && age >= 0 && age <= healthData.recent_for_seconds * 1000;
+      const attention = r.capture_errors > 0 || r.delivery_ok === false;
+      const status = !recent ? 'No recent report' : attention ? 'Reporting with a problem' : 'Reporting recently';
+      const delivery = r.delivery_ok === true ? 'Last delivery check succeeded' : r.delivery_ok === false ? 'Last delivery check failed; local queue retained' : 'No delivery result reported yet';
+      return `<article class="panel"><div class="panel-heading"><h3>Collector ${esc(r.source_id.slice(0,8))}</h3><span class="badge ${recent && !attention ? 'positive' : 'neutral'}">${status}</span></div><p class="small muted">Claude Code and Codex session collector. Report received ${esc(date(received_at))}.</p>${!recent ? '<p class="notice">No recent report is loaded for this collector. Refresh to check for newer reports. It may be stopped, disconnected or busy scanning; these are the last loaded counts.</p>' : ''}<div class="stats-grid"><div><strong>${fmt(r.pending_revisions)}</strong><p>turn revisions waiting to send</p></div><div><strong>${bytes(r.pending_bytes)}</strong><p>waiting in the local queue</p></div><div><strong>${fmt(r.capture_errors)}</strong><p>capture errors in the last scan</p></div></div><p>${delivery}</p>${r.capture_errors ? '<p>Some session files could not be captured. Check the collector output on that computer; received history may be incomplete.</p>' : ''}<details><summary>Queue and collector details</summary><p>Oldest waiting batch: ${r.oldest_pending_at ? esc(date(r.oldest_pending_at)) : r.pending_revisions ? 'Time unavailable' : 'None reported'}.</p><p>Retained journal: ${bytes(r.journal_bytes)}. This includes acknowledged records kept locally.</p><p>Collector ${esc(r.collector_version)}; saved signal settings revision ${fmt(r.signal_settings_revision)}.</p><p class="small muted">Source ${esc(r.source_id)}. Report #${fmt(r.sequence)}. Observed on that computer ${esc(date(r.observed_at))}.</p></details></article>`;
+    }).join('') || empty('No collector reports yet','Received turns are history, not proof that a collector is running. Use an updated collector with sources run on the computer running your agents. SDK-only capture does not report session-collector health.');
+    healthTimer = setTimeout(renderSourceHealth,10000);
   }
   function renderLearning() {
     $('learning-reviews').innerHTML = reviewError ? empty('Reviews unavailable',reviewError) : reviews.map(r => `<div class="list-row"><div><strong>${esc(title(r.request.signal))}</strong><small>Revision ${esc(r.request.turn_digest.slice(0,12))} · ${esc(r.request.event_id)}</small></div><span class="badge neutral">${esc(verdictLabel(r.request.verdict))}</span><button class="button" data-event="${esc(r.request.event_id)}" data-open-tab="signals">Open turn</button></div>`).join('') || empty('Your corrections belong here','Open a signal, inspect its evidence, and save MATCH or NOT MATCH.','<a class="button" href="#signals">Explore signals</a>');
@@ -292,6 +312,7 @@
   async function load() {
     if (!signedIn) return;
     const g = ++generation;
+    clearTimeout(healthTimer);
     controller?.abort(); controller = new AbortController();
     currentRoute = readRoute();
     closeNavigation();
@@ -322,7 +343,11 @@
       }
       if (currentRoute.view === 'overview') renderOverview();
       if (['activity','signals'].includes(currentRoute.view)) renderExplorer();
-      if (currentRoute.view === 'sources') renderSources();
+      if (currentRoute.view === 'sources') {
+        try { const health = await api('/v1/sources/health'); if (g !== generation) return; healthData = health; healthError = ''; healthLoadedAt = performance.now(); }
+        catch { if (g !== generation) return; healthData = null; healthError = 'Collector reports could not be loaded. Refresh to retry; received activity does not establish connection health.'; }
+        renderSources();
+      }
       if (currentRoute.view === 'learning') renderLearning();
       if (currentRoute.view === 'settings') renderSettings();
       if (currentRoute.view === 'library') renderLibrary();

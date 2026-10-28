@@ -96,3 +96,27 @@ test('a person creates, tests, uses and pauses an organized custom signal',async
   await page.reload();await expect(page.locator('#app')).toBeVisible();await settled(page);await expect(card).toContainText('Paused');
   await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('Saved decisions');await expect(page.locator('#dataset-readiness')).toContainText('Not available');
 });
+
+
+test('source reports show queue problems, age without fresh reports and clear safely',async({page,service},info)=>{
+  await page.clock.install();
+  await signIn(page,service);await navigate(page,'sources');
+  await expect(page.locator('#source-health')).toContainText('No collector reports yet');
+  const report={schema:'rroflow.source-health/v1',source_id:'00000000-0000-4000-8000-000000000001',sequence:1,observed_at:new Date().toISOString(),collector_version:'0.3.0',pending_revisions:7,pending_bytes:4096,journal_bytes:8192,oldest_pending_at:new Date(Date.now()-3600000).toISOString(),capture_errors:2,delivery_ok:false,signal_settings_revision:1};
+  const send=async()=>{const response=await fetch(service.base+'/v1/sources/health',{method:'POST',headers:service.headers,body:JSON.stringify(report)});expect(response.ok).toBe(true);return response.json();};
+  const first=await send();await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);
+  await expect(page.locator('#source-health')).toContainText('Reporting with a problem');await expect(page.locator('#source-health')).toContainText('Last delivery check failed');
+  await page.getByText('Queue and collector details',{exact:true}).click();await expect(page.locator('#source-health')).toContainText('Retained journal: 8.0 KB');
+  await reflow(page);await accessible(page);await screenshot(page,info,'source-queue-problem');
+  expect((await send()).observation.received_at).toBe(first.observation.received_at);
+  report.sequence=2;report.capture_errors=0;report.pending_revisions=0;report.pending_bytes=0;report.oldest_pending_at=null;report.delivery_ok=true;
+  await send();await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);
+  await expect(page.locator('#source-health')).toContainText('Reporting recently');
+  await page.clock.fastForward(121000);await expect(page.locator('#source-health')).toContainText('No recent report');
+  await reflow(page);await accessible(page);await screenshot(page,info,'source-report-stale');
+  await page.route('**/v1/sources/health',route=>route.fulfill({status:503,contentType:'application/json',body:'{"error":"fixture unavailable"}'}));
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);
+  await expect(page.locator('#source-health')).toContainText('Source reporting unavailable');await expect(page.locator('#source-cards')).toContainText('Claude Code');
+  if (await page.locator('#menu-toggle').isVisible()) await page.locator('#menu-toggle').click();
+  await page.locator('#logout').click();await expect(page.locator('#login')).toBeVisible();await expect(page.locator('#source-health')).toBeEmpty();
+});

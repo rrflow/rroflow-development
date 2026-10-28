@@ -62,11 +62,11 @@ The dashboard groups sessions and plots UTC daily activity from the returned vie
 these are explicitly not complete-history totals or source heartbeat indicators.
 
 Still required before turnkey acceptance: per-agent setup choices; startup/service
-installation and upgrades; durable source heartbeats and dashboard queue health;
+installation and upgrades;
 compaction-safe hooks; incremental cursor performance under sustained load; disk
-quotas and retention; live signal-settings refresh; ordered revisions across
+quotas and retention; ordered revisions across
 multiple collectors; large individual turn handling; hosted Texas deployment.
-The signal settings are currently pinned at link time. Grok SDK event capture is
+The follow-ups below implement settings refresh and latest source reports. Grok SDK event capture is
 a separate path; subscription ownership alone does not make every Grok surface
 observable. Dataset generation and training remain unimplemented.
 
@@ -88,3 +88,8 @@ rules are recomputed on the next pass. Custom definitions remain cloud-only rule
 on uploaded projections; a custom-setting change alone does not clear the scan cache.
 The revision cache currently retains all settings revisions. Older collector builds
 retain link-time settings and need an upgrade. See [signal workspace](../ux/signal-workspace.md).
+
+
+## Source health reports
+
+The source-health increment sends bounded latest-only reports with a durable sequence, pending queue counts, retained bytes, scan-error count and last upload result. The Sources page distinguishes recent reports from stale or unavailable status; old activity is never a heartbeat. See [source reporting and recovery](../ux/source-health.md). Startup installation and hosted activation remain unfinished.
