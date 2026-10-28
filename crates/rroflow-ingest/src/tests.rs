@@ -413,11 +413,48 @@ async fn catalogue_is_public_and_grouped_by_category() {
 }
 
 #[tokio::test]
+async fn public_product_entry_is_separate_from_member_data() {
+    let app = Env::new(Backend::Jsonl, "public").app().await;
+    for (path, needle) in [
+        ("/", "See the whole story"),
+        ("/assets/public.js", "/auth/config"),
+        ("/assets/public.css", ".public-hero"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.contains(needle));
+        assert!(!text.contains("/assets/dashboard.js"));
+    }
+    let (code, config) = call(
+        &app,
+        Request::get("/auth/config").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        config,
+        serde_json::json!({"enabled":false,"member_origin":null})
+    );
+    let (code, _) = call(
+        &app,
+        Request::get("/v1/whoami").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn dashboard_is_served_without_a_key_and_reads_only_with_one() {
     let app = Env::new(Backend::Jsonl, "dash").app().await;
     let resp = app
         .clone()
-        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/app").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

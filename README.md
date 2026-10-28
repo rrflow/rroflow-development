@@ -7,7 +7,10 @@
 | [`crates/rroflow-core`](crates/rroflow-core) | `rroflow.turn/v1` record and behaviour signals v0 (deterministic, with evidence) | Working; signals measured on real Claude Code and Codex sessions |
 | [`crates/rroflow-cli`](crates/rroflow-cli) | `rroflow`, the SDK: reads Claude Code and Codex sessions, evaluates signals locally, sends to your rroflow.ai devspace (or Raindrop); `login` with your Shippin account; `doctor` | Working; released for Windows and Linux, x86_64 and ARM64 |
 | [`crates/rroflow-ingest`](crates/rroflow-ingest) | rroflow.ai ingest: Postgres store, devspaces owned by Nomen accounts, signal catalogue and per-devspace settings, dashboard | Implemented and locally tested; Texas identity, deployment and public account flow not verified |
+| [`site`](site) | Public Astro page at `/`, member workspace at `/app`; embedded in the Rust service | Built and tested in development; public signup, entitlements and live Texas acceptance remain open |
 | [`docs`](docs) | Every plan, spec and research record ([index](docs/README.md)) | Plan decisions D-1 to D-6 answered |
+
+The [public and member entry](docs/ux/public-member-entry.md) now separates product discovery from the authenticated workspace, follows the configured account origin and shows onboarding progress from received evidence. It does not activate billing or provision a live hosted account.
 
 ## Install
 

@@ -141,7 +141,9 @@ fn set_cookie(r: &mut Response, name: &str, value: &str, seconds: u64) {
 }
 
 pub(crate) async fn config(State(st): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"enabled": st.web.is_some()}))
+    Json(
+        serde_json::json!({"enabled": st.web.is_some(), "member_origin": st.web.as_ref().map(|web| &web.origin)}),
+    )
 }
 
 pub(crate) async fn login(State(st): State<AppState>) -> Response {
@@ -204,9 +206,9 @@ pub(crate) async fn callback(
 ) -> Response {
     let success = complete(&st, &headers, q).await;
     let mut r = Redirect::to(if success.is_some() {
-        "/"
+        "/app"
     } else {
-        "/?signin=failed"
+        "/app?signin=failed"
     })
     .into_response();
     set_cookie(&mut r, LOGIN, "", 0);

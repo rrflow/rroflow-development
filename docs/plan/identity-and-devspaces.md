@@ -35,7 +35,7 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 | `GET /v1/signals` | public | catalogue `rroflow.signals/v1`: categories (Failure, Friction, Cost, Context), signals, options with defaults and ranges |
 | `GET`/`PUT /v1/signals/settings` | devspace | which signals run and their thresholds; collectors read this before evaluating |
 | `GET /v1/whoami` | devspace | which devspace the credential opens, and how (`key` or `nomen`, account ID, org) |
-| `GET /healthz`, `GET /` | public | health; dashboard page |
+| `GET /healthz`, `GET /`, `GET /app` | public shell | health; public product page; member dashboard shell (data requires authentication) |
 
 ## Build steps
 
