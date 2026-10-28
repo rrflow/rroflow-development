@@ -27,6 +27,7 @@ key_sha256 = ["<hash printed by keygen>"]
 | `POST /v1/turns` `{"turns":[…]}` | upsert records into the key's devspace → `{devspace, accepted, new, replaced}` |
 | `GET /v1/turns?limit=&signal=` | newest records in the devspace, optionally filtered by signal |
 | `GET /v1/summary` | turns by agent and project, signal counts, tool calls and errors, tokens (unreported usage counted, never priced as zero), and the signal catalogue |
+| `GET /v1/signals/stats?signal=` | full-cohort signal counts and bounded UTC-day/agent/project breakdowns; same filters as the evidence list, including exclusive `until` |
 | `GET /healthz` | liveness |
 | `GET /` | public product page, with configured member entry and explicit feature status |
 | `GET /app` | member dashboard; account sign-in when configured, advanced devspace key fallback; private APIs still require authorization |

@@ -397,6 +397,7 @@ impl PgStore {
                    ($10::timestamptz IS NOT NULL AND (t.started_at < $10 OR t.started_at IS NULL)) OR
                    (t.started_at IS NOT DISTINCT FROM $10 AND t.event_id COLLATE "C" > $11))
               AND ($12::text IS NULL OR t.event_id = $12)
+              AND ($13::timestamptz IS NULL OR t.started_at < $13)
               AND ($2::text IS NULL OR EXISTS (
                     SELECT 1 FROM signal_hits h
                     WHERE h.devspace_id = t.devspace_id AND h.event_id = t.event_id
@@ -417,6 +418,7 @@ impl PgStore {
         .bind(f.before.and_then(|(at, _)| at))
         .bind(f.before.map(|(_, id)| id))
         .bind(f.event)
+        .bind(f.until)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|j| j.0).collect())

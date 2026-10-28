@@ -13,6 +13,7 @@
 //!   choices (on/off, thresholds) at `/v1/signals/settings`, which collectors read before
 //!   evaluating.
 
+mod analytics;
 mod web_auth;
 pub use web_auth::BrowserConfig;
 mod capture;
@@ -396,6 +397,7 @@ pub struct ListQuery {
     pub session: Option<String>,
     pub search: Option<String>,
     pub since: Option<String>,
+    pub until: Option<String>,
     pub cursor: Option<String>,
     pub event: Option<String>,
 }
@@ -424,6 +426,16 @@ async fn get_turns(
             pg::timestamp(value).ok_or_else(|| ApiError::BadRequest("Invalid start date".into()))
         })
         .transpose()?;
+    let until = q
+        .until
+        .as_deref()
+        .map(|value| {
+            pg::timestamp(value).ok_or_else(|| ApiError::BadRequest("Invalid end date".into()))
+        })
+        .transpose()?;
+    if since.zip(until).is_some_and(|(a, b)| a >= b) {
+        return Err(ApiError::BadRequest("Start must be before end".into()));
+    }
     let cursor: Option<(String, String)> = q
         .cursor
         .as_deref()
@@ -459,6 +471,7 @@ async fn get_turns(
                 session: q.session.as_deref().filter(|s| !s.is_empty()),
                 search,
                 since,
+                until,
                 before,
                 event: q.event.as_deref().filter(|s| !s.is_empty()),
             },
@@ -675,6 +688,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
         .route("/v1/signals", get(get_signals))
+        .route("/v1/signals/stats", get(analytics::get))
         .route("/v1/signals/preview", post(preview_signal))
         .route(
             "/v1/sources/health",

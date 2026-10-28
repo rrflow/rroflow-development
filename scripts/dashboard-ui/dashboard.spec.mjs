@@ -70,6 +70,27 @@ test('activity supports search, older pages, browser history and session drill-d
   await expect(page.locator('#session-scope')).toContainText('fixture-session-review');await expect(page.locator('#agent-filter')).toHaveValue('codex');await expect(page.locator('#activity-results .activity-row')).toHaveCount(2);await expect(page.locator('#activity-results [data-event="fixture-001"]')).toHaveCount(0);
   await reflow(page);await accessible(page);await screenshot(page,info,'activity-session');
 });
+
+test('signal dashboard drills from full history through project and UTC day into evidence',async({page,service},info)=>{
+  await signIn(page,service);await navigate(page,'library');
+  const card=page.locator('.library-card').filter({has:page.getByRole('heading',{name:'Blocked handoff',exact:true})});
+  await card.getByRole('link',{name:'Open signal dashboard',exact:true}).click();await settled(page);
+  await expect(page.locator('#signal-overview .signal-metrics')).toContainText('105');
+  await expect(page.locator('#signal-overview .signal-metrics')).toContainText('15');
+  await expect(page.locator('#signal-overview')).toContainText('not classifier accuracy');
+  await reflow(page);await accessible(page);await screenshot(page,info,'signal-dashboard');
+  await page.locator('.signal-breakdowns').scrollIntoViewIfNeeded();await screenshot(page,info,'signal-breakdowns');
+  const projects=page.locator('.signal-breakdown').filter({has:page.getByRole('heading',{name:'By project',exact:true})});
+  await projects.getByRole('link',{name:/Fixture \/ release-service/}).click();await settled(page);
+  await expect(page.locator('#project-filter')).toHaveValue('Fixture / release-service');
+  await expect(page.locator('#signal-results [data-event]')).toHaveCount(8);
+  await page.locator('.signal-day').last().click();await settled(page);
+  await expect(page.locator('#time-filter')).toHaveValue('custom');await expect(page).toHaveURL(/until=/);
+  await expect(page.locator('#signal-results [data-event]')).toHaveCount(1);
+  await reflow(page);await accessible(page);await screenshot(page,info,'signal-day-drilldown');
+  await page.locator('#signal-results [data-event="fixture-000"]').click();await expect(page.locator('#inspector')).toBeVisible();
+  await expect(page.locator('#pane-conversation')).toContainText('permission was denied');
+});
 test('turn evidence is safe, keyboard-accessible and supports persisted verdicts',async({page,service},info)=>{
   await signIn(page,service);await navigate(page,'activity');await page.locator('#activity-results [data-event="fixture-000"]').click();
   await expect(page.locator('#pane-conversation')).toContainText('<img src=x onerror="window.injected=true">');expect(await page.evaluate(()=>window.injected)).toBeUndefined();await expect(page.locator('#pane-conversation img')).toHaveCount(0);
@@ -121,7 +142,7 @@ test('a person creates, tests, uses and pauses an organized custom signal',async
   const turn={...structuredClone(service.turns[0]),event_id:'fixture-custom-arrival'};
   expect((await fetch(service.base+'/v1/turns',{method:'POST',headers:service.headers,body:JSON.stringify({turns:[turn]})})).ok).toBe(true);
   await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);await expect(card).toContainText('1 recorded match');
-  await screenshot(page,info,'signal-library');await card.getByRole('link',{name:'View findings',exact:true}).click();await settled(page);
+  await screenshot(page,info,'signal-library');await card.getByRole('link',{name:'Open signal dashboard',exact:true}).click();await settled(page);
   await page.locator('#signal-results').getByRole('button',{name:'Inspect evidence',exact:false}).click();
   const finding=page.locator('#pane-signals .signal-card').filter({has:page.getByRole('heading',{name:'Deployment warning',exact:true})});
   await expect(finding).toContainText('permission');await finding.getByRole('button',{name:'Yes, this matches',exact:true}).click();await expect(page.locator('#review-status')).toContainText('Decision saved');
