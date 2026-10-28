@@ -18,7 +18,7 @@ async function until(check, label, timeout=45000) {
   while(Date.now()<end) {try {if(await check()) return;}catch(e){error=e;}await sleep(500);}
   throw new Error(label+' timed out'+(error?': '+error.message:''));
 }
-test('native per-user startup captures, restarts, refuses changed definitions and retains data', {skip:!allowed,timeout:240000},async t=>{
+test('native per-user startup captures, restarts, refuses changed definitions and retains data', {skip:!allowed,timeout:600000},async t=>{
   const dir=await mkdtemp(join(tmpdir(),"rroflow service $HOME %n ' fixture-"));
   const store=join(dir,'store'), accountDir=join(dir,'account'), claude=join(dir,'claude'), codex=join(dir,'codex');
   for(const p of [accountDir,claude,codex]) await mkdir(p);
@@ -31,8 +31,14 @@ test('native per-user startup captures, restarts, refuses changed definitions an
     await exec('sudo',['systemctl','start',`user@${uid}.service`]);
     env.XDG_RUNTIME_DIR=`/run/user/${uid}`;env.DBUS_SESSION_BUS_ADDRESS=`unix:path=${env.XDG_RUNTIME_DIR}/bus`;
   }
-  const cli=(args,extra={})=>exec(binary,args,{env:{...env,...extra},windowsHide:true,timeout:30000});
-  const service=async action=>JSON.parse((await cli(['sources','service','--store',store,action])).stdout);
+  // ARM64 Windows can spend tens of seconds loading the ScheduledTasks CIM provider.
+  // Bound each operation, but do not kill a legitimate first install after 30 seconds.
+  const cli=(args,extra={})=>exec(binary,args,{env:{...env,...extra},windowsHide:true,timeout:90000});
+  const service=async action=>{
+    const began=Date.now();
+    try {return JSON.parse((await cli(['sources','service','--store',store,action])).stdout);}
+    finally {console.log(`Startup ${action}: ${Date.now()-began} ms`);}
+  };
   const listener=createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));
   const port=listener.address().port;await new Promise(r=>listener.close(r));
   const endpoint=`http://127.0.0.1:${port}`, key=randomBytes(32).toString('hex');
@@ -80,7 +86,7 @@ test('native per-user startup captures, restarts, refuses changed definitions an
     const mutation=join(dir,'change-fixture-task.ps1');
     // The test's own registered task, never another task or personal account.
     await writeFile(mutation,"param([string]$Name,[string]$Description)\n$ErrorActionPreference='Stop'\n$task=Get-ScheduledTask -TaskName $Name -TaskPath '\\'\n$task.Description=$Description\nSet-ScheduledTask -InputObject $task | Out-Null\n");
-    const change=description=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',mutation,'-Name',`rroflow-source-${installation.source_id}`,'-Description',description],{env,windowsHide:true});
+    const change=description=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',mutation,'-Name',`rroflow-source-${installation.source_id}`,'-Description',description],{env,windowsHide:true,timeout:90000});
     try {await change('fixture changed definition');await assert.rejects(service('remove'),/definition changed/);}
     finally {await change(`rroflow.startup/v1 ${installation.source_id} ${installation.sha256}`);}
   }
