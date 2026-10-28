@@ -29,6 +29,37 @@
   let currentRoute = {view:'overview', params:new URLSearchParams()}, toastTimer, reviewSaving = false;
   const pendingReviews = new Map(), previousPages = new Map();
   let builderId = '', previewSignature = '', builderAttempt = 0, savingSignals = false;
+  let uiSequence = 0, guideTopic = 'start';
+  const guides = {
+    start:{title:'Start with one moment.',body:'Your workspace brings captured AI work into view. Open a turn to see what happened, inspect a finding, then save whether it matches. You can go deeper whenever you need to.',next:'Explore my activity',view:'activity'},
+    coverage:{title:'A view of what arrived.',body:'These totals come from received records. Missing activity may mean a source is disconnected or has not delivered yet. A signal match is a clue to review, not a proven failure. Cost stays unknown until it can be verified.',next:'Check my sources',view:'sources'},
+    sources:{title:'Connect where the work happens.',body:'The collector belongs on the computer running your AI. It can capture Claude Code and Codex across projects and retry delivery later. Source reports show what last arrived; they do not guarantee every action was captured.',next:'Open connection guide',setup:true},
+    signals:{title:'A finding is an invitation to look.',body:'A signal looks for a pattern, such as repeated tool errors. Open its evidence, read the surrounding conversation, then decide whether it matches. Your saved decision stays attached to that exact version of the evidence.',next:'Explore findings',view:'signals'},
+    create:{title:'Notice what matters to you.',body:'Name your signal, choose a simple rule, and try it on recent activity before saving. Group signals by the way you work. You can pause a rule later without deleting its earlier findings.',next:'Open signal library',view:'library'},
+    learning:{title:'Better examples. Better next steps.',body:'Captured work and your reviews are available now. Consented datasets, pattern discovery and evaluated improvements are being built. A review does not start training. Future improvements must be tested and reversible.',next:'See the improvement path',view:'learning'},
+  };
+  const ui = window.RroflowA2UI.create(action => {
+    if (action.kind === 'view.select') location.hash = '#' + action.view_id;
+    if (action.kind === 'focus.set') {
+      if (narrow.matches) { $('sidebar').classList.add('open'); $('sidebar').inert = false; $('menu-toggle').setAttribute('aria-expanded','true'); }
+      $('workspace-guide').focus();
+    }
+    if (action.kind === 'coachmark.show') {
+      $('guide-title').textContent = action.title; $('guide-body').textContent = action.body;
+      if (!$('guide-dialog').open) $('guide-dialog').showModal();
+    }
+  });
+  function uiAction(action) {
+    if (!signedIn) return;
+    const sequence = ++uiSequence;
+    return ui.receive({schema_version:'shippin.a2ui.v1',interaction_id:'int_workspace_' + sequence,surface_id:'rroflow.workspace',sequence,issued_at:new Date().toISOString(),actor:{kind:'local-operator',id:'workspace-user'},narration:'User requested workspace guidance.',action});
+  }
+  function showGuide(topic) {
+    if (!Object.hasOwn(guides,topic) || !signedIn) return;
+    guideTopic = topic; const guide = guides[topic];
+    $('guide-next').textContent = guide.next; $('guide-topics').hidden = topic !== 'start';
+    uiAction({kind:'coachmark.show',target_id:'workspace.guide',title:guide.title,body:guide.body});
+  }
   try { key = sessionStorage.getItem('rroflow.key') || ''; } catch (_) {}
 
   function empty(heading, description, link = '') {
@@ -69,6 +100,7 @@
     return body;
   }
   function clearPrivateView() {
+    ui.reset(); uiSequence = 0; $('guide-dialog').close(); $('guide-title').textContent = ''; $('guide-body').textContent = ''; $('overview-focus').replaceChildren(); $('overview-headline').textContent = ''; $('overview-summary').textContent = '';
     clearTimeout(healthTimer); healthData = null; healthError = ''; $('source-health').replaceChildren();
     signedIn = false; generation++; controller?.abort();
     metadata = undefined; records = []; revisions = {}; reviews = []; journal = []; currentTurn = null; research = [];
@@ -109,11 +141,23 @@
   }
   function renderOverview() {
     const s = metadata.summary;
+    const hits = records.flatMap(t => t.signals.map(h => ({t,h})));
+    const unreviewed = reviewError ? null : hits.find(({t,h}) => !reviewFor(t,h));
+    const focus = unreviewed || hits[0];
+    const hitCount = Object.values(s.signals).reduce((a,b) => a + b,0);
+    const agents = Object.keys(s.by_agent).length;
+    $('overview-headline').textContent = !s.turns ? 'Your AI, a little clearer.' : hitCount ? `${fmt(hitCount)} ${hitCount === 1 ? 'finding' : 'findings'} worth a closer look.` : 'The story behind your AI\u2019s work.';
+    $('overview-summary').textContent = !s.turns ? 'Bring your activity together. See what happened, understand the signals, and keep the corrections that matter.' : `Your workspace has received ${fmt(s.turns)} turns from ${fmt(agents)} ${agents === 1 ? 'agent' : 'agents'}. ${hitCount ? 'Follow a finding to the evidence behind it.' : 'Open a turn to follow the conversation and tools.'}`;
+    $('overview-primary').dataset.uiView = hitCount ? 'signals' : 'activity'; $('overview-primary-label').textContent = hitCount ? 'Explore findings' : 'Explore activity';
+    const heading = !s.turns ? 'Let\u2019s bring your first turn into view.' : focus ? title(focus.h.signal) : hitCount ? 'There are findings worth exploring.' : 'Your captured work is ready to explore.';
+    const description = !s.turns ? 'Connect the computer running your agent. Its received turns will appear here.' : focus ? `${name(focus.t.agent)} \u00b7 ${focus.h.summary}` : hitCount ? 'Open the findings to see which patterns matched and inspect the evidence.' : 'Open a turn to follow the conversation and tools. No recorded findings is not a guarantee that everything went well.';
+    const action = !s.turns ? '<button class="button ink" data-setup>Connect my AI</button>' : focus ? `<button class="button ink" data-event="${esc(focus.t.event_id)}" data-open-tab="signals">Take a closer look <span aria-hidden="true">\u2192</span></button>` : `<button class="button ink" data-ui-view="${hitCount ? 'signals' : 'activity'}">${hitCount ? 'Explore findings' : 'Open activity'} <span aria-hidden="true">\u2192</span></button>`;
+    $('overview-focus').innerHTML = `<span class="focus-symbol" aria-hidden="true"><svg class="icon"><use href="#i-${s.turns ? 'signals' : 'sources'}"/></svg></span><div class="focus-copy"><p class="eyebrow">${!s.turns ? 'Your first step' : unreviewed ? 'A finding to review \u00b7 newest 100 turns' : focus ? 'Explore the evidence \u00b7 newest 100 turns' : 'Your next step'}</p><h2 id="focus-title">${esc(heading)}</h2><p>${esc(description)}</p></div><div class="focus-actions">${action}<span class="help-wrap"><button class="help-dot" data-guide="${s.turns ? 'signals' : 'sources'}" aria-label="Explain this next step" aria-describedby="focus-tip">?</button><span id="focus-tip" class="tooltip" role="tooltip">Open a short explanation of this step.</span></span></div>`;
     $('overview-stats').innerHTML = [
       ['Captured turns',fmt(s.turns),`${fmt(Object.keys(s.by_project).length)} project / directory groups`],
       ['Signal hits',fmt(Object.values(s.signals).reduce((a,b) => a + b,0)),'Rule matches, ready for review'],
       ['Finished tool calls',fmt(s.tool_calls),`${fmt(s.tool_errors)} reported errors`],
-      ['Spend & usage','Under review','No unverified cost estimates'],
+      ['Agents with activity',fmt(agents),'Received history, not online status'],
     ].map(([label,value,note]) => `<article class="stat"><span>${esc(label)}</span><b>${esc(value)}</b><small>${esc(note)}</small></article>`).join('');
     $('getting-started').hidden = s.turns > 0;
     $('getting-started').innerHTML = '<strong>Your first capture starts here.</strong><p>Connect the computer running your agent. Once a turn reaches this workspace, it appears below.</p><button class="button primary" data-setup>Connect a source</button>';
@@ -201,7 +245,7 @@
     const group = $('library-group').value, query = $('library-search').value.toLowerCase(), kind = $('library-kind').value || 'all';
     options('library-group','All groups',[...new Set([...built,...custom].map(s => s.group))].sort().map(g => [g,g]),group);
     const matching = [...built,...custom].filter(s => (!group || s.group === group) && (kind === 'all' || kind === s.kind) && (s.name + ' ' + s.description).toLowerCase().includes(query));
-    $('signal-library').innerHTML = [...new Set(matching.map(s => s.group))].map(group => `<section class="signal-library-group"><h2>${esc(group)}</h2><div class="signal-grid">` + matching.filter(s => s.group === group).map(s => `<article class="panel library-card"><div class="row"><span class="badge neutral">${s.kind === 'custom' ? 'Your signal' : 'Built-in'}</span><span class="badge ${s.enabled ? 'positive' : 'neutral'}">${s.enabled ? 'On' : 'Paused'}</span></div><h3>${esc(s.name)}</h3><p>${esc(s.description)}</p><p class="small">${s.kind === 'custom' ? esc((s.agent ? name(s.agent) : 'All agents') + ' · ' + (s.project || 'All projects')) : 'Runs in the collector. Connected collectors refresh your settings.'}</p><p class="small muted">${fmt(metadata.summary.signals[s.id] || 0)} recorded ${metadata.summary.signals[s.id] === 1 ? 'match' : 'matches'}</p><div class="row"><a class="button" href="${link('signals',{signal:s.id})}">View findings</a>${s.kind === 'built_in' ? '<a class="button subtle" href="#settings">Adjust checks</a>' : ''}<button class="button subtle" data-library-toggle="${esc(s.id)}" data-library-kind="${s.kind}" aria-label="${s.enabled ? 'Pause' : 'Turn on'} ${esc(s.name)}">${s.enabled ? 'Pause' : 'Turn on'}</button></div></article>`).join('') + '</div></section>').join('') || empty('No matching signals','Try another group or create a signal for something you want to notice.');
+    $('signal-library').innerHTML = [...new Set(matching.map(s => s.group))].map(group => `<section class="signal-library-group"><h2>${esc(group)}</h2><div class="signal-grid">` + matching.filter(s => s.group === group).map(s => `<article class="panel library-card"><div class="row"><span class="badge neutral">${s.kind === 'custom' ? 'Your signal' : 'Built-in'}</span><span class="badge ${s.enabled ? 'positive' : 'neutral'}">${s.enabled ? 'On' : 'Paused'}</span></div><h3>${esc(s.name)}</h3><p>${esc(s.description)}</p>${s.kind === 'custom' ? `<p class="small">${esc((s.agent ? name(s.agent) : 'All agents') + ' · ' + (s.project || 'All projects'))}</p>` : '<details><summary>How this check runs</summary><p>Runs in the collector. Connected collectors refresh your settings.</p></details>'}<p class="small muted">${fmt(metadata.summary.signals[s.id] || 0)} recorded ${metadata.summary.signals[s.id] === 1 ? 'match' : 'matches'}</p><div class="row"><a class="button" href="${link('signals',{signal:s.id})}">View findings</a>${s.kind === 'built_in' ? '<a class="button subtle" href="#settings">Adjust checks</a>' : ''}<button class="button subtle" data-library-toggle="${esc(s.id)}" data-library-kind="${s.kind}" aria-label="${s.enabled ? 'Pause' : 'Turn on'} ${esc(s.name)}">${s.enabled ? 'Pause' : 'Turn on'}</button></div></article>`).join('') + '</div></section>').join('') || empty('No matching signals','Try another group or create a signal for something you want to notice.');
   }
   function renderProjects() {
     const query = $('project-search').value.toLowerCase();
@@ -448,6 +492,12 @@
   $('close-inspector').onclick = () => { inspection++; $('inspector').close(); };
   $('inspector').oncancel = () => { inspection++; };
   $('close-setup').onclick = () => $('setup-dialog').close();
+  $('close-guide').onclick = () => $('guide-dialog').close();
+  $('guide-next').onclick = () => {
+    const guide = guides[guideTopic]; $('guide-dialog').close();
+    if (guide.setup) $('setup-dialog').showModal();
+    else uiAction({kind:'view.select',target_id:'workspace.views',view_id:guide.view});
+  };
   $('close-research').onclick = () => $('research-dialog').close();
   const narrow = window.matchMedia('(max-width: 760px)');
   function closeNavigation() { $('sidebar').classList.remove('open'); $('sidebar').inert = narrow.matches; $('menu-toggle').setAttribute('aria-expanded','false'); }
@@ -463,6 +513,13 @@
   document.addEventListener('click', async e => {
     const button = e.target.closest('button'); if (!button) return;
     if (button.hasAttribute('data-setup')) $('setup-dialog').showModal();
+    if (button.dataset.guide) showGuide(button.dataset.guide);
+    if (button.dataset.uiView) uiAction({kind:'view.select',target_id:'workspace.views',view_id:button.dataset.uiView});
+    if (button.dataset.setupKind && ['computer','sdk'].includes(button.dataset.setupKind)) {
+      $('setup-computer').hidden = button.dataset.setupKind !== 'computer'; $('setup-sdk').hidden = button.dataset.setupKind !== 'sdk';
+      all('[data-setup-kind]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.setupKind === button.dataset.setupKind)));
+    }
+    if (button.hasAttribute('data-setup-done')) { $('setup-dialog').close(); uiAction({kind:'view.select',target_id:'workspace.views',view_id:'sources'}); }
     if (button.dataset.event) await openTurn(button.dataset.event,button.dataset.openTab);
     if (button.dataset.tab) setTab(button.dataset.tab);
     if (button.dataset.libraryToggle) await toggleLibrary(button);
@@ -479,7 +536,9 @@
       catch (_) { toast('The browser could not copy the link.'); }
     }
   });
-  document.addEventListener('keydown',e => { if (e.key === 'Escape') { closeNavigation(); } });
+  document.addEventListener('keydown',e => { if (e.key === 'Escape') { closeNavigation(); document.documentElement.dataset.tooltipDismissed = 'true'; } });
+  document.addEventListener('pointerover',() => { delete document.documentElement.dataset.tooltipDismissed; });
+  document.addEventListener('focusin',() => { delete document.documentElement.dataset.tooltipDismissed; });
   window.addEventListener('hashchange',() => { if (signedIn) { window.scrollTo(0,0); $('main-content').focus({preventScroll:true}); } return load(); });
   const media = window.matchMedia('(prefers-color-scheme: dark)');
   function setTheme(value) { document.documentElement.dataset.theme = value === 'system' ? (media.matches ? 'dark' : 'light') : value; }
