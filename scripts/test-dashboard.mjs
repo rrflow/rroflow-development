@@ -173,6 +173,7 @@ test('source reports separate stale receipt, queued work and unavailable health 
   const report={source_id:'00000000-0000-4000-8000-000000000001',sequence:3,observed_at:'2099-01-01T00:00:00Z',collector_version:'0.3.0',pending_revisions:4,pending_bytes:4096,journal_bytes:8192,oldest_pending_at:null,capture_errors:2,delivery_ok:false,signal_settings_revision:1};
   const p=await page({signedIn:true,hash:'#sources',intercept:async path=>path==='/v1/sources/health'?{ok:true,status:200,json:async()=>({sources:[{report,received_at:'2026-10-27T00:00:00Z'}],as_of:'2026-10-27T00:03:00Z',recent_for_seconds:120})}:null});
   assert.match(p.el.get('source-health').innerHTML,/No recent report/);
+  assert.doesNotMatch(html,/Live heartbeats and local pending queue counts are not available/);
   assert.match(p.el.get('source-health').innerHTML,/4 KB|4.0 KB/);
   assert.match(p.el.get('source-health').innerHTML,/Last delivery check failed/);
   assert.match(p.el.get('source-health').innerHTML,/Time unavailable/);
