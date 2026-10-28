@@ -13,7 +13,12 @@ async function settled(page){await expect(page.locator('#loading')).toBeHidden()
 async function navigate(page,route){await page.evaluate(route=>{location.hash='#'+route;},route);await expect(page.locator(`[data-nav="${route}"]`)).toHaveAttribute('aria-current','page');await settled(page);}
 async function reflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
 async function accessible(page){const results=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa']).analyze();expect(results.violations.map(v=>({id:v.id,impact:v.impact,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))}))).toEqual([]);}
-async function screenshot(page,info,name){const path=info.outputPath(`${name}-test-fixture.png`);await page.screenshot({path,fullPage:false});await info.attach(`${name} - disposable test records`,{path,contentType:'image/png'});}
+async function screenshot(page,info,name){
+  // Contrast inspection can temporarily hide artwork. Let restored styles paint
+  // before collecting visual evidence; DOM visibility alone misses this frame.
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  const path=info.outputPath(`${name}-test-fixture.png`);await page.screenshot({path,fullPage:false});await info.attach(`${name} - disposable test records`,{path,contentType:'image/png'});
+}
 test.beforeEach(async({page,service})=>{await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());});
 
 test('sign-in and overview are readable at this viewport',async({page,service},info)=>{
