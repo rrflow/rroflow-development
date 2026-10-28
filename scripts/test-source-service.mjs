@@ -39,7 +39,13 @@ test('native per-user startup captures, restarts, refuses changed definitions an
   const config=join(dir,'server.toml');
   await writeFile(config,`listen = "127.0.0.1:${port}"\ndata_dir = ${JSON.stringify(join(dir,'server').replaceAll('\\','/'))}\n[[devspace]]\nid = "owner"\nkey_sha256 = ["${createHash('sha256').update(key).digest('hex')}"]\n`);
   const server=spawn(ingest,['serve','--config',config],{env,stdio:'ignore',windowsHide:true});
-  t.after(async()=>{try {await service('remove');}finally {server.kill();}});
+  t.after(async()=>{
+    try {
+      // Counts/manager state only; no captured content or credentials in CI logs.
+      try {console.log('Final manager state:',JSON.stringify(await service('status')));}catch(e){console.log('Manager status:',e.message);}
+      await service('remove');
+    } finally {server.kill();}
+  });
   await until(async()=> (await fetch(endpoint+'/readyz')).ok,'fixture ingest');
   const api=async path=>(await fetch(endpoint+path,{headers:{authorization:'Bearer '+key}})).json();
   const accountFile=join(accountDir,'account.json');
@@ -70,6 +76,14 @@ test('native per-user startup captures, restarts, refuses changed definitions an
   try {await writeFile(binding,Buffer.concat([bindingBytes,Buffer.from(' ')]));await assert.rejects(service('start'),/source binding changed/);}finally {await writeFile(binding,bindingBytes);}
   const owned=join(bundle,process.platform==='win32'?'manager.ps1':`rroflow-source-${installation.source_id}.service`), ownedBytes=await readFile(owned);
   try {await writeFile(owned,Buffer.concat([ownedBytes,Buffer.from('\n# changed\n')]));await assert.rejects(service('remove'));}finally {await writeFile(owned,ownedBytes);}
+  if(process.platform==='win32') {
+    const mutation=join(dir,'change-fixture-task.ps1');
+    // The test's own registered task, never another task or personal account.
+    await writeFile(mutation,"param([string]$Name,[string]$Description)\n$ErrorActionPreference='Stop'\n$task=Get-ScheduledTask -TaskName $Name -TaskPath '\\'\n$task.Description=$Description\nSet-ScheduledTask -InputObject $task | Out-Null\n");
+    const change=description=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',mutation,'-Name',`rroflow-source-${installation.source_id}`,'-Description',description],{env,windowsHide:true});
+    try {await change('fixture changed definition');await assert.rejects(service('remove'),/definition changed/);}
+    finally {await change(`rroflow.startup/v1 ${installation.source_id} ${installation.sha256}`);}
+  }
   await service('start');await turn(3);
   await until(async()=> (await api('/v1/turns')).turns.length===3,'capture after restart');
   assert.equal((await service('remove')).installed,false);

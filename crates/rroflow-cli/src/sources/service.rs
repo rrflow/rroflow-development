@@ -152,8 +152,10 @@ fn unit_quote(value: &str) -> String {
     )
 }
 fn unit_text(install: &Installation) -> Result<String> {
+    // systemd rejects quote characters in the executable itself even when escaped.
+    // env executes the absolute pinned path as an argument, without a shell or PATH lookup.
     Ok(format!(
-        "# rroflow.startup/v1 {}\n[Unit]\nDescription=RROFLOW session collector\nStartLimitIntervalSec=300\nStartLimitBurst=3\n[Service]\nType=exec\nExecStart=:{} sources managed-run --manifest {}\nRestart=on-failure\nRestartSec=15\nUMask=0077\nNoNewPrivileges=yes\n[Install]\nWantedBy=default.target\n",
+        "# rroflow.startup/v1 {}\n[Unit]\nDescription=RROFLOW session collector\nStartLimitIntervalSec=300\nStartLimitBurst=3\n[Service]\nType=exec\nExecStart=:/usr/bin/env -- {} sources managed-run --manifest {}\nRestart=on-failure\nRestartSec=15\nUMask=0077\nNoNewPrivileges=yes\n[Install]\nWantedBy=default.target\n",
         install.source_id,
         unit_quote(path_text(&install.executable())?),
         unit_quote(path_text(&install.manifest())?)
