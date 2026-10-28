@@ -56,6 +56,178 @@ fn rec(id: &str, signal: Option<&str>) -> TurnRecord {
     }
 }
 
+#[tokio::test]
+async fn signal_dashboard_counts_full_cohorts_and_preserves_evidence_scope() {
+    for backend in backends() {
+        let env = Env::new(backend, "signal_stats");
+        let app = env.app().await;
+        let start = pg::timestamp("2026-09-01T00:00:00Z").unwrap();
+        let mut turns: Vec<_> = (0..125)
+            .map(|i| {
+                let mut r = rec(&format!("stat-{i}"), Some("blocked_handoff"));
+                r.agent = format!("agent-{}", i % 15);
+                r.project = Some(format!("project-{}", i % 15));
+                r.started_at = (start + chrono::Duration::days(i % 40)).to_rfc3339();
+                r.ended_at = r.started_at.clone();
+                r
+            })
+            .collect();
+        let duplicate = turns[0].signals[0].clone();
+        turns[0].signals.push(duplicate);
+        turns[0].model = Some("literal%_needle".into());
+        let mut undated = rec("undated", Some("blocked_handoff"));
+        undated.started_at.clear();
+        undated.ended_at.clear();
+        turns.push(undated);
+        turns.push(rec("no-hit", None));
+        assert_eq!(
+            call(&app, post("key-jesse", &turns)).await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(
+                &app,
+                post(
+                    "key-other",
+                    &[rec("private-other", Some("blocked_handoff"))]
+                )
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let path = "/v1/signals/stats?signal=blocked_handoff";
+        let (code, body) = call(&app, get("key-jesse", path)).await;
+        assert_eq!(code, StatusCode::OK);
+        let stats: analytics::SignalStats = serde_json::from_value(body["stats"].clone()).unwrap();
+        assert_eq!(
+            (
+                stats.received_turns,
+                stats.matched_turns,
+                stats.undated_matches
+            ),
+            (127, 126, 1)
+        );
+        assert_eq!(stats.by_day.len(), 30);
+        assert_eq!(stats.by_agent.len(), 12);
+        assert_eq!(stats.by_project.len(), 12);
+        assert_eq!(
+            stats
+                .by_agent
+                .iter()
+                .map(|b| b.matched_turns)
+                .sum::<usize>()
+                + stats.other_agent_matches,
+            126
+        );
+        assert_eq!(
+            stats
+                .by_project
+                .iter()
+                .map(|b| b.matched_turns)
+                .sum::<usize>()
+                + stats.other_project_matches,
+            126
+        );
+        assert_eq!(
+            stats.by_day.iter().map(|b| b.matched_turns).sum::<usize>()
+                + stats.other_day_matches
+                + stats.undated_matches,
+            126
+        );
+        assert!(!body.to_string().contains("literal%_needle"));
+        assert!(!body.to_string().contains("private-other"));
+        let scoped = "signal=blocked_handoff&agent=agent-0&project=project-0&since=2026-09-01T00:00:00Z&until=2026-09-02T00:00:00Z";
+        let (code, body) = call(
+            &app,
+            get("key-jesse", &format!("/v1/signals/stats?{scoped}")),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(body["stats"]["matched_turns"], 2);
+        assert_eq!(body["stats"]["received_turns"], 2);
+        let (_, evidence) = call(&app, get("key-jesse", &format!("/v1/turns?{scoped}"))).await;
+        assert_eq!(evidence["turns"].as_array().unwrap().len(), 2);
+        let (_, literal) = call(
+            &app,
+            get(
+                "key-jesse",
+                &format!("/v1/signals/stats?{scoped}&search=literal%25_needle"),
+            ),
+        )
+        .await;
+        assert_eq!(literal["stats"]["matched_turns"], 1);
+        let (_, empty) = call(
+            &app,
+            get(
+                "key-jesse",
+                "/v1/signals/stats?signal=blocked_handoff&since=2030-01-01T00:00:00Z",
+            ),
+        )
+        .await;
+        assert_eq!(empty["stats"]["received_turns"], 0);
+        assert!(empty["stats"]["by_day"].as_array().unwrap().is_empty());
+        let (_, other) = call(&app, get("key-other", path)).await;
+        assert_eq!(other["stats"]["matched_turns"], 1);
+        assert_eq!(
+            call(
+                &app,
+                post("key-other", &[rec("historic", Some("mood café"))])
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let mut unicode = reqwest::Url::parse("http://fixture.invalid/v1/signals/stats").unwrap();
+        unicode.query_pairs_mut().append_pair("signal", "mood café");
+        let (code, old) = call(
+            &app,
+            get(
+                "key-other",
+                &format!("{}?{}", unicode.path(), unicode.query().unwrap()),
+            ),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(old["stats"]["matched_turns"], 1);
+        assert_eq!(
+            call(&app, get("wrong", path)).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        turns[0].signals.clear();
+        assert_eq!(
+            call(&app, post("key-jesse", &turns[..1])).await.0,
+            StatusCode::OK
+        );
+        drop(app);
+        let app = env.app().await;
+        let (_, after) = call(&app, get("key-jesse", path)).await;
+        assert_eq!(after["stats"]["matched_turns"], 125);
+        assert_eq!(after["stats"]["received_turns"], 127);
+        for query in [
+            "signal=blocked_handoff&devspace=other",
+            "signal=blocked_handoff&cursor=abc",
+            "signal=blocked_handoff&since=not-a-date",
+            "signal=blocked_handoff&since=2026-10-28T00:00:00Z&until=2026-10-27T00:00:00Z",
+            "signal=",
+        ] {
+            assert_eq!(
+                call(
+                    &app,
+                    get("key-jesse", &format!("/v1/signals/stats?{query}"))
+                )
+                .await
+                .0,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert_eq!(
+            call(&app, get("key-jesse", "/v1/turns?until=bad")).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+}
+
 /// Unique per test and per run, so Postgres tests never see each other's rows.
 fn unique(name: &str) -> String {
     static N: AtomicU32 = AtomicU32::new(0);

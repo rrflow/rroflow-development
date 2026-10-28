@@ -7,7 +7,7 @@ Everything that guides rroflow.ai and the RRFlow work lives here, in git, so not
 | File | What it is | Project name |
 |---|---|---|
 | [plan/rroflow-ai-plan.md](plan/rroflow-ai-plan.md) | The plan: product split (RRFlow engine vs rroflow.ai), learning vision, decisions D-1…D-6, build order | `claude/rroflow-ai-plan.md` |
-| [plan/capability-map.md](plan/capability-map.md) | Raindrop + Sentry capabilities mapped to rroflow, with status | `claude/rroflow-capability-map.md` |
+| [plan/capability-map.md](plan/capability-map.md) | Raindrop + Sentry + PostHog AI capability baseline, implementation status and acceptance gaps | `claude/rroflow-capability-map.md` |
 | [plan/identity-and-devspaces.md](plan/identity-and-devspaces.md) | Nomen identity, devspaces, Shippin tenant attach, API, Nomen app ids, sign-in setup on tx-infra-prod | `claude/rroflow-identity-and-devspaces.md` |
 | [plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md) | Installing the rroflow SDK, detecting installed agents and subscriptions, linking them to rroflow.ai | — |
 | [plan/canon-alignment-notes.md](plan/canon-alignment-notes.md) | Vocabulary and canon constraints the mechanism spec must follow | `claude/rroflow-canon-alignment-notes.md` |

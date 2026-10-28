@@ -12,6 +12,8 @@
 
 The [public and member entry](docs/ux/public-member-entry.md) now separates product discovery from the authenticated workspace, follows the configured account origin and shows onboarding progress from received evidence. It does not activate billing or provision a live hosted account.
 
+The [AI capability baseline](docs/plan/capability-map.md) tracks Raindrop, Sentry and PostHog requirements with implementation gaps. [Signal drill-down](docs/ux/signal-drilldown.md) adds full-history counts, daily activity and agent/project navigation to exact evidence; enterprise datasets and learning remain separate required implementation stages.
+
 ## Install
 
 Windows (PowerShell):

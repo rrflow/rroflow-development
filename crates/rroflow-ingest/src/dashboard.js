@@ -100,6 +100,7 @@
     return body;
   }
   function clearPrivateView() {
+    $('signal-overview').replaceChildren(); $('signal-overview').hidden = true;
     ui.reset(); uiSequence = 0; $('guide-dialog').close(); $('guide-title').textContent = ''; $('guide-body').textContent = ''; $('overview-focus').replaceChildren(); $('overview-headline').textContent = ''; $('overview-summary').textContent = '';
     clearTimeout(healthTimer); healthData = null; healthError = ''; $('source-health').replaceChildren();
     signedIn = false; generation++; controller?.abort();
@@ -126,8 +127,8 @@
     const p = currentRoute.params, s = metadata.summary;
     options('agent-filter','All agents', [...new Set([...Object.keys(names), ...Object.keys(s.by_agent)])].map(a => [a,name(a)]), p.get('agent'));
     options('project-filter','All projects', Object.entries(s.by_project).map(([p,n]) => [p,`${p} (${fmt(n)})`]), p.get('project'));
-    options('signal-filter','All signals', [...metadata.catalogue.signals,...(metadata.settings?.custom || [])].map(s => [s.id,title(s.id)]), p.get('signal'));
-    $('search').value = p.get('search') || ''; $('time-filter').value = p.get('days') || '';
+    options('signal-filter','All signals', [...new Set([...metadata.catalogue.signals.map(s=>s.id),...(metadata.settings?.custom || []).map(s=>s.id),...Object.keys(s.signals),...(p.get('signal') ? [p.get('signal')] : [])])].map(id => [id,title(id)]), p.get('signal'));
+    $('search').value = p.get('search') || ''; $('time-filter').value = p.get('days') || (p.has('since') || p.has('until') ? 'custom' : '');
     $('session-scope').hidden = !p.get('session');
     $('session-scope').textContent = p.get('session') ? 'Session: ' + p.get('session') + ' · Reset filters to see all sessions.' : '';
   }
@@ -193,6 +194,28 @@
     $('previous-page').disabled = !currentRoute.params.has('cursor');
     $('page-label').textContent = currentRoute.params.has('cursor') ? 'Older captured turns' : 'Newest matching turns';
   }
+  function signalScopeLink(changes) {
+    const p = new URLSearchParams(currentRoute.params); p.delete('cursor'); p.delete('event');
+    for (const [key,value] of Object.entries(changes)) { if (value == null) p.delete(key); else p.set(key,value); }
+    return link('signals',p);
+  }
+  function renderSignalOverview(data) {
+    const s=data.stats, scope=data.scope, signal=scope.signal;
+    const custom=metadata.settings?.custom?.find(r=>r.id===signal);
+    const builtin=metadata.catalogue.signals.find(r=>r.id===signal);
+    const description=custom ? ruleDescription(custom) : builtin?.meaning || 'A signal received with your activity. Its definition is not available in this workspace.';
+    const enabled=custom ? custom.enabled : builtin ? !(metadata.settings?.disabled || []).includes(signal) : null;
+    const range=(scope.since ? 'From '+date(scope.since) : 'All received history')+(scope.until ? ' \u00b7 Before '+date(scope.until) : '');
+    const drillDay=day=>{
+      const start=new Date(day+'T00:00:00Z').getTime(), end=start+86400000;
+      return signalScopeLink({since:new Date(Math.max(start,scope.since ? Date.parse(scope.since) : start)).toISOString(),until:new Date(Math.min(end,scope.until ? Date.parse(scope.until) : end)).toISOString(),days:null});
+    };
+    const max=Math.max(1,...s.by_day.map(b=>b.matched_turns));
+    const bars=s.by_day.map(b=>{const height=b.matched_turns ? Math.max(2,Math.round(80*b.matched_turns/max)) : 0;return `<a class="signal-day" href="${drillDay(b.key)}" title="${esc(b.key)} UTC: ${fmt(b.matched_turns)} matching turns out of ${fmt(b.received_turns)} received. Open evidence."><strong>${fmt(b.matched_turns)}</strong><svg viewBox="0 0 28 90" aria-hidden="true" focusable="false"><rect class="signal-day-track" x="3" y="5" width="22" height="80" rx="5"/><rect class="signal-day-fill" x="3" y="${85-height}" width="22" height="${height}" rx="5"/></svg><span>${esc(b.key.slice(5))}</span><span class="signal-day-detail">: ${fmt(b.matched_turns)} matching turns out of ${fmt(b.received_turns)} received on ${esc(b.key)} UTC. Open evidence.</span></a>`;}).join('');
+    const breakdown=(label,items,param,other)=>`<section class="panel signal-breakdown"><div class="panel-heading"><h3>${label}</h3><span class="small muted">Matching / received turns</span></div>${items.map(b=>`<a class="signal-breakdown-row" href="${signalScopeLink({[param]:b.key})}"><span>${esc(param==='agent' ? name(b.key) : b.key)}</span><strong>${fmt(b.matched_turns)} <small>/ ${fmt(b.received_turns)}</small></strong><span aria-hidden="true">&#8599;</span></a>`).join('') || '<p class="muted">No received turns in this selection.</p>'}${other ? `<p class="small muted">${fmt(other)} matching turns in other groups. Use the filters above to explore them.</p>` : ''}</section>`;
+    $('page-title').textContent = title(signal); $('page-description').textContent = description;
+    $('signal-overview').innerHTML = `<section class="panel signal-story"><div class="panel-heading"><div><h2>What the records show</h2></div><span class="badge neutral">${enabled===null ? 'Recorded signal' : enabled ? 'On' : 'Paused'}</span></div><p class="small muted">${esc(range)}. Counts reflect current received records as of ${esc(date(data.as_of))}.</p><div class="signal-metrics"><div><span>Turns that matched</span><strong>${fmt(s.matched_turns)}</strong></div><div><span>Received turns in this selection</span><strong>${fmt(s.received_turns)}</strong></div><div><span>Share with a recorded match</span><strong>${s.received_turns ? (100*s.matched_turns/s.received_turns).toFixed(1)+'%' : 'No data'}</strong></div></div><details class="small muted"><summary>How to read these numbers</summary><p>One turn counts once, even if it has several hits. This is observed match share, not classifier accuracy or proof that every turn was checked. A match is a clue to review, not a confirmed failure.</p></details></section><section class="panel"><div class="panel-heading"><h3>When it showed up</h3><span class="small muted">UTC days &middot; choose a day to inspect</span></div><div class="signal-timeline">${bars || '<p>No dated activity in this selection.</p>'}</div><p class="small muted">Showing ${s.by_day.length} days with received activity (up to ${data.limits.active_days}). Earlier dates: ${fmt(s.other_day_matches)} matches. No date reported: ${fmt(s.undated_matches)} matches. These are included in the total; gaps do not establish inactivity.</p></section><div class="signal-breakdowns">${breakdown('By agent',s.by_agent,'agent',s.other_agent_matches)}${breakdown('By project',s.by_project,'project',s.other_project_matches)}</div><p class="small muted signal-source">Source: current records in your workspace, across the complete filter selection. Breakdown lists show at most ${data.limits.breakdowns} groups. The evidence list below is paginated separately.</p>`;
+  }
   function renderSources() {
     renderSourceHealth();
     $('source-cards').innerHTML = sourceList().map(({agent,turns,events}) => `<article class="source-card">${agentIcon(agent)}<h2>${esc(name(agent))}</h2><span class="badge ${turns || events ? 'positive' : 'neutral'}">${turns || events ? 'Activity received' : 'Awaiting activity'}</span><div class="source-count">${fmt(turns)}</div><p>captured turns · ${journalError ? 'SDK count unavailable' : fmt(events) + ' events in latest 100'}</p><p>${agent === 'grok' ? 'SDK adapter tested with fixtures. Subscription app capture is not available.' : 'CLI session capture and instrumented SDK events. Browser history is not linked.'}</p><a class="button" href="${link('activity',{agent})}">View activity →</a></article>`).join('');
@@ -242,10 +265,12 @@
     const groups = {failure:'Quality',friction:'Working together',cost:'Usage & interruptions',context:'Context'};
     const built = metadata.catalogue.signals.map(s => ({id:s.id,name:title(s.id),group:groups[s.category] || 'Built-in',description:s.meaning,enabled:!cfg.disabled.includes(s.id),kind:'built_in'}));
     const custom = (cfg.custom || []).map(s => ({...s,description:ruleDescription(s),kind:'custom'}));
+    const defined=new Set([...built,...custom].map(s=>s.id));
+    const recorded=Object.keys(metadata.summary.signals).filter(id=>!defined.has(id)).map(id=>({id,name:title(id),group:'Other recorded signals',description:'Received with captured activity. The definition is unavailable; you can still inspect its evidence.',enabled:null,kind:'recorded'}));
     const group = $('library-group').value, query = $('library-search').value.toLowerCase(), kind = $('library-kind').value || 'all';
-    options('library-group','All groups',[...new Set([...built,...custom].map(s => s.group))].sort().map(g => [g,g]),group);
-    const matching = [...built,...custom].filter(s => (!group || s.group === group) && (kind === 'all' || kind === s.kind) && (s.name + ' ' + s.description).toLowerCase().includes(query));
-    $('signal-library').innerHTML = [...new Set(matching.map(s => s.group))].map(group => `<section class="signal-library-group"><h2>${esc(group)}</h2><div class="signal-grid">` + matching.filter(s => s.group === group).map(s => `<article class="panel library-card"><div class="row"><span class="badge neutral">${s.kind === 'custom' ? 'Your signal' : 'Built-in'}</span><span class="badge ${s.enabled ? 'positive' : 'neutral'}">${s.enabled ? 'On' : 'Paused'}</span></div><h3>${esc(s.name)}</h3><p>${esc(s.description)}</p>${s.kind === 'custom' ? `<p class="small">${esc((s.agent ? name(s.agent) : 'All agents') + ' · ' + (s.project || 'All projects'))}</p>` : '<details><summary>How this check runs</summary><p>Runs in the collector. Connected collectors refresh your settings.</p></details>'}<p class="small muted">${fmt(metadata.summary.signals[s.id] || 0)} recorded ${metadata.summary.signals[s.id] === 1 ? 'match' : 'matches'}</p><div class="row"><a class="button" href="${link('signals',{signal:s.id})}">View findings</a>${s.kind === 'built_in' ? '<a class="button subtle" href="#settings">Adjust checks</a>' : ''}<button class="button subtle" data-library-toggle="${esc(s.id)}" data-library-kind="${s.kind}" aria-label="${s.enabled ? 'Pause' : 'Turn on'} ${esc(s.name)}">${s.enabled ? 'Pause' : 'Turn on'}</button></div></article>`).join('') + '</div></section>').join('') || empty('No matching signals','Try another group or create a signal for something you want to notice.');
+    options('library-group','All groups',[...new Set([...built,...custom,...recorded].map(s => s.group))].sort().map(g => [g,g]),group);
+    const matching = [...built,...custom,...recorded].filter(s => (!group || s.group === group) && (kind === 'all' || kind === s.kind) && (s.name + ' ' + s.description).toLowerCase().includes(query));
+    $('signal-library').innerHTML = [...new Set(matching.map(s => s.group))].map(group => `<section class="signal-library-group"><h2>${esc(group)}</h2><div class="signal-grid">` + matching.filter(s => s.group === group).map(s => `<article class="panel library-card"><div class="row"><span class="badge neutral">${s.kind === 'custom' ? 'Your signal' : s.kind === 'recorded' ? 'Recorded signal' : 'Built-in'}</span><span class="badge ${s.enabled ? 'positive' : 'neutral'}">${s.enabled===null ? 'Definition unavailable' : s.enabled ? 'On' : 'Paused'}</span></div><h3>${esc(s.name)}</h3><p>${esc(s.description)}</p>${s.kind === 'custom' ? `<p class="small">${esc((s.agent ? name(s.agent) : 'All agents') + ' · ' + (s.project || 'All projects'))}</p>` : s.kind==='recorded' ? '' : '<details><summary>How this check runs</summary><p>Runs in the collector. Connected collectors refresh your settings.</p></details>'}<p class="small muted">${fmt(metadata.summary.signals[s.id] || 0)} recorded ${metadata.summary.signals[s.id] === 1 ? 'match' : 'matches'}</p><div class="row"><a class="button" href="${link('signals',{signal:s.id})}">Open signal dashboard</a>${s.kind === 'built_in' ? '<a class="button subtle" href="#settings">Adjust checks</a>' : ''}${s.kind==='recorded' ? '' : `<button class="button subtle" data-library-toggle="${esc(s.id)}" data-library-kind="${s.kind}" aria-label="${s.enabled ? 'Pause' : 'Turn on'} ${esc(s.name)}">${s.enabled ? 'Pause' : 'Turn on'}</button>`}</div></article>`).join('') + '</div></section>').join('') || empty('No matching signals','Try another group or create a signal for something you want to notice.');
   }
   function renderProjects() {
     const query = $('project-search').value.toLowerCase();
@@ -316,7 +341,7 @@
   function turnQuery() {
     const q = new URLSearchParams({limit:'100'});
     if (['activity','signals'].includes(currentRoute.view)) {
-      for (const param of ['agent','project','signal','session','search','since','cursor']) if (currentRoute.params.has(param)) q.set(param,currentRoute.params.get(param));
+      for (const param of ['agent','project','signal','session','search','since','until','cursor']) if (currentRoute.params.has(param)) q.set(param,currentRoute.params.get(param));
     }
     return '/v1/turns?' + q;
   }
@@ -367,7 +392,7 @@
     document.title = 'RROFLOW · ' + views[currentRoute.view][0];
     all('[data-nav]').forEach(a => { if (a.dataset.nav === currentRoute.view) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current'); });
     all('[data-view]').forEach(el => { el.hidden = el.dataset.view !== (['activity','signals'].includes(currentRoute.view) ? 'explorer' : currentRoute.view); });
-    showError(''); $('loading').hidden = false;
+    showError(''); $('loading').hidden = false; $('signal-overview').replaceChildren(); $('signal-overview').hidden = true;
     try {
       const sum = await api('/v1/summary');
       if (g !== generation) return;
@@ -387,6 +412,20 @@
       }
       if (currentRoute.view === 'overview') { renderOverview(); renderMemberProgress(); }
       if (['activity','signals'].includes(currentRoute.view)) renderExplorer();
+      if (currentRoute.view === 'signals' && currentRoute.params.get('signal')) {
+        $('signal-overview').hidden = false;
+        const q = new URLSearchParams();
+        for (const param of ['signal','agent','project','session','search','since','until']) if (currentRoute.params.has(param)) q.set(param,currentRoute.params.get(param));
+        try {
+          const data = await api('/v1/signals/stats?' + q);
+          if (g !== generation) return;
+          renderSignalOverview(data);
+        } catch(e) {
+          if (g !== generation || e.name === 'AbortError') return;
+          if (e.status === 401) throw e;
+          $('signal-overview').innerHTML = empty('Signal dashboard unavailable','Your evidence list is still available below. Refresh to retry the full-history counts.');
+        }
+      }
       if (currentRoute.view === 'sources') {
         try { const health = await api('/v1/sources/health'); if (g !== generation) return; healthData = health; healthError = ''; healthLoadedAt = performance.now(); }
         catch { if (g !== generation) return; healthData = null; healthError = 'Collector reports could not be loaded. Refresh to retry; received activity does not establish connection health.'; }
@@ -464,7 +503,8 @@
     for (const [id,param] of [['search','search'],['agent-filter','agent'],['project-filter','project'],['signal-filter','signal']]) if ($(id).value.trim()) values[param] = $(id).value.trim();
     if (currentRoute.params.has('session')) values.session = currentRoute.params.get('session');
     const days = $('time-filter').value;
-    if (days) { values.days = days; values.since = new Date(Date.now() - Number(days) * 86400000).toISOString(); }
+    if (days === 'custom') { for(const key of ['since','until']) if(currentRoute.params.has(key)) values[key]=currentRoute.params.get(key); }
+    else if (days) { values.days = days; values.until = new Date().toISOString(); values.since = new Date(Date.now() - Number(days) * 86400000).toISOString(); }
     location.hash = link(currentRoute.view,values);
     if (location.hash === '#' + currentRoute.view + (currentRoute.params.size ? '?' + currentRoute.params : '')) load();
   }

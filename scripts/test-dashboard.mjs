@@ -89,6 +89,40 @@ test('empty workspace offers connection without claiming online sources',async()
   assert.doesNotMatch(p.el.get('overview-sources').innerHTML,/Online/);
 });
 
+const signalStats=()=>({as_of:'2026-10-28T00:00:00Z',scope:{signal:'blocked_handoff',project:'project<&>',search:'repair'},limits:{active_days:30,breakdowns:12},stats:{received_turns:250,matched_turns:126,undated_matches:1,other_day_matches:3,other_agent_matches:0,other_project_matches:0,by_day:[{key:'2026-10-27',received_turns:246,matched_turns:122}],by_agent:[{key:'codex',received_turns:250,matched_turns:126}],by_project:[{key:'project<&>',received_turns:250,matched_turns:126}]}});
+
+test('signal overview uses complete scoped server counts and keeps breakdown evidence filters',async()=>{
+  const p=await page({signedIn:true,records:[sample()],hash:'#signals?signal=blocked_handoff&project=project%3C%26%3E&search=repair&cursor=old',intercept:async path=>path.startsWith('/v1/signals/stats?')?{ok:true,status:200,json:async()=>signalStats()}:null});
+  const request=p.requests.find(r=>r.path.startsWith('/v1/signals/stats?'));
+  assert(request);assert(!request.path.includes('cursor='));
+  const q=new URL(request.path,'https://test.invalid').searchParams;assert.equal(q.get('project'),'project<&>');assert.equal(q.get('search'),'repair');
+  const html=p.el.get('signal-overview').innerHTML;
+  assert.match(html,/>126</);assert.match(html,/>250</);assert.match(html,/not classifier accuracy/);
+  assert.match(html,/project%3C%26%3E/);assert.match(html,/until=2026-10-28T00%3A00%3A00.000Z/);assert.doesNotMatch(html,/cursor=old|<script>/);
+  await p.route('#activity?signal=blocked_handoff&since=2026-10-27T00:00:00Z&until=2026-10-28T00:00:00Z');
+  assert(p.requests.some(r=>r.path.startsWith('/v1/turns?')&&r.path.includes('until=')));
+  assert.equal(p.el.get('time-filter').value,'custom');assert.equal(p.el.get('signal-overview').hidden,true);
+});
+
+test('an aggregate failure leaves evidence accessible and does not substitute page counts',async()=>{
+  const p=await page({signedIn:true,records:[{...sample(),signals:[{signal:'blocked_handoff',rule_version:1,severity:'warn',summary:'Blocked',evidence:[]}]}],hash:'#signals?signal=blocked_handoff',intercept:async path=>path.startsWith('/v1/signals/stats?')?{ok:false,status:503}:null});
+  assert.match(p.el.get('signal-overview').innerHTML,/dashboard unavailable/);assert.match(p.el.get('signal-results').innerHTML,/data-event="one"/);assert.equal(p.el.get('app-error').hidden,true);
+});
+
+test('late signal aggregates cannot repopulate a signed-out workspace',async()=>{
+  let finish;const pending=new Promise(resolve=>{finish=resolve;});
+  const p=await page({signedIn:true,hash:'#signals?signal=blocked_handoff',intercept:async path=>path.startsWith('/v1/signals/stats?')?pending:null});
+  await p.el.get('logout').onclick();finish({ok:true,status:200,json:async()=>signalStats()});await p.settle();
+  assert.equal(p.el.get('signal-overview').innerHTML,'');assert.equal(p.el.get('signal-overview').hidden,true);
+});
+
+test('unknown historical signals stay discoverable without pretending their rules can be edited',async()=>{
+  const p=await page({signedIn:true});p.summary.summary.signals.external_check=4;await p.route('#library');
+  p.el.get('library-kind').value='recorded';p.el.get('library-kind').onchange();
+  assert.match(p.el.get('signal-library').innerHTML,/external check/);assert.match(p.el.get('signal-library').innerHTML,/Definition unavailable/);assert.doesNotMatch(p.el.get('signal-library').innerHTML,/data-library-toggle/);
+  await p.route('#signals?signal=external_check');assert.match(p.el.get('signal-filter').innerHTML,/external_check/);
+});
+
 test('member steps reflect received activity and persisted review history, and clear at logout',async()=>{
   const empty=await page({signedIn:true,turns:0});
   assert.equal(empty.el.get('member-progress').textContent,'1 of 3 steps');

@@ -47,16 +47,46 @@ pub struct TurnFilter<'a> {
     pub session: Option<&'a str>,
     pub search: Option<&'a str>,
     pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
     pub before: Option<(Option<chrono::DateTime<chrono::Utc>>, &'a str)>,
     pub event: Option<&'a str>,
 }
 
-fn project(r: &TurnRecord) -> &str {
+pub(crate) fn project(r: &TurnRecord) -> &str {
     r.project
         .as_deref()
         .filter(|s| !s.is_empty())
         .or_else(|| (!r.cwd.is_empty()).then_some(r.cwd.as_str()))
         .unwrap_or("(none)")
+}
+
+pub(crate) fn matches_filter(r: &TurnRecord, f: &TurnFilter<'_>) -> bool {
+    f.agent.is_none_or(|a| r.agent == a)
+        && f.project.is_none_or(|p| project(r) == p)
+        && f.session.is_none_or(|s| r.session_id == s)
+        && f.event.is_none_or(|id| r.event_id == id)
+        && f.since
+            .is_none_or(|since| crate::pg::timestamp(&r.started_at).is_some_and(|at| at >= since))
+        && f.until
+            .is_none_or(|until| crate::pg::timestamp(&r.started_at).is_some_and(|at| at < until))
+        && f.before.is_none_or(|(at, id)| {
+            let time = crate::pg::timestamp(&r.started_at);
+            time < at || (time == at && r.event_id.as_str() > id)
+        })
+        && f.search.is_none_or(|query| {
+            let content = r.content.as_ref();
+            [
+                r.session_id.as_str(),
+                r.model.as_deref().unwrap_or(""),
+                content.map_or("", |c| c.input.as_str()),
+                content.map_or("", |c| c.output.as_str()),
+            ]
+            .join("\n")
+            .to_lowercase()
+            .contains(&query.to_lowercase())
+        })
+        && f.signal
+            .is_none_or(|signal| r.signals.iter().any(|h| h.signal == signal))
 }
 
 /// The configured backend.
@@ -175,7 +205,7 @@ pub struct JsonlStore {
     pub(crate) health_lock: Mutex<()>,
     settings_lock: Mutex<()>,
     pub(crate) root: PathBuf,
-    index: Mutex<HashMap<String, HashMap<String, TurnRecord>>>,
+    pub(crate) index: Mutex<HashMap<String, HashMap<String, TurnRecord>>>,
     capture_index: Mutex<HashMap<String, Vec<rroflow_core::capture::CaptureEvent>>>,
 }
 
@@ -333,39 +363,7 @@ impl JsonlStore {
             .get(devspace)
             .map(|m| {
                 m.values()
-                    .filter(|r| f.agent.is_none_or(|a| r.agent == a))
-                    .filter(|r| f.project.is_none_or(|p| project(r) == p))
-                    .filter(|r| f.session.is_none_or(|s| r.session_id == s))
-                    .filter(|r| f.event.is_none_or(|id| r.event_id == id))
-                    .filter(|r| {
-                        f.since.is_none_or(|since| {
-                            crate::pg::timestamp(&r.started_at).is_some_and(|at| at >= since)
-                        })
-                    })
-                    .filter(|r| {
-                        f.before.is_none_or(|(at, id)| {
-                            let time = crate::pg::timestamp(&r.started_at);
-                            time < at || (time == at && r.event_id.as_str() > id)
-                        })
-                    })
-                    .filter(|r| {
-                        f.search.is_none_or(|query| {
-                            let content = r.content.as_ref();
-                            [
-                                r.session_id.as_str(),
-                                r.model.as_deref().unwrap_or(""),
-                                content.map_or("", |c| c.input.as_str()),
-                                content.map_or("", |c| c.output.as_str()),
-                            ]
-                            .join("\n")
-                            .to_lowercase()
-                            .contains(&query.to_lowercase())
-                        })
-                    })
-                    .filter(|r| {
-                        f.signal
-                            .is_none_or(|s| r.signals.iter().any(|h| h.signal == s))
-                    })
+                    .filter(|r| matches_filter(r, f))
                     .cloned()
                     .collect()
             })
