@@ -435,6 +435,7 @@
       if (g !== generation) return;
       $('member-context').textContent = member.via === 'nomen' ? (member.name ? 'Signed in as ' + member.name : 'Signed in with your account') : 'Devspace key access';
       signedIn = true; $('login').hidden = true; $('app').hidden = false; $('key').value = '';
+      window.scrollTo(0,0); $('main-content').focus({preventScroll:true});
       $('skip-link').setAttribute('href','#main-content');
       try { if (key) sessionStorage.setItem('rroflow.key',key); } catch (_) {}
       await load();

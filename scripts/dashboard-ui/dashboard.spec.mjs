@@ -8,6 +8,7 @@ async function signIn(page,service) {
   await page.getByLabel('Devspace ingest key',{exact:true}).fill(service.key);
   await page.getByRole('button',{name:'Open devspace',exact:true}).click();
   await expect(page.locator('#app')).toBeVisible();await settled(page);
+  expect(await page.evaluate(()=>window.scrollY)).toBe(0);
 }
 async function settled(page){await expect(page.locator('#loading')).toBeHidden();await expect(page.locator('#app-error')).toBeHidden();}
 async function navigate(page,route){await page.evaluate(route=>{location.hash='#'+route;},route);await expect(page.locator(`[data-nav="${route}"]`)).toHaveAttribute('aria-current','page');await settled(page);}
