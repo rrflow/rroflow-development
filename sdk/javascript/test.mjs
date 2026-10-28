@@ -15,8 +15,9 @@ import { Capture, codexStream, claudeStream, grokStream } from './index.mjs';
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const suffix = process.platform === 'win32' ? '.exe' : '';
-const binary = resolve(root, 'target/debug/rroflow' + suffix);
-const ingest = resolve(root, 'target/debug/rroflow-ingest' + suffix);
+const binDir = process.env.RROFLOW_TEST_BIN_DIR || resolve(root, 'target/debug');
+const binary = resolve(binDir, 'rroflow' + suffix);
+const ingest = resolve(binDir, 'rroflow-ingest' + suffix);
 async function* events(items) { yield* items; }
 async function consume(stream) { const out=[]; for await (const e of stream) out.push(e); return out; }
 
@@ -49,6 +50,12 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   };
   const api = async (path, key='fixture-owner', init={}) => fetch(endpoint+path, { ...init, headers: { authorization:'Bearer '+key, 'content-type':'application/json' } });
   const make = (agent, content=false) => new Capture({ agent, sessionId:'fixture-session', devspace:'owner', spool:join(dir,agent), endpoint, executable:binary, content });
+  const waitForRetry = async spool => {
+    const state=JSON.parse((await exec(binary,['capture','status','--spool',spool])).stdout).retry;
+    const delay=Math.max(0,state.next_attempt_unix*1000-Date.now())+100;
+    assert(delay<12000,'fixture retry wait must be bounded');
+    await new Promise(r=>setTimeout(r,delay));
+  };
   // Record successfully while the ingest is completely offline.
   const codex=make('codex');
   const native=[{type:'thread.started',thread_id:'thread-1'},{type:'item.started',item:{id:'tool-1',type:'command_execution'}},{type:'item.completed',item:{id:'tool-1',type:'command_execution',exit_code:1}},{type:'future.event',detail:'new event retained'},{type:'turn.completed',usage:{input_tokens:25,cached_input_tokens:5,output_tokens:0}}];
@@ -58,6 +65,7 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   const pending=JSON.parse((await exec(binary,['capture','status','--spool',join(dir,'codex')])).stdout);
   assert.equal(pending.pending,native.length+2);
   await start();
+  await waitForRetry(join(dir,'codex'));
   await exec(binary,['capture','flush','--spool',join(dir,'codex')]);
   assert.equal(JSON.parse((await exec(binary,['capture','flush','--spool',join(dir,'codex')])).stdout).acknowledged,0);
 
@@ -102,6 +110,7 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   const next=make('codex');await next.record('call.started');await next.close({flush:false});
   await assert.rejects(exec(binary,['capture','flush','--spool',join(dir,'codex')],{env:{...process.env,RROFLOW_INGEST_KEY:'fixture-other'}}));
   assert.equal(JSON.parse((await exec(binary,['capture','status','--spool',join(dir,'codex')])).stdout).pending,1);
+  await waitForRetry(join(dir,'codex'));
   await exec(binary,['capture','flush','--spool',join(dir,'codex')]);
   const before=(await (await api('/v1/events?limit=1000')).json()).events.length;
   const stopped=new Promise(r=>server.once('close',r));server.kill();await stopped;await start();

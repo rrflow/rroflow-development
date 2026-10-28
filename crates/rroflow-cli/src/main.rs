@@ -27,6 +27,7 @@ mod doctor;
 mod otlp;
 mod record;
 mod redact;
+mod retry;
 mod sources;
 mod transcript;
 

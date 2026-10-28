@@ -1,6 +1,6 @@
 //! Source-resident session collection. Persist revisions before attempting auth or
 //! upload. A source is bound once; changing the signed-in account cannot redirect it.
-use crate::{account, capture, codex, record, redact::Redactor, transcript};
+use crate::{account, capture, codex, record, redact::Redactor, retry, transcript};
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use rroflow_core::source_health::{SCHEMA as HEALTH_SCHEMA, SourceReport};
@@ -351,7 +351,7 @@ impl Journal {
             json!({"source_id":self.binding.source_id,"devspace":self.binding.devspace,
             "endpoint":self.binding.endpoint,"claude_root":self.binding.claude_root,
             "codex_root":self.binding.codex_root,"content":self.binding.content,
-            "pending_revisions":pending,"journal_bytes":bytes,"distinct_turns":self.latest.len(),
+            "pending_revisions":pending,"journal_bytes":bytes,"distinct_turns":self.latest.len(),"retry":retry::read(&self.store)?,
             "pending_bytes":pending_bytes,"oldest_pending_at":oldest.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()),
             "note":"disk state only; not proof of source liveness. Acknowledged revisions are retained."}),
         )
@@ -433,6 +433,7 @@ impl Journal {
             .post(&format!("{}/v1/sources/health", self.binding.endpoint))
             .header("Authorization", &format!("Bearer {}", sender.token))
             .send_json(report)?;
+        retry::require_ok(&response)?;
         let receipt: Value = response.body_mut().read_json()?;
         ensure!(
             response.status().as_u16() == 200
@@ -466,11 +467,7 @@ impl Journal {
                 .post(&format!("{}/v1/turns", self.binding.endpoint))
                 .header("Authorization", &format!("Bearer {}", sender.token))
                 .send_json(json!({"turns":batch.turns}))?;
-            ensure!(
-                response.status().as_u16() == 200,
-                "upload HTTP {}; queue retained",
-                response.status()
-            );
+            retry::require_ok(&response)?;
             let receipt: Value = response.body_mut().read_json()?;
             ensure!(
                 receipt["devspace"].as_str() == Some(&self.binding.devspace)
@@ -518,17 +515,18 @@ fn client() -> ureq::Agent {
         .timeout_global(Some(Duration::from_secs(15)))
         .timeout_connect(Some(Duration::from_secs(5)))
         .max_redirects(0)
+        .http_status_as_error(false)
         .build()
         .into()
 }
 
 fn get(client: &ureq::Agent, sender: &account::Sender, path: &str) -> Result<Value> {
-    Ok(client
+    let mut response = client
         .get(&format!("{}{path}", capture::endpoint(&sender.base)?))
         .header("Authorization", &format!("Bearer {}", sender.token))
-        .call()?
-        .body_mut()
-        .read_json()?)
+        .call()?;
+    retry::require_ok(&response)?;
+    Ok(response.body_mut().read_json()?)
 }
 
 fn default_root(env: &str, hidden: &str, leaf: &str) -> Result<PathBuf> {
@@ -631,8 +629,11 @@ pub(crate) fn run(command: Command) -> Result<()> {
         Command::Flush { .. } => {
             let _lock = lock(&dir)?;
             let journal = Journal::open(&dir)?;
-            let sender = account::sender()?.context("sign-in unavailable; local queue retained")?;
-            let acknowledged = journal.deliver(&sender)?;
+            let acknowledged = retry::attempt(&dir, || {
+                let sender =
+                    account::sender()?.context("sign-in unavailable; local queue retained")?;
+                journal.deliver(&sender)
+            })?;
             println!(
                 "{}",
                 json!({"acknowledged_revisions":acknowledged,"state":journal.status()?})
@@ -657,7 +658,6 @@ pub(crate) fn run(command: Command) -> Result<()> {
             let mut journal = Journal::open(&dir)?;
             let mut cycle = 0u64;
             let mut retry_at = std::time::Instant::now();
-            let mut backoff = interval_secs;
             let mut settings_at = std::time::Instant::now();
             let mut health_at = std::time::Instant::now();
             let mut last_delivery_ok = None;
@@ -667,21 +667,26 @@ pub(crate) fn run(command: Command) -> Result<()> {
                 let mut upload_ok = true;
                 let mut health_ok = true;
                 if !offline && std::time::Instant::now() >= retry_at {
-                    let result = (|| -> Result<(usize, Option<String>)> {
+                    let result = retry::attempt(&dir, || -> Result<(usize, Option<String>)> {
                         let sender =
                             sender()?.context("sign-in unavailable; local queue retained")?;
                         let count = journal.deliver(&sender)?;
                         let settings_error = if std::time::Instant::now() >= settings_at {
                             settings_at = std::time::Instant::now() + Duration::from_secs(60);
-                            journal
-                                .refresh_settings(&sender)
-                                .err()
-                                .map(|e| format!("{e:#}"))
+                            match journal.refresh_settings(&sender) {
+                                Ok(()) => None,
+                                Err(error)
+                                    if error.downcast_ref::<retry::HttpFailure>().is_some() =>
+                                {
+                                    return Err(error);
+                                }
+                                Err(error) => Some(format!("{error:#}")),
+                            }
                         } else {
                             None
                         };
                         Ok((count, settings_error))
-                    })();
+                    });
                     match result {
                         Ok((count, settings_error)) => {
                             report["acknowledged_revisions"] = count.into();
@@ -690,19 +695,17 @@ pub(crate) fn run(command: Command) -> Result<()> {
                             if let Some(error) = settings_error {
                                 report["settings_error"] = error.into();
                             }
-                            backoff = interval_secs;
                         }
                         Err(error) => {
                             report["delivery_error"] = format!("{error:#}").into();
                             upload_ok = false;
-                            backoff = (backoff * 2).min(300);
                         }
                     }
-                    retry_at = std::time::Instant::now() + Duration::from_secs(backoff);
+                    retry_at = std::time::Instant::now() + Duration::from_secs(interval_secs);
                     last_delivery_ok = Some(upload_ok);
                 }
                 if !offline && std::time::Instant::now() >= health_at {
-                    let result = (|| -> Result<()> {
+                    let result = retry::attempt(&dir, || -> Result<()> {
                         let errors = report["errors"].as_array().map_or(0, Vec::len);
                         let health = journal.health_report(
                             u32::try_from(errors).unwrap_or(u32::MAX),
@@ -710,7 +713,7 @@ pub(crate) fn run(command: Command) -> Result<()> {
                         )?;
                         let sender = sender()?.context("sign-in unavailable for source health")?;
                         journal.send_health(&sender, &health)
-                    })();
+                    });
                     if let Err(error) = result {
                         health_ok = false;
                         report["health_error"] = format!("{error:#}").into();
@@ -729,7 +732,7 @@ pub(crate) fn run(command: Command) -> Result<()> {
                 } else if cycle.is_multiple_of(12) || !capture_ok || !upload_ok || !health_ok {
                     println!(
                         "{}",
-                        json!({"source_id":journal.binding.source_id,"capture_errors":report["errors"].as_array().map_or(0,Vec::len),"pending_revisions":report["state"]["pending_revisions"],"delivery_ok":last_delivery_ok,"health_ok":health_ok})
+                        json!({"source_id":journal.binding.source_id,"capture_errors":report["errors"].as_array().map_or(0,Vec::len),"pending_revisions":report["state"]["pending_revisions"],"delivery_ok":last_delivery_ok,"health_ok":health_ok,"retry":report["state"]["retry"]})
                     );
                 }
                 if once {
