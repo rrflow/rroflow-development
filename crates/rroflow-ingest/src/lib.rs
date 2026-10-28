@@ -605,6 +605,22 @@ async fn get_summary(
     })))
 }
 
+/// Static public product page; no third-party scripts or client-side provider credentials.
+async fn public_site() -> impl IntoResponse {
+    (
+        [
+            ("content-type", "text/html; charset=utf-8"),
+            (
+                "content-security-policy",
+                "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            ),
+            ("x-content-type-options", "nosniff"),
+            ("referrer-policy", "no-referrer"),
+        ],
+        include_str!("public.html"),
+    )
+}
+
 /// Same-origin dashboard assets; no third-party scripts or client-side provider credentials.
 async fn dashboard() -> impl IntoResponse {
     (
@@ -645,7 +661,7 @@ async fn get_whoami(
     Ok(Json(st.caller(&headers).await?))
 }
 
-/// The HTTP surface: `GET /` (dashboard), `POST|GET /v1/turns`, `GET /v1/summary`,
+/// The HTTP surface: `GET /` (public), `GET /app` (dashboard), `POST|GET /v1/turns`, `GET /v1/summary`,
 /// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /v1/whoami`, `GET /healthz`.
 pub fn router(st: AppState, max_body_bytes: usize) -> Router {
     Router::new()
@@ -671,7 +687,33 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(ready))
         .route("/build-info", get(|| async { Json(build_info()) }))
-        .route("/", get(dashboard))
+        .route("/", get(public_site))
+        .route("/app", get(dashboard))
+        .route("/app/", get(dashboard))
+        .route(
+            "/assets/public.css",
+            get(|| async {
+                (
+                    [
+                        ("content-type", "text/css; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                    include_str!("public.css"),
+                )
+            }),
+        )
+        .route(
+            "/assets/public.js",
+            get(|| async {
+                (
+                    [
+                        ("content-type", "text/javascript; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                    include_str!("public.js"),
+                )
+            }),
+        )
         .route(
             "/assets/dashboard.css",
             get(|| async {

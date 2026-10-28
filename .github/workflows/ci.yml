@@ -30,6 +30,13 @@ jobs:
         run: bash deploy/tx-infra-prod/test-preflight.sh
       - name: Managed release activation and rollback (isolated fixtures)
         run: sudo env "PATH=$PATH" bash deploy/tx-infra-prod/test-release.sh
+      - name: Node for the public site build
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Verify public site embedded assets
+        working-directory: site
+        run: npm ci --ignore-scripts && npm run verify
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy

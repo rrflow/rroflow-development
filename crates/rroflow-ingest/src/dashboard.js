@@ -106,7 +106,7 @@
     metadata = undefined; records = []; revisions = {}; reviews = []; journal = []; currentTurn = null; research = [];
     for (const id of ['research-list','research-title','research-path','research-text','research-count','research-categories']) $(id).replaceChildren();
     pendingReviews.clear(); previousPages.clear();
-    for (const id of ['workspace-name','overview-stats','overview-chart','overview-recent','overview-signals','overview-sources','overview-projects','source-cards','sdk-events','learning-reviews','signal-settings','activity-results','signal-results','session-scope','inspector-summary','pane-conversation','pane-tools','pane-signals','pane-details','review-status','settings-status','results-count','page-label','updated']) $(id).replaceChildren();
+    for (const id of ['workspace-name','member-context','member-progress','member-steps','overview-stats','overview-chart','overview-recent','overview-signals','overview-sources','overview-projects','source-cards','sdk-events','learning-reviews','signal-settings','activity-results','signal-results','session-scope','inspector-summary','pane-conversation','pane-tools','pane-signals','pane-details','review-status','settings-status','results-count','page-label','updated']) $(id).replaceChildren();
     for (const id of ['agent-filter','project-filter','signal-filter']) $(id).replaceChildren();
     $('search').value = ''; $('key').value = ''; $('inspector').close(); $('setup-dialog').close(); $('research-dialog').close();
     $('main-content').setAttribute('aria-busy','false');
@@ -385,7 +385,7 @@
         reviews = r.status === 'fulfilled' ? r.value.reviews : []; reviewError = r.status === 'rejected' ? 'Review history could not be loaded. Refresh to retry.' : '';
         journal = j.status === 'fulfilled' ? j.value.events : []; journalError = j.status === 'rejected' ? 'The event journal could not be loaded. Refresh to retry.' : '';
       }
-      if (currentRoute.view === 'overview') renderOverview();
+      if (currentRoute.view === 'overview') { renderOverview(); renderMemberProgress(); }
       if (['activity','signals'].includes(currentRoute.view)) renderExplorer();
       if (currentRoute.view === 'sources') {
         try { const health = await api('/v1/sources/health'); if (g !== generation) return; healthData = health; healthError = ''; healthLoadedAt = performance.now(); }
@@ -414,13 +414,26 @@
       else showError(e.message + ' Previously displayed data may be out of date.');
     } finally { if (g === generation) { $('loading').hidden = true; $('main-content').setAttribute('aria-busy','false'); } }
   }
+  function renderMemberProgress() {
+    const received = metadata.summary.turns > 0;
+    $('member-setup').open = !received;
+    const reviewed = !reviewError && reviews.length > 0;
+    const steps = [
+      {done:true,title:'Open your workspace',detail:'Access verified for this workspace.',href:'#settings',action:'Workspace settings'},
+      {done:received,title:'Receive your first turn',detail:received ? 'Captured activity has reached this workspace.' : 'Connect a source, then run your AI and check for its activity.',href:received ? '#activity' : '#sources',action:received ? 'See activity' : 'Connect a source'},
+      {done:reviewed,title:'Review a finding',detail:reviewError ? 'Review history is unavailable. Refresh to check progress.' : reviewed ? 'A verdict is saved against captured evidence.' : 'When a signal matches, inspect the evidence and save your verdict.',href:'#signals',action:'Explore findings'}
+    ];
+    $('member-progress').textContent = steps.filter(s => s.done).length + ' of 3 steps';
+    $('member-steps').innerHTML = steps.map((s,i) => '<li><span class="member-step-status" aria-label="' + (s.done ? 'Complete' : 'Not yet confirmed') + '">' + (s.done ? '&#10003;' : i+1) + '</span><div><h3>' + s.title + '</h3><p>' + s.detail + '</p><a href="' + s.href + '">' + s.action + ' &#8594;</a></div></li>').join('');
+  }
   async function openWorkspace() {
     const g = ++generation;
     controller?.abort(); controller = new AbortController();
     $('login-error').textContent = '';
     try {
-      await api('/v1/whoami');
+      const member = await api('/v1/whoami');
       if (g !== generation) return;
+      $('member-context').textContent = member.via === 'nomen' ? (member.name ? 'Signed in as ' + member.name : 'Signed in with your account') : 'Devspace key access';
       signedIn = true; $('login').hidden = true; $('app').hidden = false; $('key').value = '';
       $('skip-link').setAttribute('href','#main-content');
       try { if (key) sessionStorage.setItem('rroflow.key',key); } catch (_) {}
@@ -532,7 +545,7 @@
     }
     if (button.id === 'more-tools' && currentTurn) { toolLimit += 50; renderTools(); }
     if (button.id === 'copy-turn' && currentTurn) {
-      try { await navigator.clipboard.writeText(location.origin + '/' + link('activity',{event:currentTurn.event_id})); toast('Turn link copied. It requires access to this workspace.'); }
+      try { await navigator.clipboard.writeText(location.origin + '/app' + link('activity',{event:currentTurn.event_id})); toast('Turn link copied. It requires access to this workspace.'); }
       catch (_) { toast('The browser could not copy the link.'); }
     }
   });
@@ -568,8 +581,9 @@
       const config = await response.json();
       if (g !== generation) return;
       $('signin').hidden = !config.enabled;
-      $('signin-status').textContent = config.enabled ? 'Open your workspace with your Shippin account.' : 'Account sign-in is not enabled on this server yet. A devspace key can open this preview.';
-      if (new URLSearchParams(location.search).has('signin')) { history.replaceState(null,'','/' + location.hash); $('login-error').textContent = 'Sign-in could not finish. Please try again.'; return; }
+      if (config.enabled && config.member_origin) $('signin').href = config.member_origin + '/auth/login';
+      $('signin-status').textContent = config.enabled ? 'Open your workspace with your Shippin account.' : 'Account sign-in is not enabled on this server yet. Return to the public page to learn about RROFLOW, or use an existing devspace key below.';
+      if (new URLSearchParams(location.search).has('signin')) { history.replaceState(null,'','/app' + location.hash); $('login-error').textContent = 'Sign-in could not finish. Please try again.'; return; }
       const who = await fetch('/v1/whoami',{credentials:'same-origin'});
       if (g !== generation) return;
       if (who.ok) { key = ''; try { sessionStorage.removeItem('rroflow.key'); } catch (_) {} await openWorkspace(); }

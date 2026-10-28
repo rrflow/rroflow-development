@@ -45,7 +45,8 @@ try {
   const t={schema:'rroflow.turn/v1',event_id:'release-smoke',agent:'fixture',agent_version:'0',provider:'fixture',model:null,session_id:'release-smoke',turn_key:'1',subagent:null,prompt_author:null,started_at:'2026-10-27T00:00:00Z',ended_at:'2026-10-27T00:00:01Z',cwd:'',git_branch:'',project:'fixture',usage:{input_tokens:null,output_tokens:null,cache_read_tokens:null,cache_write_tokens:null,input_includes_cache:false},termination:'completed',compacted:false,tools:[],tools_unfinished:0,content:null,signals:[],collector:'release-artifact-test'};
   assert.equal((await fetch(base+'/v1/turns',{method:'POST',headers,body:JSON.stringify({turns:[t]})})).status,200);
   const listed=await (await fetch(base+'/v1/turns?event=release-smoke',{headers})).json();assert.equal(listed.turns[0].event_id,t.event_id);
-  const page=await (await fetch(base+'/')).text();assert(page.includes('/assets/dashboard.js'));
+  const publicPage=await (await fetch(base+'/')).text();assert(publicPage.includes('/assets/public.js'));
+  const page=await (await fetch(base+'/app')).text();assert(page.includes('/assets/dashboard.js'));
   const notes=await (await fetch(base+'/assets/research.json',{headers})).json();assert.equal(notes.filter(n=>n.category==='Raindrop').length,8);
   child.kill('SIGTERM');
   let timer;

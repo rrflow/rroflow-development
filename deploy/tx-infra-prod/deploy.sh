@@ -161,7 +161,8 @@ systemctl is-active rroflow-ingest
 echo "== self-test (selftest devspace; keys not printed)"
 base="http://$LISTEN"
 curl -sSf "$base/healthz"; echo
-curl -sSf -o /dev/null -w 'dashboard %{http_code}\n' "$base/"
+curl -sSf -o /dev/null -w 'public %{http_code}\n' "$base/"
+curl -sSf -o /dev/null -w 'dashboard %{http_code}\n' "$base/app"
 curl -sSf "$base/v1/signals" | head -c 160; echo
 st=$(cat /etc/rroflow/keys/selftest.key)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)

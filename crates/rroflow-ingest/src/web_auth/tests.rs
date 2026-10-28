@@ -6,6 +6,22 @@ use tower::ServiceExt;
 
 const ORIGIN: &str = "https://app.example.test";
 
+#[tokio::test]
+async fn public_config_exposes_only_canonical_member_entry() {
+    let (app, _, _dir) = app().await;
+    let response = app
+        .oneshot(Request::get("/auth/config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        config,
+        serde_json::json!({"enabled":true,"member_origin":ORIGIN})
+    );
+}
+
 async fn app() -> (Router, Arc<WebAuth>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let cfg = Config {
@@ -119,14 +135,14 @@ async fn login_binds_state_and_callback_to_the_browser() {
         .oneshot(Request::get(&path).body(Body::empty()).unwrap())
         .await
         .unwrap();
-    assert_eq!(r.headers()["location"], "/?signin=failed");
+    assert_eq!(r.headers()["location"], "/app?signin=failed");
     assert!(web.pending.lock().await.contains_key(state));
     // A provider refusal consumes the correctly bound transaction exactly once.
     let r = app
         .oneshot(request("GET", &path, &cookie).body(Body::empty()).unwrap())
         .await
         .unwrap();
-    assert_eq!(r.headers()["location"], "/?signin=failed");
+    assert_eq!(r.headers()["location"], "/app?signin=failed");
     assert!(!web.pending.lock().await.contains_key(state));
     assert!(web.sessions.lock().await.is_empty());
 }
@@ -294,7 +310,7 @@ async fn code_exchange_is_single_use_and_never_returns_tokens_to_browser() {
         )
         .await
         .unwrap();
-    assert_eq!(r.headers()["location"], "/");
+    assert_eq!(r.headers()["location"], "/app");
     let cookies: Vec<_> = r
         .headers()
         .get_all("set-cookie")
@@ -327,7 +343,7 @@ async fn code_exchange_is_single_use_and_never_returns_tokens_to_browser() {
         )
         .await
         .unwrap();
-    assert_eq!(replay.headers()["location"], "/?signin=failed");
+    assert_eq!(replay.headers()["location"], "/app?signin=failed");
     assert_eq!(web.sessions.lock().await.len(), 1);
     server.abort();
 }

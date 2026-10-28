@@ -3,7 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import {startFixture} from './service.mjs';
 const test=base.extend({service:[async({},use)=>{const service=await startFixture();try{await use(service);}finally{await service.close();}},{scope:'worker'}]});
 async function signIn(page,service) {
-  await page.goto(service.base);
+  await page.goto(service.base+'/app');
   await page.getByText('Advanced: use a devspace key',{exact:true}).click();
   await page.getByLabel('Devspace ingest key',{exact:true}).fill(service.key);
   await page.getByRole('button',{name:'Open devspace',exact:true}).click();
@@ -21,10 +21,40 @@ async function screenshot(page,info,name){
 }
 test.beforeEach(async({page,service})=>{await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());});
 
+test('public entry explains coverage and opens the separate workspace',async({page,service},info)=>{
+  const privateRequests=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/v1/'))privateRequests.push(r.url());});
+  await page.goto(service.base);await expect(page.locator('#member-status')).toContainText('not activated');
+  await expect(page.getByRole('heading',{level:1})).toContainText('See the whole story');
+  await expect(page.locator('#membership')).toContainText('billing are not active');
+  expect(privateRequests).toEqual([]);
+  await reflow(page);await accessible(page);await screenshot(page,info,'public-entry');
+  await page.locator('#coverage').scrollIntoViewIfNeeded();await screenshot(page,info,'public-connections');
+  await page.locator('#membership').scrollIntoViewIfNeeded();await screenshot(page,info,'public-membership');
+  await page.locator('.public-header [data-member-link]').click();await expect(page).toHaveURL(service.base+'/app');
+  await expect(page.locator('#login')).toBeVisible();await expect(page.locator('#app')).toBeHidden();
+  expect((await fetch(service.base+'/v1/summary')).status).toBe(401);
+});
+
+test('public member links follow the server-configured canonical origin',async({page,service})=>{
+  // Configuration fixture, not a claim of live identity-provider availability.
+  await page.route('**/auth/config',r=>r.fulfill({json:{enabled:true,member_origin:'https://members.example.test'}}));
+  await page.goto(service.base);await expect(page.locator('#member-status')).toContainText('identity is verified');
+  await expect(page.locator('.public-header [data-member-link]')).toHaveAttribute('href','https://members.example.test/app');
+  await expect(page.locator('#coverage [data-member-link]')).toHaveAttribute('href','https://members.example.test/app#sources');
+  await page.goto(service.base+'/app');await expect(page.locator('#signin')).toHaveAttribute('href','https://members.example.test/auth/login');
+});
+
+test('legacy activity bookmarks keep their evidence filters',async({page,service})=>{
+  await page.goto(service.base+'/#activity?event=fixture-000');
+  await expect(page).toHaveURL(service.base+'/app#activity?event=fixture-000');
+  await expect(page.locator('#login')).toBeVisible();
+});
+
 test('sign-in and overview are readable at this viewport',async({page,service},info)=>{
-  await page.goto(service.base);await expect(page.locator('#signin-status')).not.toContainText('Checking');await reflow(page);await accessible(page);await screenshot(page,info,'sign-in');
+  await page.goto(service.base+'/app');await expect(page.locator('#signin-status')).not.toContainText('Checking');await reflow(page);await accessible(page);await screenshot(page,info,'sign-in');
   await page.locator('#skip-link').focus();await page.keyboard.press('Enter');await expect(page.locator('#login')).toBeFocused();
   await signIn(page,service);await expect(page.locator('#overview-stats')).toContainText('105');await expect(page.locator('#workspace-name')).toHaveText('ui_fixture');
+  await expect(page.locator('#member-context')).toHaveText('Devspace key access');await expect(page.locator('#member-progress')).toHaveText('2 of 3 steps');
   await expect(page.locator('#overview-sources')).toContainText('Claude Code');await expect(page.locator('#overview-sources')).toContainText('Codex');
   await reflow(page);await accessible(page);await screenshot(page,info,'overview');
 });

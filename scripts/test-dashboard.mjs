@@ -88,6 +88,28 @@ test('empty workspace offers connection without claiming online sources',async()
   assert.equal((p.el.get('overview-sources').innerHTML.match(/No recorded activity/g)||[]).length,3);
   assert.doesNotMatch(p.el.get('overview-sources').innerHTML,/Online/);
 });
+
+test('member steps reflect received activity and persisted review history, and clear at logout',async()=>{
+  const empty=await page({signedIn:true,turns:0});
+  assert.equal(empty.el.get('member-progress').textContent,'1 of 3 steps');
+  assert.equal(empty.el.get('member-context').textContent,'Signed in with your account');
+  await empty.click({setupDone:''});
+  assert.equal(empty.el.get('member-progress').textContent,'1 of 3 steps');
+  const received=await page({signedIn:true});assert.equal(received.el.get('member-progress').textContent,'2 of 3 steps');
+  const reviewed=await page({signedIn:true,reviewRows:[{request:{event_id:'one',verdict:'match'}}]});
+  assert.equal(reviewed.el.get('member-progress').textContent,'3 of 3 steps');
+  await reviewed.el.get('logout').onclick();
+  for(const id of ['member-context','member-progress','member-steps'])assert.equal(reviewed.el.get(id).textContent,'');
+  assert.equal(reviewed.el.get('member-steps').innerHTML,'');
+});
+
+test('unavailable reviews cannot complete onboarding; member names are text only',async()=>{
+  const p=await page({signedIn:true,intercept:async path=>path==='/v1/reviews'?{ok:false,status:503}:path==='/v1/whoami'?{ok:true,status:200,json:async()=>({devspace:'mine',via:'nomen',name:'<img src=x onerror=bad()>'})}:null});
+  assert.equal(p.el.get('member-progress').textContent,'2 of 3 steps');
+  assert.match(p.el.get('member-steps').innerHTML,/history is unavailable/);
+  assert.equal(p.el.get('member-context').textContent,'Signed in as <img src=x onerror=bad()>');
+  assert.equal(p.el.get('member-context').innerHTML,'');
+});
 test('turn inspection escapes prompt, response and tool payloads, preserving missing content',async()=>{
   const t={...sample(),content:{input:'Inspect <script>bad()</script>',output:'<img src=x onerror=bad()>'},tools:[{id:'tool',name:'exec',status:'error',input:'<unsafe>',output:'<output>'}]};
   const p=await page({signedIn:true,records:[t,{...sample('two'),content:null}]});await p.click({event:'one'});
