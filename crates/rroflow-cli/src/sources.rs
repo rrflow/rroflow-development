@@ -3,6 +3,7 @@
 use crate::{account, capture, codex, record, redact::Redactor, transcript};
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
+use rroflow_core::source_health::{SCHEMA as HEALTH_SCHEMA, SourceReport};
 use rroflow_core::{TurnRecord, signals::SignalConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -314,10 +315,17 @@ impl Journal {
     fn status(&self) -> Result<Value> {
         let mut pending = 0;
         let mut bytes = 0;
+        let mut pending_bytes = 0;
+        let mut oldest: Option<SystemTime> = None;
         for path in batch_paths(&self.store)? {
-            bytes += fs::metadata(&path)?.len();
+            let metadata = fs::metadata(&path)?;
+            bytes += metadata.len();
             if !path.with_extension("acked").exists() {
                 pending += self.read_batch(&path)?.turns.len();
+                pending_bytes += metadata.len();
+                if let Ok(time) = metadata.modified() {
+                    oldest = Some(oldest.map_or(time, |old| old.min(time)));
+                }
             }
         }
         Ok(
@@ -325,8 +333,95 @@ impl Journal {
             "endpoint":self.binding.endpoint,"claude_root":self.binding.claude_root,
             "codex_root":self.binding.codex_root,"content":self.binding.content,
             "pending_revisions":pending,"journal_bytes":bytes,"distinct_turns":self.latest.len(),
+            "pending_bytes":pending_bytes,"oldest_pending_at":oldest.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()),
             "note":"disk state only; not proof of source liveness. Acknowledged revisions are retained."}),
         )
+    }
+
+    /// Persist a monotonic sequence before any request. Caller holds the source lock.
+    fn health_report(
+        &self,
+        capture_errors: u32,
+        delivery_ok: Option<bool>,
+    ) -> Result<SourceReport> {
+        use std::io::Write;
+        let path = self.store.join("health.json");
+        let previous = match fs::symlink_metadata(&path) {
+            Ok(meta) => {
+                ensure!(
+                    meta.is_file() && !meta.file_type().is_symlink(),
+                    "health state must be a regular file"
+                );
+                let old: SourceReport = serde_json::from_slice(&fs::read(&path)?)?;
+                old.validate().map_err(anyhow::Error::msg)?;
+                ensure!(
+                    old.source_id == self.binding.source_id,
+                    "health state belongs to another source"
+                );
+                old.sequence
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(e.into()),
+        };
+        let state = self.status()?;
+        let report = SourceReport {
+            schema: HEALTH_SCHEMA.into(),
+            source_id: self.binding.source_id.clone(),
+            sequence: previous + 1,
+            observed_at: chrono::Utc::now().to_rfc3339(),
+            collector_version: env!("CARGO_PKG_VERSION").into(),
+            pending_revisions: state["pending_revisions"]
+                .as_u64()
+                .context("pending count")?,
+            pending_bytes: state["pending_bytes"].as_u64().context("pending bytes")?,
+            journal_bytes: state["journal_bytes"].as_u64().context("journal bytes")?,
+            oldest_pending_at: state["oldest_pending_at"].as_str().map(str::to_owned),
+            capture_errors,
+            delivery_ok,
+            signal_settings_revision: self.binding.signals.revision,
+        };
+        report.validate().map_err(anyhow::Error::msg)?;
+        let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&tmp)?;
+        file.write_all(&serde_json::to_vec(&report)?)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(tmp, path)?;
+        #[cfg(unix)]
+        fs::File::open(&self.store)?.sync_all()?;
+        Ok(report)
+    }
+
+    fn send_health(&self, sender: &account::Sender, report: &SourceReport) -> Result<()> {
+        ensure!(
+            capture::endpoint(&sender.base)? == self.binding.endpoint,
+            "source health endpoint changed"
+        );
+        let client = client();
+        let who = get(&client, sender, "/v1/whoami")?;
+        ensure!(
+            who["devspace"].as_str() == Some(&self.binding.devspace),
+            "source health belongs to another devspace"
+        );
+        let mut response = client
+            .post(&format!("{}/v1/sources/health", self.binding.endpoint))
+            .header("Authorization", &format!("Bearer {}", sender.token))
+            .send_json(report)?;
+        let receipt: Value = response.body_mut().read_json()?;
+        ensure!(
+            response.status().as_u16() == 200
+                && receipt["devspace"].as_str() == Some(&self.binding.devspace)
+                && receipt["observation"]["report"] == serde_json::to_value(report)?,
+            "source health receipt invalid"
+        );
+        Ok(())
     }
 
     fn deliver(&self, sender: &account::Sender) -> Result<usize> {
@@ -529,10 +624,13 @@ pub(crate) fn run(command: Command) -> Result<()> {
             let mut retry_at = std::time::Instant::now();
             let mut backoff = interval_secs;
             let mut settings_at = std::time::Instant::now();
+            let mut health_at = std::time::Instant::now();
+            let mut last_delivery_ok = None;
             loop {
                 let mut report = journal.scan(cycle.is_multiple_of(60))?;
                 let capture_ok = report["errors"].as_array().is_some_and(|a| a.is_empty());
                 let mut upload_ok = true;
+                let mut health_ok = true;
                 if !offline && std::time::Instant::now() >= retry_at {
                     let result = (|| -> Result<(usize, Option<String>)> {
                         let sender = account::sender()?
@@ -566,6 +664,24 @@ pub(crate) fn run(command: Command) -> Result<()> {
                         }
                     }
                     retry_at = std::time::Instant::now() + Duration::from_secs(backoff);
+                    last_delivery_ok = Some(upload_ok);
+                }
+                if !offline && std::time::Instant::now() >= health_at {
+                    let result = (|| -> Result<()> {
+                        let errors = report["errors"].as_array().map_or(0, Vec::len);
+                        let health = journal.health_report(
+                            u32::try_from(errors).unwrap_or(u32::MAX),
+                            last_delivery_ok,
+                        )?;
+                        let sender =
+                            account::sender()?.context("sign-in unavailable for source health")?;
+                        journal.send_health(&sender, &health)
+                    })();
+                    if let Err(error) = result {
+                        health_ok = false;
+                        report["health_error"] = format!("{error:#}").into();
+                    }
+                    health_at = std::time::Instant::now() + Duration::from_secs(30);
                 }
                 report["delivery"] = if offline {
                     "disabled"
@@ -577,8 +693,8 @@ pub(crate) fn run(command: Command) -> Result<()> {
                 println!("{report}");
                 if once {
                     ensure!(
-                        capture_ok && upload_ok,
-                        "collection incomplete; inspect reported errors; queued data retained"
+                        capture_ok && upload_ok && health_ok,
+                        "capture, delivery or source reporting incomplete; inspect reported errors; queued data retained"
                     );
                     return Ok(());
                 }
@@ -594,6 +710,42 @@ pub(crate) fn run(command: Command) -> Result<()> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn health_sequences_survive_restart_without_changing_capture_or_offline_behavior() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = setup(dir.path(), "http://127.0.0.1:1");
+        claude(&journal.binding.claude_root, 1);
+        journal.scan(true).unwrap();
+        let first = journal.health_report(2, Some(false)).unwrap();
+        assert_eq!(first.sequence, 1);
+        assert_eq!(first.pending_revisions, 1);
+        assert!(first.pending_bytes > 0);
+        assert_eq!(first.pending_bytes, first.journal_bytes);
+        assert!(first.oldest_pending_at.is_some());
+        let text = serde_json::to_string(&first).unwrap();
+        assert!(
+            !text.contains("claude_root") && !text.contains("endpoint") && !text.contains("token")
+        );
+        drop(journal);
+        run(Command::Run {
+            store: Some(dir.path().into()),
+            interval_secs: 1,
+            once: true,
+            offline: true,
+        })
+        .unwrap();
+        let journal = Journal::open(dir.path()).unwrap();
+        let next = journal.health_report(0, None).unwrap();
+        assert_eq!(
+            next.sequence, 2,
+            "offline capture sends no heartbeat and consumes no report sequence"
+        );
+        assert_eq!(journal.status().unwrap()["pending_revisions"], 1);
+        fs::write(dir.path().join("health.json"), b"partial").unwrap();
+        assert!(journal.health_report(0, Some(true)).is_err());
+        assert_eq!(journal.status().unwrap()["pending_revisions"], 1);
+    }
 
     fn setup(root: &Path, endpoint: &str) -> Journal {
         let binding = Binding {
@@ -837,6 +989,7 @@ mod tests {
             wrong_account: bool,
             bad_receipt: bool,
             calls: usize,
+            health_calls: usize,
             turns: BTreeMap<String, Value>,
         }
         type Shared = Arc<Mutex<Server>>;
@@ -856,12 +1009,20 @@ mod tests {
                 json!({"devspace":"owner", "accepted":if state.bad_receipt {0} else {turns.len()}}),
             )
         }
+        async fn health(State(s): State<Shared>, Json(body): Json<Value>) -> Json<Value> {
+            let mut state = s.lock().unwrap();
+            state.health_calls += 1;
+            Json(
+                json!({"devspace":if state.bad_receipt {"other"} else {"owner"},"observation":{"report":body}}),
+            )
+        }
         let state = Shared::default();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let app = Router::new()
             .route("/v1/whoami", get(who))
             .route("/v1/turns", post(upload))
+            .route("/v1/sources/health", post(health))
             .with_state(state.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
@@ -874,6 +1035,9 @@ mod tests {
             via: "key".into(),
         };
         state.lock().unwrap().wrong_account = true;
+        let report = journal.health_report(1, Some(false)).unwrap();
+        assert!(journal.send_health(&sender, &report).is_err());
+        assert_eq!(state.lock().unwrap().health_calls, 0);
         assert!(journal.deliver(&sender).is_err());
         assert_eq!(state.lock().unwrap().calls, 0);
         {
@@ -892,6 +1056,19 @@ mod tests {
         assert_eq!(journal.status().unwrap()["pending_revisions"], 0);
         assert_eq!(state.lock().unwrap().turns.len(), 1);
         assert_eq!(state.lock().unwrap().calls, 2);
+        let report = journal.health_report(0, Some(true)).unwrap();
+        assert_eq!(report.pending_revisions, 0);
+        assert_eq!(report.pending_bytes, 0);
+        assert!(report.oldest_pending_at.is_none());
+        assert!(report.journal_bytes > 0);
+        journal.send_health(&sender, &report).unwrap();
+        state.lock().unwrap().bad_receipt = true;
+        assert!(journal.send_health(&sender, &report).is_err());
+        assert_eq!(
+            journal.status().unwrap()["pending_revisions"],
+            0,
+            "a failed health receipt cannot undo acknowledged turns"
+        );
         server.abort();
     }
 }

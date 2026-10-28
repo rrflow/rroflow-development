@@ -172,6 +172,7 @@ pub(crate) fn last_per_event(recs: &[TurnRecord]) -> Vec<&TurnRecord> {
 /// The last line for an `event_id` wins, so a re-send replaces the earlier record. Signal
 /// settings live beside it in `signal_settings.json`.
 pub struct JsonlStore {
+    pub(crate) health_lock: Mutex<()>,
     settings_lock: Mutex<()>,
     pub(crate) root: PathBuf,
     index: Mutex<HashMap<String, HashMap<String, TurnRecord>>>,
@@ -296,6 +297,7 @@ impl JsonlStore {
             }
         }
         Ok(Self {
+            health_lock: Mutex::new(()),
             settings_lock: Mutex::new(()),
             root,
             index: Mutex::new(index),

@@ -46,12 +46,13 @@ async function page({signedIn=false,enabled=true,turns=2,previousKey=false,recor
     else if (path.startsWith('/v1/turns')) { const q=new URL(path,'https://test.invalid').searchParams; data={turns:q.get('event') ? records.filter(t=>t.event_id===q.get('event')) : records,revisions:Object.fromEntries(records.map(t=>[t.event_id,'digest-'+t.event_id])),next_cursor:records.length ? 'older' : null}; }
     else if (path.startsWith('/v1/reviews')) data={reviews:reviewRows};
     else if (path.startsWith('/v1/events')) data={events:[]};
+    else if (path === '/v1/sources/health') data={sources:[],as_of:new Date().toISOString(),recent_for_seconds:120};
     else if (path === '/v1/signals/settings') data={settings:JSON.parse(init.body)};
     else if (path === '/assets/research.json') data=JSON.parse(readFileSync(new URL('../crates/rroflow-ingest/src/research.json',import.meta.url),'utf8'));
     return {ok:status<400,status,json:async()=>data};
   };
   const document={getElementById:id=>elements.get(id),querySelectorAll,documentElement:{dataset:{}},addEventListener:(name,fn)=>{documentEvents[name]=fn;}};
-  runInNewContext(script,{document,fetch,URLSearchParams,location,history:{replaceState(){}},window:{scrollTo(){},addEventListener:(name,fn)=>{windowEvents[name]=fn;},matchMedia:()=>({matches:false,addEventListener(){}})},navigator:{clipboard:{writeText:async()=>{}}},AbortController,crypto:{randomUUID:()=> 'test-uuid'},setTimeout:()=>0,clearTimeout(){},
+  runInNewContext(script,{performance:{now:()=>0},document,fetch,URLSearchParams,location,history:{replaceState(){}},window:{scrollTo(){},addEventListener:(name,fn)=>{windowEvents[name]=fn;},matchMedia:()=>({matches:false,addEventListener(){}})},navigator:{clipboard:{writeText:async()=>{}}},AbortController,crypto:{randomUUID:()=> 'test-uuid'},setTimeout:()=>0,clearTimeout(){},
     sessionStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},localStorage:{getItem:()=>null,setItem(){}}});
   await settle(); await settle();
   return {el:elements,requests,storage,location,document,summary,async route(hash){location.hash=hash;await windowEvents.hashchange();},async click(dataset,id=''){const n=node(id);n.dataset=dataset;await documentEvents.click({target:n});},settle};
@@ -165,4 +166,28 @@ test('dashboard assets are external and tab panels have explicit accessible rela
   assert.doesNotMatch(html,/<style>|<script>/);assert.match(html,/src="\/assets\/dashboard.js"/);
   for(const tab of ['conversation','tools','signals','details']) {assert.match(html,new RegExp('aria-controls="pane-'+tab+'"'));assert.match(html,new RegExp('aria-labelledby="tab-'+tab+'"'));}
   assert.match(html,/id="skip-link" class="skip-link" href="#login"/);assert.match(html,/aria-label="Main navigation"/);
+});
+
+
+test('source reports separate stale receipt, queued work and unavailable health from activity',async()=>{
+  const report={source_id:'00000000-0000-4000-8000-000000000001',sequence:3,observed_at:'2099-01-01T00:00:00Z',collector_version:'0.3.0',pending_revisions:4,pending_bytes:4096,journal_bytes:8192,oldest_pending_at:null,capture_errors:2,delivery_ok:false,signal_settings_revision:1};
+  const p=await page({signedIn:true,hash:'#sources',intercept:async path=>path==='/v1/sources/health'?{ok:true,status:200,json:async()=>({sources:[{report,received_at:'2026-10-27T00:00:00Z'}],as_of:'2026-10-27T00:03:00Z',recent_for_seconds:120})}:null});
+  assert.match(p.el.get('source-health').innerHTML,/No recent report/);
+  assert.match(p.el.get('source-health').innerHTML,/4 KB|4.0 KB/);
+  assert.match(p.el.get('source-health').innerHTML,/Last upload attempt failed/);
+  assert.match(p.el.get('source-health').innerHTML,/Time unavailable/);
+  assert.doesNotMatch(p.el.get('source-health').innerHTML,/Reporting recently/);
+  await p.el.get('logout').onclick();assert.equal(p.el.get('source-health').innerHTML,'');
+  const failed=await page({signedIn:true,hash:'#sources',intercept:async path=>path==='/v1/sources/health'?{ok:false,status:503,json:async()=>({error:'unavailable'})}:null});
+  assert.match(failed.el.get('source-health').innerHTML,/Source reporting unavailable/);
+  assert.match(failed.el.get('source-cards').innerHTML,/Claude Code/);
+  assert.equal(failed.el.get('app-error').hidden,true);
+});
+
+test('a late source-health response cannot restore private reports after sign-out',async()=>{
+  let release;
+  const p=await page({signedIn:true,hash:'#sources',intercept:async path=>path==='/v1/sources/health'?new Promise(resolve=>{release=resolve;}):null});
+  await p.el.get('logout').onclick();
+  release({ok:true,status:200,json:async()=>({sources:[],as_of:new Date().toISOString(),recent_for_seconds:120})});await settle();await settle();
+  assert.equal(p.el.get('source-health').innerHTML,'');assert.equal(p.el.get('app').hidden,true);
 });

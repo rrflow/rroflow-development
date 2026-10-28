@@ -2,7 +2,7 @@
 // contract fixtures: this suite deliberately makes no paid provider requests.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, readdir, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,6 +106,24 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   const before=(await (await api('/v1/events?limit=1000')).json()).events.length;
   const stopped=new Promise(r=>server.once('close',r));server.kill();await stopped;await start();
   assert.equal((await (await api('/v1/events?limit=1000')).json()).events.length,before);
+  // Session-source health travels through the actual CLI and actual ingest too.
+  const sourceStore=join(dir,'session-source'), claudeRoot=join(dir,'session-claude'), codexRoot=join(dir,'session-codex');
+  await mkdir(claudeRoot);await mkdir(codexRoot);
+  await writeFile(join(claudeRoot,'fixture.jsonl'),JSON.stringify({type:'user',promptId:'p-source',sessionId:'s-source',timestamp:'2026-10-27T00:00:00Z',cwd:'/fixture/project',message:{content:'private source prompt'}})+'\n');
+  await exec(binary,['sources','link','--store',sourceStore,'--claude-root',claudeRoot,'--codex-root',codexRoot]);
+  await exec(binary,['sources','run','--store',sourceStore,'--once','--offline']);
+  assert.equal((await (await api('/v1/sources/health')).json()).sources.length,0);
+  await exec(binary,['sources','run','--store',sourceStore,'--once']);
+  let health=(await (await api('/v1/sources/health')).json()).sources;
+  assert.equal(health.length,1);assert.equal(health[0].report.pending_revisions,0);assert.equal(health[0].report.delivery_ok,true);assert.equal(health[0].report.sequence,1);
+  assert(!JSON.stringify(health).includes(sourceStore));assert(!JSON.stringify(health).includes('private source prompt'));
+  await writeFile(join(claudeRoot,'broken.jsonl'),'invalid JSON\n');
+  await assert.rejects(exec(binary,['sources','run','--store',sourceStore,'--once']));
+  health=(await (await api('/v1/sources/health')).json()).sources;
+  assert.equal(health[0].report.sequence,2);assert.equal(health[0].report.capture_errors,1);assert.equal(health[0].report.pending_revisions,0);
+  assert.equal((await (await api('/v1/sources/health','fixture-other')).json()).sources.length,0);
+  const sourceStopped=new Promise(r=>server.once('close',r));server.kill();await sourceStopped;await start();
+  assert.deepEqual((await (await api('/v1/sources/health')).json()).sources,health);
   // Local journal files carry the same redaction guarantee as uploaded records.
   for(const name of await readdir(join(dir,'claude'))) if(name.endsWith('.json')) {
     const data=await readFile(join(dir,'claude',name),'utf8');assert(!data.includes('never-store-me'));

@@ -10,6 +10,7 @@ pub mod capture;
 pub mod custom;
 pub mod record;
 pub mod signals;
+pub mod source_health;
 
 pub use record::{
     Content, Evidence, EvidenceKind, SCHEMA, Severity, SignalHit, Termination, ToolRecord,
