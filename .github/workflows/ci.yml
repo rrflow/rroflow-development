@@ -44,6 +44,10 @@ jobs:
         run: cargo build --workspace --locked
       - name: SDK capture end to end (fixture providers)
         run: node --test sdk/javascript/test.mjs
+      - name: Native user collector lifecycle (disposable runner only)
+        env:
+          RROFLOW_SERVICE_TEST: '1'
+        run: node --test scripts/test-source-service.mjs
       - name: Parse a fixture transcript (no network)
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
 
@@ -116,6 +120,10 @@ jobs:
         run: cargo build --workspace --locked
       - name: SDK capture end to end (fixture providers)
         run: node --test sdk/javascript/test.mjs
+      - name: Native user collector lifecycle (disposable runner only)
+        env:
+          RROFLOW_SERVICE_TEST: '1'
+        run: node --test scripts/test-source-service.mjs
       - name: Parse a fixture transcript (no network)
         shell: bash
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
