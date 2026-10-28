@@ -141,6 +141,21 @@ fn verify_start(install: &Installation) -> Result<()> {
     Ok(())
 }
 
+fn wait_for_stop(store: &Path) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match lock(store) {
+            Ok(_released) => return Ok(()),
+            Err(error) if std::time::Instant::now() >= deadline => {
+                return Err(
+                    error.context("startup stop has not released the collector; retry status/stop")
+                );
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
+}
+
 // systemd unquotes arguments, expands % specifiers; ':' disables $ expansion.
 fn unit_quote(value: &str) -> String {
     format!(
@@ -373,6 +388,11 @@ pub(super) fn run(store: &Path, action: Action) -> Result<()> {
         verify_start(&install)?;
     }
     let state = manage(&install, action)?;
+    if matches!(action, Action::Stop | Action::Remove) {
+        // Task Scheduler acknowledges stop before its process tree has fully exited.
+        // Do not report completion or remove local registration while capture still owns the journal.
+        wait_for_stop(&store)?;
+    }
     if matches!(action, Action::Remove) {
         fs::remove_file(pointer(&store))?;
         #[cfg(unix)]
