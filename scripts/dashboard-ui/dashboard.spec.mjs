@@ -13,7 +13,12 @@ async function settled(page){await expect(page.locator('#loading')).toBeHidden()
 async function navigate(page,route){await page.evaluate(route=>{location.hash='#'+route;},route);await expect(page.locator(`[data-nav="${route}"]`)).toHaveAttribute('aria-current','page');await settled(page);}
 async function reflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
 async function accessible(page){const results=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa']).analyze();expect(results.violations.map(v=>({id:v.id,impact:v.impact,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))}))).toEqual([]);}
-async function screenshot(page,info,name){const path=info.outputPath(`${name}-test-fixture.png`);await page.screenshot({path,fullPage:false});await info.attach(`${name} - disposable test records`,{path,contentType:'image/png'});}
+async function screenshot(page,info,name){
+  // Contrast inspection can temporarily hide artwork. Let restored styles paint
+  // before collecting visual evidence; DOM visibility alone misses this frame.
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  const path=info.outputPath(`${name}-test-fixture.png`);await page.screenshot({path,fullPage:false});await info.attach(`${name} - disposable test records`,{path,contentType:'image/png'});
+}
 test.beforeEach(async({page,service})=>{await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());});
 
 test('sign-in and overview are readable at this viewport',async({page,service},info)=>{
@@ -119,4 +124,26 @@ test('source reports show queue problems, age without fresh reports and clear sa
   await expect(page.locator('#source-health')).toContainText('Source reporting unavailable');await expect(page.locator('#source-cards')).toContainText('Claude Code');
   if (await page.locator('#menu-toggle').isVisible()) await page.locator('#menu-toggle').click();
   await page.locator('#logout').click();await expect(page.locator('#login')).toBeVisible();await expect(page.locator('#source-health')).toBeEmpty();
+});
+
+test('guided next steps open evidence, accessible help and the right connection choice',async({page,service},info)=>{
+  await signIn(page,service);
+  const next=page.locator('#overview-focus').getByRole('button',{name:'Take a closer look',exact:false});
+  await expect(next).toBeVisible();await next.click();await expect(page.locator('#inspector')).toBeVisible();
+  await expect(page.getByRole('tab',{name:'Signals',exact:true})).toHaveAttribute('aria-selected','true');
+  await page.keyboard.press('Escape');await expect(next).toBeFocused();
+  const help=page.getByRole('button',{name:'What do these numbers mean?',exact:true});await help.focus();
+  await expect(page.locator('#coverage-tip')).toBeVisible();await page.keyboard.press('Escape');await expect(page.locator('#coverage-tip')).toBeHidden();
+  await page.locator('#page-title').dispatchEvent('pointerover');await expect(page.locator('#coverage-tip')).toBeHidden();
+  await page.mouse.move(0,0);await page.locator('#refresh').focus();await help.focus();await expect(page.locator('#coverage-tip')).toBeVisible();await page.keyboard.press('Enter');
+  await expect(page.locator('#guide-dialog')).toBeVisible();await expect(page.locator('#guide-body')).toContainText('received records');
+  await accessible(page);await reflow(page);await screenshot(page,info,'contextual-guide');
+  await page.keyboard.press('Escape');await expect(help).toBeFocused();
+  await page.getByRole('button',{name:'Show me around',exact:false}).click();
+  await page.getByRole('button',{name:'Connect my AI',exact:false}).click();await page.getByRole('button',{name:'Open connection guide',exact:true}).click();
+  await expect(page.locator('#setup-dialog')).toBeVisible();await expect(page.locator('.setup-technical')).not.toHaveAttribute('open','');
+  await reflow(page);await accessible(page);await screenshot(page,info,'guided-connection');
+  await page.getByRole('button',{name:'Inside my app',exact:false}).click();await expect(page.locator('#setup-sdk')).toBeVisible();await expect(page.locator('#setup-computer')).toBeHidden();
+  await expect(page.locator('#setup-sdk')).toContainText('cannot read your subscription app history');
+  await page.getByRole('button',{name:'Check my sources',exact:false}).click();await settled(page);await expect(page.locator('[data-nav="sources"]')).toHaveAttribute('aria-current','page');
 });

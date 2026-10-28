@@ -685,6 +685,18 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
             }),
         )
         .route(
+            "/assets/dashboard-a2ui.js",
+            get(|| async {
+                (
+                    [
+                        ("content-type", "text/javascript; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                    include_str!("dashboard-a2ui.js"),
+                )
+            }),
+        )
+        .route(
             "/assets/dashboard.js",
             get(|| async {
                 (

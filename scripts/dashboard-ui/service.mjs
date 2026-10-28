@@ -6,7 +6,7 @@ import {spawn} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'node:net';
 export async function startFixture() {
-  if(process.platform!=='linux' || !process.env.RROFLOW_UI_BINARY) throw new Error('Run against the Linux CI artifact using RROFLOW_UI_BINARY.');
+  if(!['linux','win32'].includes(process.platform) || !process.env.RROFLOW_UI_BINARY) throw new Error('Select a built Linux or Windows fixture binary using RROFLOW_UI_BINARY.');
   const root=mkdtempSync(join(tmpdir(),'rroflow-ui-fixture-'));
   const key=randomBytes(32).toString('hex');
   let child, exited, stderr='';
@@ -17,9 +17,9 @@ export async function startFixture() {
   try {
     const listener=createServer();await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
     const config=join(root,'fixture.toml');
-    writeFileSync(config,`listen = "127.0.0.1:${port}"\ndata_dir = "${root}/data"\n[[devspace]]\nid = "ui_fixture"\nkey_sha256 = ["${createHash('sha256').update(key).digest('hex')}"]\n`,{mode:0o600});
+    writeFileSync(config,`listen = "127.0.0.1:${port}"\ndata_dir = ${JSON.stringify(root.replaceAll('\\','/')+'/data')}\n[[devspace]]\nid = "ui_fixture"\nkey_sha256 = ["${createHash('sha256').update(key).digest('hex')}"]\n`,{mode:0o600});
     const env={...process.env};delete env.RROFLOW_DATABASE_URL;delete env.RROFLOW_INGEST_CONFIG;
-    child=spawn(resolve(process.env.RROFLOW_UI_BINARY),['serve','--config',config],{env,stdio:['ignore','ignore','pipe']});
+    child=spawn(resolve(process.env.RROFLOW_UI_BINARY),['serve','--config',config],{env,windowsHide:true,stdio:['ignore','ignore','pipe']});
     child.stderr.on('data',bytes=>{stderr=(stderr+bytes.toString()).slice(-4000);});
     exited=new Promise(resolve=>{child.once('error',error=>resolve({error}));child.once('exit',(code,signal)=>resolve({code,signal}));});
     const base=`http://127.0.0.1:${port}`, headers={Authorization:'Bearer '+key,'Content-Type':'application/json'};

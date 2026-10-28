@@ -14,7 +14,7 @@ horizontal overflow and automatically detectable WCAG A/AA issues. Screenshots
 and failure traces are uploaded as CI artifacts. Every screenshot uses explicitly
 named `ui_fixture` records; none is evidence of production activity or deployment.
 
-On a disposable Linux development/CI environment:
+On a development or CI environment, using a separately built fixture binary:
 
 ```sh
 npm ci --ignore-scripts
@@ -34,3 +34,5 @@ Primary setup references: [Playwright CI](https://playwright.dev/docs/ci-intro),
 [visual comparison limits](https://playwright.dev/docs/test-snapshots), observed
 2026-10-27. Versions were resolved from the primary npm registry and pinned before
 execution.
+
+Windows is also supported for disposable fixture runs: set `RROFLOW_UI_BINARY` to an isolated build of `rroflow-ingest.exe`, then run `npm test`. The helper always creates a fresh temporary store, random key and loopback listener and closes that child afterward. It cannot attach to the personal preview. The tests now also cover contextual guidance, focus return, the connection-choice dialog and evidence-linked next actions.
