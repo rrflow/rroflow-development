@@ -72,6 +72,14 @@ test('native per-user startup captures, restarts, refuses changed definitions an
   await assert.rejects(cli(['sources','run','--store',store,'--once','--offline']));
   await service('stop');
   await until(async()=>{await cli(['sources','run','--store',store,'--once','--offline']);return true;},'native worker and child stop');
+  // Stop may interrupt an upload after the server received it but before its
+  // receipt/cooldown reset reaches disk. Honor that durable attempt reservation.
+  const retry=JSON.parse((await cli(['sources','status','--store',store])).stdout).retry;
+  if(retry) {
+    const delay=Math.max(0,retry.next_attempt_unix*1000-Date.now());
+    assert(delay<=11000,'healthy fixture stop must not leave an extended cooldown');
+    if(delay) await sleep(delay+100);
+  }
   const sequence=(await api('/v1/sources/health')).sources[0].report.sequence;
   // Explicit saved-account mode must ignore ambient keys and endpoint overrides.
   await cli(['sources','run','--store',store,'--once','--account-file',accountFile],{RROFLOW_INGEST_KEY:'wrong-fixture-key',RROFLOW_INGEST_URL:'http://127.0.0.1:1'});

@@ -1,6 +1,7 @@
 # Keep your collector running
 
-Implementation: development branch, pending native CI verification and release.
+Implementation: development branch; native lifecycle verified in [PR #23](https://github.com/rrflow/rroflow-development/pull/23).
+Public release and activation remain separate gates.
 This does not confirm installation on your computer or deployment to Texas.
 
 RROFLOW reads the Claude Code and Codex session folders linked on this computer.

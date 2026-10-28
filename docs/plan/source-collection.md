@@ -42,8 +42,11 @@ Restart reconstructs the revision index from retained batches, including acknowl
 ones. No acknowledged revision is automatically deleted.
 
 The process scans changes every five seconds by default and rechecks every file
-every sixty passes. Failed delivery backs off to five minutes while new passes
-continue capturing locally. A pass uploads at most sixteen batches. Requests have
+every sixty passes. Failed delivery uses a saved, jittered backoff of up to five
+minutes; a server Retry-After can require longer. New passes continue capturing
+locally, and restart/manual flush respects the saved wait. Health requests share
+the same gate. See [delivery recovery](../ux/delivery-recovery.md).
+A pass uploads at most sixteen batches. Requests have
 connection/global timeouts and redirects are disabled. The first backfill and a
 large changed file can delay a pass; this is not yet a latency guarantee.
 

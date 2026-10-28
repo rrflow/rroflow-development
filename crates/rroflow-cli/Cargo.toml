@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 chrono = "0.4"
+httpdate = "1"
 clap = { version = "4", features = ["derive", "env"] }
 rand = "0.9"
 regex = "1"

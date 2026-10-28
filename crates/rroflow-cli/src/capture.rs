@@ -1,6 +1,6 @@
 //! Durable local SDK outbox. Recording never requires network or provider keys.
-use crate::{account, redact::Redactor};
-use anyhow::{Context, Result, bail, ensure};
+use crate::{account, redact::Redactor, retry};
+use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use rroflow_core::capture::CaptureEvent;
 use serde::{Deserialize, Serialize};
@@ -249,7 +249,7 @@ fn pending(spool: &Path) -> Result<Vec<(PathBuf, Queued)>> {
     Ok(rows)
 }
 
-fn deliver(spool: &Path, sender: &account::Sender) -> Result<usize> {
+fn deliver(spool: &Path) -> Result<usize> {
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -257,6 +257,13 @@ fn deliver(spool: &Path, sender: &account::Sender) -> Result<usize> {
         .write(true)
         .open(spool.join("flush.lock"))?;
     lock.try_lock().context("another flush is running")?;
+    retry::attempt(spool, || {
+        let sender = account::sender()?.context("sign in with rroflow login before flushing")?;
+        deliver_ready(spool, &sender)
+    })
+}
+
+fn deliver_ready(spool: &Path, sender: &account::Sender) -> Result<usize> {
     let rows = pending(spool)?;
     if rows.is_empty() {
         return Ok(0);
@@ -273,11 +280,7 @@ fn deliver(spool: &Path, sender: &account::Sender) -> Result<usize> {
         .get(&format!("{base}/v1/whoami"))
         .header("Authorization", &format!("Bearer {}", sender.token))
         .call()?;
-    ensure!(
-        who.status().as_u16() == 200,
-        "cannot verify capture destination (HTTP {})",
-        who.status().as_u16()
-    );
+    retry::require_ok(&who)?;
     let who: Value = who.body_mut().read_json()?;
     for (_, q) in &rows {
         ensure!(
@@ -291,11 +294,7 @@ fn deliver(spool: &Path, sender: &account::Sender) -> Result<usize> {
             .post(&format!("{base}/v1/events"))
             .header("Authorization", &format!("Bearer {}", sender.token))
             .send_json(json!({"events": [&q.event]}))?;
-        ensure!(
-            response.status().as_u16() == 200,
-            "capture upload HTTP {}; queue retained",
-            response.status().as_u16()
-        );
+        retry::require_ok(&response)?;
         let receipt: Value = response.body_mut().read_json()?;
         ensure!(
             receipt["devspace"] == q.devspace
@@ -328,10 +327,7 @@ pub(crate) fn run(command: Command) -> Result<()> {
         ),
         Command::Flush { spool } => {
             private_dir(&spool)?;
-            let Some(sender) = account::sender()? else {
-                bail!("sign in with rroflow login before flushing")
-            };
-            let n = deliver(&spool, &sender)?;
+            let n = deliver(&spool)?;
             println!("{}", json!({"acknowledged": n}));
             Ok(())
         }
@@ -340,7 +336,7 @@ pub(crate) fn run(command: Command) -> Result<()> {
             let rows = pending(&spool)?;
             println!(
                 "{}",
-                json!({"pending": rows.len(), "note": "queued is not yet server-acknowledged"})
+                json!({"pending": rows.len(), "retry": retry::read(&spool)?, "note": "queued is not yet server-acknowledged"})
             );
             Ok(())
         }
