@@ -20,8 +20,8 @@ PUBLIC_HOSTS="${PUBLIC_HOSTS:-}"
 # Nomen sign-in for this host (project `rroflow`, Shippin Platform org). Used when the
 # ingest app's key file is present at $NOMEN_KEY_FILE.
 NOMEN_ISSUER="${NOMEN_ISSUER:-https://id.shippin.cloud}"
-NOMEN_PROJECT="${NOMEN_PROJECT:-396821566727389188}"
-NOMEN_CLIENTS="${NOMEN_CLIENTS:-396821568421953540 396821568908492804}"
+NOMEN_PROJECT="${NOMEN_PROJECT:-397185153912274947}"
+NOMEN_CLIENTS="${NOMEN_CLIENTS:-397185154935750659 397185155288072195}"
 NOMEN_KEY_FILE=/etc/rroflow/nomen-key.json
 
 # Resolve from this pinned checkout; piping deploy.sh alone to bash is not supported.

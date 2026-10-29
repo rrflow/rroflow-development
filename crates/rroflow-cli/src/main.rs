@@ -28,6 +28,7 @@ mod otlp;
 mod record;
 mod redact;
 mod retry;
+mod setup;
 mod sources;
 mod transcript;
 
@@ -101,6 +102,10 @@ enum Agent {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Set this machine up once: sign in (if needed), link the Claude Code and Codex
+    /// session folders found here to your devspace, and keep capture running at login.
+    /// Safe to re-run: finished steps are skipped and the current state is shown.
+    Setup(setup::Args),
     /// Link and continuously collect Claude/Codex sessions across projects.
     Sources {
         #[command(subcommand)]
@@ -433,6 +438,7 @@ fn report_signals(
 
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
+        Cmd::Setup(args) => setup::run(args)?,
         Cmd::Sources { command } => sources::run(command)?,
         Cmd::Capture { command } => capture::run(command)?,
         Cmd::Login {
