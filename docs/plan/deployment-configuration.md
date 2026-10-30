@@ -83,10 +83,11 @@ service account and database layout remain fixed deployment conventions.
 
 ## Remaining customization work
 
-This increment does not claim full white-label configuration. Public-site brand
-copy, vector styling and repository/partner links remain authored assets; a
-validated brand/theme manifest is still needed. Installer layout and upstream
-release provenance remain deployment-specific. Hosted plans/quotas must be
+Public/member identity, introductory copy, links and accent colors now have a
+[validated brand configuration](../ux/brand-configuration.md). The same local
+vector artwork follows the configured highlight, without a remote image load.
+Full layout theming and tenant-managed branding are still separate work.
+Installer layout and upstream release provenance remain deployment-specific. Hosted plans/quotas must be
 server-enforced; editable UI text cannot supply subscription entitlements.
 
 The product targets in [the capability map](capability-map.md), consented dataset

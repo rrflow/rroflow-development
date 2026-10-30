@@ -18,9 +18,10 @@ function node(id = '', attrs = '') {
   };
 }
 const sample = (id='one') => ({event_id:id,session_id:'session<&>',project:'project<&>',agent:'codex',started_at:'2026-10-27T10:00:00Z',model:'fixture',collector:'test',termination:'completed',usage:{},signals:[],tools:[],tools_unfinished:0});
-async function page({signedIn=false,enabled=true,turns=2,previousKey=false,records=[],hash='#overview',intercept,reviewRows=[]}={}) {
+async function page({brandName='RROFLOW',signedIn=false,enabled=true,turns=2,previousKey=false,records=[],hash='#overview',intercept,reviewRows=[]}={}) {
   const elements = new Map([...html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)].map(([tag,id]) => [id,node(id,tag)]));
   elements.get('app').hidden = true;
+  elements.get('brand-name').textContent = brandName;
   const staticNodes = [...html.matchAll(/<[^>]+data-[^>]*>/g)].map(([tag]) => node('',tag));
   const dynamic = new Map();
   const querySelectorAll = selector => {
@@ -309,4 +310,11 @@ test('the visual shell stays small and independent of external image, font and s
   assert.ok(files.reduce((n,b)=>n+gzipSync(b).length,0)<40*1024,'Gzip size benchmark exceeds 40 KiB budget');
   assert.doesNotMatch(html,/<(?:script|img|image)[^>]+(?:src|href)="https?:/);
   assert.doesNotMatch(files[1].toString(),/@import|@font-face|url\(\s*['"]?https?:/);
+});
+
+
+test('navigation keeps the configured brand in the document title as plain text',async()=>{
+  const p=await page({signedIn:true,brandName:'Orbit <b>AI</b>'});
+  assert.equal(p.document.title,'Orbit <b>AI</b> \u00b7 Overview');
+  await p.route('#signals');assert.equal(p.document.title,'Orbit <b>AI</b> \u00b7 Findings');
 });

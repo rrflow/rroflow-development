@@ -22,6 +22,51 @@ async function screenshot(page,info,name){
 }
 test.beforeEach(async({page,service})=>{await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());});
 
+test('configured branding renders before scripts and stays readable through member navigation',async({page,service},info)=>{
+  const brand={name:'Orbit AI',wordmark:'orbit.',mark:'o',tagline:'Clarity for every conversation',intro_title:'Good work deserves',intro_emphasis:'a clearer view.',intro_description:'Understand your agents, follow the evidence, and keep useful corrections.',documentation_url:'https://docs.example.test/connect',accent:'#124b70',highlight:'#b7e7ff',links:[{label:'Help & documentation',url:'https://docs.example.test'}]};
+  const custom=await startFixture({brand});
+  try {
+    await page.unroute('**/*');
+    await page.route('**/*',route=>new URL(route.request().url()).origin===custom.base?route.continue():route.abort());
+    const raw=await (await fetch(custom.base)).text();
+    expect(raw).toContain('Good work deserves');expect(raw).toContain('Orbit AI');expect(raw).not.toContain('https://shippin.cloud');
+    await page.goto(custom.base);
+    await expect(page).toHaveTitle('Orbit AI · A clearer picture of your AI');
+    await expect(page.locator('#hero-title')).toContainText('a clearer view.');
+    await expect(page.locator('.public-footer [data-brand-links] a')).toHaveCount(1);
+    await expect(page.locator('.public-footer [data-brand-links] a')).toHaveAttribute('href','https://docs.example.test');
+    await expect(page.locator('.public-illustration [fill^="var(--lime"]').first()).toHaveCSS('fill','rgb(183, 231, 255)');
+    await reflow(page);await accessible(page);await screenshot(page,info,'custom-brand-public');
+    await signIn(page,custom);
+    await expect(page).toHaveTitle('Orbit AI · Overview');
+    await expect(page.locator('.sidebar [data-brand="wordmark"]')).toHaveText('orbit.');
+    await expect(page.locator('.hero-art [fill^="var(--lime"]').first()).toHaveCSS('fill','rgb(183, 231, 255)');
+    await expect(page.locator('[data-brand-docs]')).toHaveAttribute('href',brand.documentation_url);
+    expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#124b70');
+    await reflow(page);await accessible(page);await screenshot(page,info,'custom-brand-overview');
+    await navigate(page,'activity');await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
+    await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
+    expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#b7e7ff');
+    await reflow(page);await accessible(page);await screenshot(page,info,'custom-brand-dark');
+    expect((await fetch(custom.base+'/v1/summary')).status).toBe(401);
+    const original=await (await fetch(service.base)).text();expect(original).toContain('RROFLOW');expect(original).not.toContain('Orbit AI');
+  } finally {await custom.close();}
+});
+
+test('bounded brand text wraps at this viewport and markup remains literal',async({page})=>{
+  const custom=await startFixture({brand:{name:'Orbit <img src=x onerror=window.brandInjected=1>',wordmark:'W'.repeat(24),mark:'OA',tagline:'T'.repeat(160),intro_title:'A'.repeat(120),intro_emphasis:'B'.repeat(120),intro_description:'C'.repeat(500),links:[{label:'D'.repeat(60),url:'https://docs.example.test'}]}});
+  try {
+    await page.unroute('**/*');
+    await page.route('**/*',route=>new URL(route.request().url()).origin===custom.base?route.continue():route.abort());
+    await page.goto(custom.base);await reflow(page);
+    await page.locator('.public-footer').scrollIntoViewIfNeeded();await reflow(page);
+    await page.goto(custom.base+'/app');await reflow(page);
+    await expect(page.locator('#brand-name')).toHaveText('Orbit <img src=x onerror=window.brandInjected=1>');
+    await expect(page.locator('#brand-name img')).toHaveCount(0);
+    expect(await page.evaluate(()=>window.brandInjected)).toBeUndefined();
+  } finally {await custom.close();}
+});
+
 test('public entry explains coverage and opens the separate workspace',async({page,service},info)=>{
   const privateRequests=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/v1/'))privateRequests.push(r.url());});
   await page.goto(service.base);await expect(page.locator('#member-status')).toContainText('not activated');

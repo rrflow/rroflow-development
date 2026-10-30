@@ -14,6 +14,8 @@
 //!   evaluating.
 
 mod analytics;
+mod brand;
+pub use brand::{BrandConfig, BrandLink};
 mod web_auth;
 pub use web_auth::BrowserConfig;
 mod capture;
@@ -91,6 +93,8 @@ pub struct Config {
     pub nomen: Option<NomenConfig>,
     /// Optional HTTPS dashboard sign-in through Nomen.
     pub browser: Option<BrowserConfig>,
+    /// Public/member presentation, validated and rendered before serving requests.
+    pub brand: BrandConfig,
 }
 
 /// How the ingest checks Nomen tokens (RFC 7662 introspection, private-key JWT).
@@ -118,6 +122,7 @@ impl Default for Config {
             devspace: vec![],
             nomen: None,
             browser: None,
+            brand: BrandConfig::default(),
         }
     }
 }
@@ -176,6 +181,7 @@ pub struct Caller {
 #[derive(Clone)]
 pub struct AppState {
     keys: Arc<HashMap<String, String>>,
+    brand: Arc<brand::RenderedBrand>,
     web: Option<Arc<web_auth::WebAuth>>,
     nomen: Option<Arc<NomenVerifier>>,
     store: Arc<Store>,
@@ -226,6 +232,7 @@ impl AppState {
         };
         Ok(Self {
             keys: Arc::new(keys),
+            brand: Arc::new(brand::RenderedBrand::new(&cfg.brand)?),
             web: web_auth::WebAuth::new(cfg)?,
             nomen,
             store,
@@ -619,7 +626,7 @@ async fn get_summary(
 }
 
 /// Static public product page; no third-party scripts or client-side provider credentials.
-async fn public_site() -> impl IntoResponse {
+async fn public_site(State(st): State<AppState>) -> impl IntoResponse {
     (
         [
             ("content-type", "text/html; charset=utf-8"),
@@ -629,13 +636,14 @@ async fn public_site() -> impl IntoResponse {
             ),
             ("x-content-type-options", "nosniff"),
             ("referrer-policy", "no-referrer"),
+            ("cache-control", "no-store"),
         ],
-        include_str!("public.html"),
+        st.brand.public.clone(),
     )
 }
 
 /// Same-origin dashboard assets; no third-party scripts or client-side provider credentials.
-async fn dashboard() -> impl IntoResponse {
+async fn dashboard(State(st): State<AppState>) -> impl IntoResponse {
     (
         [
             ("content-type", "text/html; charset=utf-8"),
@@ -645,8 +653,9 @@ async fn dashboard() -> impl IntoResponse {
             ),
             ("x-content-type-options", "nosniff"),
             ("referrer-policy", "no-referrer"),
+            ("cache-control", "no-store"),
         ],
-        include_str!("dashboard.html"),
+        st.brand.dashboard.clone(),
     )
 }
 
@@ -704,6 +713,19 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/", get(public_site))
         .route("/app", get(dashboard))
         .route("/app/", get(dashboard))
+        .route(
+            "/assets/brand.css",
+            get(|State(st): State<AppState>| async move {
+                (
+                    [
+                        ("content-type", "text/css; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                        ("cache-control", "no-store"),
+                    ],
+                    st.brand.css.clone(),
+                )
+            }),
+        )
         .route(
             "/assets/public.css",
             get(|| async {
