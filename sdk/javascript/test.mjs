@@ -21,6 +21,13 @@ const ingest = resolve(binDir, 'rroflow-ingest' + suffix);
 async function* events(items) { yield* items; }
 async function consume(stream) { const out=[]; for await (const e of stream) out.push(e); return out; }
 
+test('capture refuses absent or unsafe destinations before spawning a collector', () => {
+  const options = { agent: 'codex', sessionId: 'fixture', devspace: 'owner', spool: 'unused', executable: 'must-not-spawn' };
+  for (const endpoint of [undefined, '', 'http://api.example.test', 'http://127.0.0.1.evil.test', 'https://user:secret@example.test', 'https://api.example.test/path', 'https://api.example.test/?secret', 'https://api.example.test/#secret', ' https://api.example.test']) {
+    assert.throws(() => new Capture({ ...options, endpoint }), /endpoint|Endpoint/);
+  }
+});
+
 test('three SDKs record, replay, isolate, redact and retain failures through the real collector', { timeout: 60000 }, async t => {
   const dir = await mkdtemp(join(tmpdir(), 'rroflow-sdk-proof-'));
   const listener = createServer(); await new Promise(r => listener.listen(0, '127.0.0.1', r));

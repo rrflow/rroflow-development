@@ -8,25 +8,15 @@
 //!
 //! Nothing leaves the machine before the person agrees (or passes `--yes`). Credentials
 //! of the agents themselves are never read. Every step is skipped when already done.
-use crate::{account, sources};
+use crate::{account, deployment, sources};
 use anyhow::{Result, bail};
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
-    /// Nomen issuer.
-    #[arg(long, env = "RROFLOW_ISSUER", default_value = account::DEFAULT_ISSUER)]
-    issuer: String,
-    /// The rroflow CLI's application in Nomen.
-    #[arg(long, env = "RROFLOW_CLIENT_ID", default_value = account::DEFAULT_CLIENT_ID)]
-    client_id: String,
-    /// The rroflow project id in Nomen, asked for in the token's audience.
-    #[arg(long, env = "RROFLOW_NOMEN_PROJECT", default_value = account::DEFAULT_PROJECT_ID)]
-    project_id: String,
-    /// The rroflow.ai ingest this account sends to.
-    #[arg(long, default_value = account::DEFAULT_INGEST_URL)]
-    ingest_url: String,
+    #[command(flatten)]
+    deployment: deployment::Args,
     /// Also send scrubbed prompt, response and tool text. Default: metrics and signals only.
     #[arg(long)]
     content: bool,
@@ -91,17 +81,35 @@ pub(crate) fn run(args: Args) -> Result<()> {
         );
     }
 
-    // 2. Sign in.
-    if account::sender()?.is_none() {
-        println!("Sign in with your Shippin account to choose where these sessions go.");
+    // 2. Resolve before refreshing any saved credential. A profile never changes
+    // where an existing account or source queue belongs.
+    anyhow::ensure!(
+        std::env::var("RROFLOW_INGEST_KEY")
+            .ok()
+            .is_none_or(|v| v.trim().is_empty()),
+        "setup uses member sign-in; for headless keys use sources link with explicit RROFLOW_INGEST_URL"
+    );
+    let saved = account::read(&account::account_path()?).map_err(anyhow::Error::msg)?;
+    let selected = args.deployment.resolve(saved.as_ref())?;
+    if let Some(saved) = &saved {
+        selected.matches(saved)?;
+    }
+    if saved
+        .as_ref()
+        .is_none_or(|a| a.standing(account::unix_now()) == account::Standing::Expired)
+    {
+        println!("Sign in to {} to link this computer.", selected.ingest_url);
         account::login(
-            &args.issuer,
-            &args.client_id,
-            Some(&args.project_id),
-            &args.ingest_url,
+            &selected.issuer,
+            &selected.client_id,
+            Some(&selected.project_id),
+            &selected.ingest_url,
         )?;
     } else {
-        println!("signed in: using the saved rroflow account");
+        println!(
+            "signed in: using the saved account for {}",
+            selected.ingest_url
+        );
     }
 
     // 3. Link (consent first).
@@ -109,7 +117,9 @@ pub(crate) fn run(args: Args) -> Result<()> {
         .map(|p| p.join("sources"))
         .ok_or_else(|| anyhow::anyhow!("source store unavailable"))?;
     if store.join("source.json").exists() {
-        println!("sources already linked");
+        let sender = account::sender()?.ok_or_else(|| anyhow::anyhow!("sign-in unavailable"))?;
+        sources::check_setup_binding(&store, &sender)?;
+        println!("sources already linked to this account");
     } else {
         let what = if args.content {
             "metrics, signal results and scrubbed prompt/response/tool text"
@@ -155,7 +165,7 @@ pub(crate) fn run(args: Args) -> Result<()> {
         command: sources::service::Action::Status,
     })?;
     println!(
-        "Done. Your sessions now report to your rroflow devspace; see `rroflow whoami` and https://app.rroflow.ai."
+        "Collector startup is configured. Run `rroflow sources status` to check capture and delivery; `rroflow whoami` shows your destination."
     );
     Ok(())
 }

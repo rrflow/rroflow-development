@@ -8,9 +8,17 @@ const exec = promisify(execFile);
 /** A Rust collector subprocess acknowledges fsynced events, not network delivery. */
 export class Capture {
   #child; #pending = []; #done; #failure; #tail = Promise.resolve(); #sequence = 0; #closed = false; #content = false;
-  constructor({ agent, sessionId, devspace, spool, endpoint = 'https://api.rroflow.ai', executable = 'rroflow', content = false }) {
+  constructor({ agent, sessionId, devspace, spool, endpoint, executable = 'rroflow', content = false }) {
     if (!['codex', 'claude', 'grok'].includes(agent)) throw new Error('Unsupported capture agent');
     if (![sessionId, devspace, spool].every(v => typeof v === 'string' && v.length)) throw new Error('sessionId, devspace and spool are required');
+    // Never silently bind a durable outbox to someone else's hosted service.
+    let destination;
+    try { destination = new URL(endpoint); } catch { throw new Error('An explicit ingest endpoint is required'); }
+    if (typeof endpoint !== 'string' || endpoint !== endpoint.trim() || /[\\\s?#]/.test(endpoint)
+      || destination.username || destination.password || destination.pathname !== '/'
+      || !(destination.protocol === 'https:' || (destination.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(destination.hostname)))) {
+      throw new Error('Endpoint must be an HTTPS origin without credentials, path, query or fragment (loopback HTTP allowed)');
+    }
     this.#content = content === true;
     this.agent = agent; this.sessionId = sessionId; this.captureId = randomUUID();
     this.executable = executable; this.spool = spool;

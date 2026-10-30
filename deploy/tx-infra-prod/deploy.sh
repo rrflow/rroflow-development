@@ -19,10 +19,25 @@ LISTEN="${LISTEN:-127.0.0.1:8787}"
 PUBLIC_HOSTS="${PUBLIC_HOSTS:-}"
 # Nomen sign-in for this host (project `rroflow`, Shippin Platform org). Used when the
 # ingest app's key file is present at $NOMEN_KEY_FILE.
-NOMEN_ISSUER="${NOMEN_ISSUER:-https://id.shippin.cloud}"
-NOMEN_PROJECT="${NOMEN_PROJECT:-397185153912274947}"
-NOMEN_CLIENTS="${NOMEN_CLIENTS:-397185154935750659 397185155288072195}"
+NOMEN_ISSUER="${NOMEN_ISSUER:-}"
+NOMEN_PROJECT="${NOMEN_PROJECT:-}"
+NOMEN_CLIENTS="${NOMEN_CLIENTS:-}"
 NOMEN_KEY_FILE=/etc/rroflow/nomen-key.json
+BOOTSTRAP_DEVSPACE="${BOOTSTRAP_DEVSPACE:?set the intended initial devspace; no personal account is assumed}"
+[[ "$BOOTSTRAP_DEVSPACE" =~ ^[A-Za-z0-9_-]{1,64}$ && "$BOOTSTRAP_DEVSPACE" != selftest ]] || {
+  echo 'Invalid BOOTSTRAP_DEVSPACE (selftest is reserved for deployment verification).' >&2; exit 1;
+}
+# Fail before installing packages or changing services. Operator TOML is an
+# alternative explicit configuration; no hosted issuer or registration is assumed.
+if [[ ! -f /etc/rroflow/nomen.toml && -s "$NOMEN_KEY_FILE" ]]; then
+  [[ "$NOMEN_ISSUER" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ &&
+     "$NOMEN_PROJECT" =~ ^[A-Za-z0-9_-]+$ && -n "$NOMEN_CLIENTS" ]] || {
+    echo 'Set NOMEN_ISSUER, NOMEN_PROJECT and NOMEN_CLIENTS explicitly, or supply nomen.toml.' >&2; exit 1;
+  }
+  for client in $NOMEN_CLIENTS; do
+    [[ "$client" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Invalid NOMEN_CLIENTS identifier.' >&2; exit 1; }
+  done
+fi
 
 # Resolve from this pinned checkout; piping deploy.sh alone to bash is not supported.
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -73,7 +88,7 @@ mint() { # mint <devspace>: writes the key to /etc/rroflow/keys/<devspace>.key, 
   umask 077; printf '%s\n' "$key" > "/etc/rroflow/keys/$1.key"
   printf '%s\n' "$out" | sed -n 's/^key_sha256 = \["\(.*\)"\]$/\1/p'
 }
-[ -s /etc/rroflow/keys/jesse.key ] || mint jesse > /etc/rroflow/keys/jesse.sha256
+[ -s "/etc/rroflow/keys/$BOOTSTRAP_DEVSPACE.key" ] || mint "$BOOTSTRAP_DEVSPACE" > "/etc/rroflow/keys/$BOOTSTRAP_DEVSPACE.sha256"
 [ -s /etc/rroflow/keys/selftest.key ] || mint selftest > /etc/rroflow/keys/selftest.sha256
 cat > /etc/rroflow/ingest.toml <<EOF
 listen = "$LISTEN"
@@ -83,15 +98,15 @@ max_batch = 500
 max_body_bytes = 16777216
 
 [[devspace]]
-id = "jesse"
-key_sha256 = ["$(cat /etc/rroflow/keys/jesse.sha256)"]
+id = "$BOOTSTRAP_DEVSPACE"
+key_sha256 = ["$(cat "/etc/rroflow/keys/$BOOTSTRAP_DEVSPACE.sha256")"]
 
 [[devspace]]
 id = "selftest"
 key_sha256 = ["$(cat /etc/rroflow/keys/selftest.sha256)"]
 EOF
-# Nomen sign-in: on when the ingest app's key file is on the host (it comes from Gold's sops,
-# never from the repo). /etc/rroflow/nomen.toml, when an operator writes one, replaces the
+# Nomen sign-in: on when the ingest app's key file is provisioned by the operator,
+# never from the repo. /etc/rroflow/nomen.toml, when an operator writes one, replaces the
 # values above. See docs/plan/identity-and-devspaces.md.
 if [ -f /etc/rroflow/nomen.toml ]; then
   { echo; cat /etc/rroflow/nomen.toml; } >> /etc/rroflow/ingest.toml

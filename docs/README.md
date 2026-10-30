@@ -57,6 +57,10 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 | [platform/compute-and-data-workload-classification.md](platform/compute-and-data-workload-classification.md) | Eight workload classes, endpoint bindings, hardware facts | `claude/compute-and-data-workload-classification.md` |
 | [platform/skills-and-routines-inventory.md](platform/skills-and-routines-inventory.md) | Build-workflow skills and routines | `claude/skills-and-routines-inventory.md` |
 
+## Deployment configuration
+
+[Collector deployment configuration and license status](plan/deployment-configuration.md) records public profiles, endpoint/account binding and remaining customization work.
+
 ## Rule
 
 A new or changed doc lands here by pull request. The project copy is updated from this file, not the other way round.

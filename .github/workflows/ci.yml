@@ -52,7 +52,7 @@ jobs:
       - name: Build collector and ingest for SDK proof
         run: cargo build --workspace --locked
       - name: SDK capture end to end (fixture providers)
-        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs
+        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs
       - name: Native user collector lifecycle (disposable runner only)
         env:
           RROFLOW_SERVICE_TEST: '1'

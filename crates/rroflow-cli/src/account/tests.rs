@@ -18,6 +18,8 @@ use serde_json::{Value, json};
 
 use super::*;
 
+const DEFAULT_INGEST_URL: &str = "https://ingest.example.test";
+const DEFAULT_ISSUER: &str = "https://id.example.test";
 const SUBJECT: &str = "395290028818825218";
 const CLIENT: &str = "397185154935750659";
 const PROJECT: &str = "397185153912274947";

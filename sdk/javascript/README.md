@@ -17,7 +17,7 @@ const capture = new Capture({
   sessionId: 'my-session',
   devspace: 'YOUR_VERIFIED_DEVSPACE', // from rroflow whoami
   spool: '/absolute/path/to/private/rroflow-queue',
-  endpoint: 'https://api.rroflow.ai',
+  endpoint: 'https://ingest.example.com', // required: your configured deployment
   content: false,
 });
 ```
