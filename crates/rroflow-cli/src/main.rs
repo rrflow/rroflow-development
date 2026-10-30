@@ -23,6 +23,7 @@ mod account;
 mod api;
 mod capture;
 mod codex;
+mod deployment;
 mod doctor;
 mod otlp;
 mod record;
@@ -133,20 +134,10 @@ enum Cmd {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Sign in with your Shippin account (Nomen): shows a code and a URL to open on any device.
+    /// Sign in to your configured deployment using a code on any device.
     Login {
-        /// Nomen issuer.
-        #[arg(long, env = "RROFLOW_ISSUER", default_value = account::DEFAULT_ISSUER)]
-        issuer: String,
-        /// The rroflow CLI's application in Nomen.
-        #[arg(long, env = "RROFLOW_CLIENT_ID", default_value = account::DEFAULT_CLIENT_ID)]
-        client_id: String,
-        /// The rroflow project id in Nomen, asked for in the token's audience.
-        #[arg(long, env = "RROFLOW_NOMEN_PROJECT", default_value = account::DEFAULT_PROJECT_ID)]
-        project_id: String,
-        /// The rroflow.ai ingest this account sends to.
-        #[arg(long, env = "RROFLOW_INGEST_URL", default_value = account::DEFAULT_INGEST_URL)]
-        ingest_url: String,
+        #[command(flatten)]
+        deployment: deployment::Args,
     },
     /// Revoke this machine's tokens and forget the account.
     Logout,
@@ -441,12 +432,15 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Setup(args) => setup::run(args)?,
         Cmd::Sources { command } => sources::run(command)?,
         Cmd::Capture { command } => capture::run(command)?,
-        Cmd::Login {
-            issuer,
-            client_id,
-            project_id,
-            ingest_url,
-        } => account::login(&issuer, &client_id, Some(&project_id), &ingest_url)?,
+        Cmd::Login { deployment } => {
+            let selected = deployment.resolve(None)?;
+            account::login(
+                &selected.issuer,
+                &selected.client_id,
+                Some(&selected.project_id),
+                &selected.ingest_url,
+            )?;
+        }
         Cmd::Logout => account::logout()?,
         Cmd::Whoami { json } => account::whoami(json)?,
         Cmd::IngestClaude(args) => ingest(args, "claude-code", parse_transcript)?,

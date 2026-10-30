@@ -26,11 +26,18 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/rrflow/rroflow-developm
 ```
 Each release carries the archives for Windows and Linux on x86_64 and ARM64, their SHA-256 sums and signed build provenance (GitHub attestations). Then:
 ```bash
-rroflow login            # sign in with your Shippin account
+rroflow login --deployment /path/to/deployment.json
 rroflow ingest-claude ~/.claude/projects
 rroflow ingest-codex  ~/.codex/sessions
 rroflow whoami           # which devspace your turns land in
 ```
+
+For builds containing deployment configuration, start with the
+[deployment guide](docs/plan/deployment-configuration.md) and its generic JSON
+example. No hosted client IDs or destination are compiled into the collector.
+`rroflow setup --deployment /path/to/deployment.json` provides guided account
+sign-in and session linking. The guide also records remaining customization work
+and the pending license structure; this is not yet a fully white-label release.
 
 ## Build from source
 

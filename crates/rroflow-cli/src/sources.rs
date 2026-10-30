@@ -127,6 +127,21 @@ fn batch_paths(store: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+/// Re-running setup must verify the existing queue before promising a link.
+pub(crate) fn check_setup_binding(store: &Path, sender: &account::Sender) -> Result<()> {
+    let journal = Journal::open(store)?;
+    ensure!(
+        capture::endpoint(&sender.base)? == journal.binding.endpoint,
+        "sources belong to another deployment; use a separate RROFLOW_CONFIG_DIR (queue retained)"
+    );
+    let who = get(&client(), sender, "/v1/whoami")?;
+    ensure!(
+        who["devspace"].as_str() == Some(journal.binding.devspace.as_str()),
+        "sources belong to another account; use a separate RROFLOW_CONFIG_DIR (queue retained)"
+    );
+    Ok(())
+}
+
 impl Journal {
     fn open(store: &Path) -> Result<Self> {
         let mut binding: Binding = serde_json::from_slice(&fs::read(store.join("source.json"))?)?;
@@ -1081,6 +1096,18 @@ mod tests {
             via: "key".into(),
         };
         state.lock().unwrap().wrong_account = true;
+        assert!(check_setup_binding(dir.path(), &sender).is_err());
+        assert!(
+            check_setup_binding(
+                dir.path(),
+                &account::Sender {
+                    base: "https://other.example".into(),
+                    token: "test-only".into(),
+                    via: "key".into()
+                }
+            )
+            .is_err()
+        );
         let report = journal.health_report(1, Some(false)).unwrap();
         assert!(journal.send_health(&sender, &report).is_err());
         assert_eq!(state.lock().unwrap().health_calls, 0);
@@ -1091,6 +1118,7 @@ mod tests {
             state.wrong_account = false;
             state.bad_receipt = true;
         }
+        check_setup_binding(dir.path(), &sender).unwrap();
         // Server committed but client cannot trust receipt. Restart must replay.
         assert!(journal.deliver(&sender).is_err());
         assert_eq!(journal.status().unwrap()["pending_revisions"], 1);

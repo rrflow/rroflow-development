@@ -1,6 +1,6 @@
 export type Agent = 'codex' | 'claude' | 'grok';
 export interface Scope { input?: unknown; operationId?: string; parentOperationId?: string | null }
-export interface CaptureOptions { agent: Agent; sessionId: string; devspace: string; spool: string; endpoint?: string; executable?: string; content?: boolean }
+export interface CaptureOptions { agent: Agent; sessionId: string; devspace: string; spool: string; endpoint: string; executable?: string; content?: boolean }
 export class Capture {
   constructor(options: CaptureOptions);
   readonly agent: Agent;

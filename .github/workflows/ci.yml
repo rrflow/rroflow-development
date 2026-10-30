@@ -43,6 +43,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Dashboard navigation, evidence and authentication states
         run: node --test scripts/test-dashboard.mjs
+      - name: Operator access tool refuses unsafe credentials and trust shortcuts
+        run: node --test scripts/test-project-access.mjs
       - name: Research source inventory is current
         run: node scripts/index-research.mjs --check
       - name: Test
@@ -50,7 +52,7 @@ jobs:
       - name: Build collector and ingest for SDK proof
         run: cargo build --workspace --locked
       - name: SDK capture end to end (fixture providers)
-        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs
+        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs
       - name: Native user collector lifecycle (disposable runner only)
         env:
           RROFLOW_SERVICE_TEST: '1'
@@ -126,7 +128,7 @@ jobs:
       - name: Build collector and ingest for SDK proof
         run: cargo build --workspace --locked
       - name: SDK capture end to end (fixture providers)
-        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs
+        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs
       - name: Native user collector lifecycle (disposable runner only)
         env:
           RROFLOW_SERVICE_TEST: '1'

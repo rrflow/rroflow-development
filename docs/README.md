@@ -19,6 +19,7 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 ## Texas readiness and learning continuation
 
 - [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
+- [Project access tooling](plan/project-access-tooling.md): private credential references, Cloudflare/Nomen verification and strict read-only SSH inventory.
 - [Subscription support](plan/subscription-support.md): capture, sign-in, history and inference capability status per surface.
 - [Automatic datasets v0](spec/automatic-datasets-v0.md): policy-authorized snapshots, labels, immutable splits and training boundaries.
 
@@ -55,6 +56,10 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 |---|---|---|
 | [platform/compute-and-data-workload-classification.md](platform/compute-and-data-workload-classification.md) | Eight workload classes, endpoint bindings, hardware facts | `claude/compute-and-data-workload-classification.md` |
 | [platform/skills-and-routines-inventory.md](platform/skills-and-routines-inventory.md) | Build-workflow skills and routines | `claude/skills-and-routines-inventory.md` |
+
+## Deployment configuration
+
+[Collector deployment configuration and license status](plan/deployment-configuration.md) records public profiles, endpoint/account binding and remaining customization work.
 
 ## Rule
 
