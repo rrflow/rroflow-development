@@ -17,6 +17,7 @@ Everything that guides rroflow.ai and the RRFlow work lives here, in git, so not
 ## Texas readiness and learning continuation
 
 - [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
+- [Project access tooling](plan/project-access-tooling.md): private credential references, Cloudflare/Nomen verification and strict read-only SSH inventory.
 - [Subscription support](plan/subscription-support.md): capture, sign-in, history and inference capability status per surface.
 - [Automatic datasets v0](spec/automatic-datasets-v0.md): policy-authorized snapshots, labels, immutable splits and training boundaries.
 
