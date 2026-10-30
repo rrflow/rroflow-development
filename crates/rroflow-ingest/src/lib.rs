@@ -13,6 +13,7 @@
 //!   choices (on/off, thresholds) at `/v1/signals/settings`, which collectors read before
 //!   evaluating.
 
+pub mod allowances;
 mod analytics;
 mod brand;
 pub use brand::{BrandConfig, BrandLink};
@@ -95,6 +96,8 @@ pub struct Config {
     pub browser: Option<BrowserConfig>,
     /// Public/member presentation, validated and rendered before serving requests.
     pub brand: BrandConfig,
+    /// Fail closed unless a database-owned allowance policy has been installed.
+    pub require_allowance_policy: bool,
 }
 
 /// How the ingest checks Nomen tokens (RFC 7662 introspection, private-key JWT).
@@ -123,15 +126,41 @@ impl Default for Config {
             nomen: None,
             browser: None,
             brand: BrandConfig::default(),
+            require_allowance_policy: false,
         }
     }
 }
 
 impl Config {
+    pub fn validate_authentication(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.nomen.is_some() || self.devspace.iter().any(|d| !d.key_sha256.is_empty()),
+            "configure Nomen sign-in or at least one devspace key"
+        );
+        Ok(())
+    }
     /// Open the store this config names.
     pub async fn open_store(&self) -> anyhow::Result<Store> {
+        anyhow::ensure!(
+            !self.require_allowance_policy || self.database_url.is_some(),
+            "required allowance policy needs Postgres"
+        );
         let store = match &self.database_url {
-            Some(url) => Store::Postgres(PgStore::connect(url, self.db_max_connections).await?),
+            Some(url) => {
+                let mut pg = PgStore::connect(url, self.db_max_connections).await?;
+                pg.require_allowance_policy = self.require_allowance_policy;
+                if self.require_allowance_policy {
+                    let exists: bool =
+                        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM allowance_policy)")
+                            .fetch_one(&pg.pool)
+                            .await?;
+                    anyhow::ensure!(
+                        exists,
+                        "install an allowance policy before serving with require_allowance_policy=true"
+                    );
+                }
+                Store::Postgres(pg)
+            }
             None => Store::Jsonl(JsonlStore::open(self.data_dir.clone())?),
         };
         let ids: Vec<String> = self.devspace.iter().map(|d| d.id.clone()).collect();
@@ -290,6 +319,8 @@ impl AppState {
 
 #[derive(Debug)]
 pub enum ApiError {
+    Quota(allowances::QuotaExceeded),
+    AllowanceUnavailable,
     Unauthorized,
     Conflict,
     SettingsConflict,
@@ -302,7 +333,18 @@ pub enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let ApiError::Quota(quota) = self {
+            return (StatusCode::TOO_MANY_REQUESTS, [("Retry-After", "60")], Json(serde_json::json!({
+                "error":"allowance_exceeded", "message":"This workspace has reached its monthly allowance. Keep pending captures locally and retry later.",
+                "quota": quota
+            }))).into_response();
+        }
         let (code, msg) = match self {
+            ApiError::Quota(_) => unreachable!(),
+            ApiError::AllowanceUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "allowance_policy_unavailable: keep pending captures and retry".into(),
+            ),
             ApiError::Conflict => (StatusCode::CONFLICT, "capture identity conflict".into()),
             ApiError::SourceConflict => (
                 StatusCode::CONFLICT,
@@ -385,7 +427,7 @@ async fn post_turns(
         .store
         .upsert(&devspace, &body.turns)
         .await
-        .map_err(internal)?;
+        .map_err(allowances::ingest_error)?;
     Ok(Json(serde_json::json!({
         "devspace": devspace,
         "accepted": body.turns.len(),
@@ -696,6 +738,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
+        .route("/v1/allowances", get(allowances::status))
         .route("/v1/signals", get(get_signals))
         .route("/v1/signals/stats", get(analytics::get))
         .route("/v1/signals/preview", post(preview_signal))

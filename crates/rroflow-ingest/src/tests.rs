@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 const PG_ENV: &str = "RROFLOW_TEST_DATABASE_URL";
 
-fn rec(id: &str, signal: Option<&str>) -> TurnRecord {
+pub(crate) fn rec(id: &str, signal: Option<&str>) -> TurnRecord {
     TurnRecord {
         schema: SCHEMA.into(),
         event_id: id.into(),
@@ -370,14 +370,14 @@ impl Env {
     }
 }
 
-async fn call(app: &Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
+pub(crate) async fn call(app: &Router, req: Request<Body>) -> (StatusCode, serde_json::Value) {
     let resp = app.clone().oneshot(req).await.unwrap();
     let code = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     (code, serde_json::from_slice(&bytes).unwrap_or_default())
 }
 
-fn post(key: &str, turns: &[TurnRecord]) -> Request<Body> {
+pub(crate) fn post(key: &str, turns: &[TurnRecord]) -> Request<Body> {
     Request::post("/v1/turns")
         .header("authorization", format!("Bearer {key}"))
         .header("content-type", "application/json")
@@ -387,7 +387,7 @@ fn post(key: &str, turns: &[TurnRecord]) -> Request<Body> {
         .unwrap()
 }
 
-fn get(key: &str, uri: &str) -> Request<Body> {
+pub(crate) fn get(key: &str, uri: &str) -> Request<Body> {
     Request::get(uri)
         .header("authorization", format!("Bearer {key}"))
         .body(Body::empty())

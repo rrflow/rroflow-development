@@ -47,7 +47,7 @@ pub(crate) async fn ingest(
     match saved {
         Ok(()) => {}
         Err(e) if e.downcast_ref::<Conflict>().is_some() => return Err(ApiError::Conflict),
-        Err(e) => return Err(internal(e)),
+        Err(e) => return Err(crate::allowances::ingest_error(e)),
     }
     Ok(Json(
         serde_json::json!({"devspace": ds, "accepted_ids": batch.events.iter().map(|e| &e.event_id).collect::<Vec<_>>()}),

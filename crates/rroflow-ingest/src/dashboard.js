@@ -108,7 +108,7 @@
     metadata = undefined; records = []; revisions = {}; reviews = []; journal = []; currentTurn = null; research = [];
     for (const id of ['research-list','research-title','research-path','research-text','research-count','research-categories']) $(id).replaceChildren();
     pendingReviews.clear(); previousPages.clear();
-    for (const id of ['workspace-name','member-context','member-progress','member-steps','overview-stats','overview-chart','overview-recent','overview-signals','overview-sources','overview-projects','source-cards','sdk-events','learning-reviews','signal-settings','activity-results','signal-results','session-scope','inspector-summary','pane-conversation','pane-tools','pane-signals','pane-details','review-status','settings-status','results-count','page-label','updated']) $(id).replaceChildren();
+    for (const id of ['workspace-name','member-context','member-progress','member-steps','overview-stats','overview-chart','overview-recent','overview-signals','overview-sources','overview-projects','source-cards','sdk-events','learning-reviews','signal-settings','account-allowance','activity-results','signal-results','session-scope','inspector-summary','pane-conversation','pane-tools','pane-signals','pane-details','review-status','settings-status','results-count','page-label','updated']) $(id).replaceChildren();
     for (const id of ['agent-filter','project-filter','signal-filter']) $(id).replaceChildren();
     $('search').value = ''; $('key').value = ''; $('inspector').close(); $('setup-dialog').close(); $('research-dialog').close();
     $('main-content').setAttribute('aria-busy','false');
@@ -241,6 +241,24 @@
   }
   function renderLearning() {
     $('learning-reviews').innerHTML = reviewError ? empty('Reviews unavailable',reviewError) : reviews.map(r => `<div class="list-row"><div><strong>${esc(title(r.request.signal))}</strong><small>Revision ${esc(r.request.turn_digest.slice(0,12))} · ${esc(r.request.event_id)}</small></div><span class="badge neutral">${esc(verdictLabel(r.request.verdict))}</span><button class="button" data-event="${esc(r.request.event_id)}" data-open-tab="signals">Open turn</button></div>`).join('') || empty('Your corrections belong here','Open a signal, inspect its evidence, and save MATCH or NOT MATCH.','<a class="button" href="#signals">Explore signals</a>');
+  }
+  function renderAllowance(data) {
+    const target = $('account-allowance');
+    if (data.mode === 'local_unmetered') {
+      target.innerHTML = '<p>This local workspace has no cloud allowance configured.</p><p class="small muted">These records do not establish a hosted subscription.</p>'; return;
+    }
+    if (data.mode === 'unconfigured') {
+      target.innerHTML = '<p>The service has not configured account allowances yet.</p><p class="small muted">This does not establish a free or paid subscription.</p>'; return;
+    }
+    if (data.mode !== 'enforced' || !data.allowance || !data.used) {
+      target.innerHTML = empty('Allowance unavailable','New uploads may be waiting for the service operator to restore the allowance policy. Your received activity remains available.'); return;
+    }
+    const cards = [['turns','Agent turns'],['events','SDK events']].map(([key,label]) => {
+      const used = data.used[key], limit = data.allowance[key+'_per_month'];
+      const remaining = Math.max(0,limit-used);
+      return `<div class="allowance-card"><h3>${label}</h3><strong>${fmt(used)} of ${fmt(limit)}</strong><p>${remaining ? fmt(remaining)+' remaining this month' : 'Monthly allowance reached'}</p>${limit > 0 ? `<progress aria-label="${label} used this month" value="${Math.min(used,limit)}" max="${limit}"></progress>` : ''}</div>`;
+    }).join('');
+    target.innerHTML = `<p><span class="badge neutral">${esc(data.allowance.label)}</span></p><div class="allowance-grid">${cards}</div><p>Resets ${esc(date(data.resets_at))}. Your existing activity stays available when an allowance is reached.</p>${data.grant_active ? `<p>This account allowance expires ${esc(date(data.grant_expires_at))}, then returns to the service default. Usage is retained.</p>` : ''}<details><summary>How allowances work</summary><p>Connected collectors keep pending captures locally and retry. Replaying an accepted turn or event does not use another allowance. Local disk space still matters.</p><p>These are accepted records, not tokens or money spent with an AI provider. Agent turns and SDK events have separate allowances. Billing and plan changes are not connected here yet.</p><p>Counts use the server receipt month in UTC, starting when allowance accounting was installed. Earlier history may be excluded. Shown as of ${esc(date(data.as_of))}. Refresh to check again.</p></details>`;
   }
   function renderSettings() {
     const cfg = metadata.settings || {disabled:[],options:{}};
@@ -433,7 +451,19 @@
         renderSources();
       }
       if (currentRoute.view === 'learning') renderLearning();
-      if (currentRoute.view === 'settings') renderSettings();
+      if (currentRoute.view === 'settings') {
+        renderSettings();
+        $('account-allowance').innerHTML = '<p>Loading your allowance...</p>';
+        try {
+          const allowance = await api('/v1/allowances');
+          if (g !== generation) return;
+          renderAllowance(allowance);
+        } catch(e) {
+          if (g !== generation || e.name === 'AbortError') return;
+          if (e.status === 401) throw e;
+          $('account-allowance').innerHTML = empty('Allowance unavailable','Your usage could not be checked. Refresh to retry; no remaining allowance is assumed.');
+        }
+      }
       if (currentRoute.view === 'library') renderLibrary();
       if (currentRoute.view === 'projects') renderProjects();
       if (currentRoute.view === 'datasets') renderDatasets();

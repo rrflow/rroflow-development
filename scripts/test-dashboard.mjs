@@ -318,3 +318,25 @@ test('navigation keeps the configured brand in the document title as plain text'
   assert.equal(p.document.title,'Orbit <b>AI</b> \u00b7 Overview');
   await p.route('#signals');assert.equal(p.document.title,'Orbit <b>AI</b> \u00b7 Findings');
 });
+
+const allowanceFixture=()=>({mode:'enforced',allowance:{plan:'fixture',label:'Test <paid> allowance',turns_per_month:10,events_per_month:0},used:{turns:12,events:0},resets_at:'2026-11-01T00:00:00Z',as_of:'2026-10-30T00:00:00Z',grant_active:false,billing_connected:false});
+test('allowances show truthful quota state, escape labels and clear private counts at logout',async()=>{
+  const p=await page({signedIn:true,hash:'#settings',intercept:async path=>path==='/v1/allowances'?{ok:true,status:200,json:async()=>allowanceFixture()}:null});
+  const html=p.el.get('account-allowance').innerHTML;
+  assert.match(html,/Test &lt;paid&gt; allowance/);assert.match(html,/12 of 10/);assert.match(html,/Monthly allowance reached/);assert.match(html,/value="10" max="10"/);assert.doesNotMatch(html,/max="0"/);assert.match(html,/Billing and plan changes are not connected/);
+  await p.el.get('logout').onclick();assert.equal(p.el.get('account-allowance').innerHTML,'');
+});
+test('allowance unavailable, local and unconfigured states never claim a paid plan',async()=>{
+  for(const mode of ['local_unmetered','unconfigured','unavailable']){
+    const p=await page({signedIn:true,hash:'#settings',intercept:async path=>path==='/v1/allowances'?{ok:true,status:200,json:async()=>({mode})}:null});
+    assert.doesNotMatch(p.el.get('account-allowance').innerHTML,/remaining this month|progress/);
+  }
+  const p=await page({signedIn:true,hash:'#settings',intercept:async path=>path==='/v1/allowances'?{ok:false,status:503,json:async()=>({})}:null});
+  assert.match(p.el.get('account-allowance').innerHTML,/could not be checked/);
+});
+test('late allowance responses cannot restore a signed-out account',async()=>{
+  let release;const pending=new Promise(r=>release=r);
+  const p=await page({signedIn:true,hash:'#settings',intercept:async path=>path==='/v1/allowances'?pending:null});
+  await p.el.get('logout').onclick();release({ok:true,status:200,json:async()=>allowanceFixture()});await p.settle();
+  assert.equal(p.el.get('account-allowance').innerHTML,'');
+});
