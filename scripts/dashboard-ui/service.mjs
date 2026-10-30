@@ -5,7 +5,7 @@ import {join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'node:net';
-export async function startFixture() {
+export async function startFixture({brand} = {}) {
   if(!['linux','win32'].includes(process.platform) || !process.env.RROFLOW_UI_BINARY) throw new Error('Select a built Linux or Windows fixture binary using RROFLOW_UI_BINARY.');
   const root=mkdtempSync(join(tmpdir(),'rroflow-ui-fixture-'));
   const key=randomBytes(32).toString('hex');
@@ -17,7 +17,9 @@ export async function startFixture() {
   try {
     const listener=createServer();await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
     const config=join(root,'fixture.toml');
-    writeFileSync(config,`listen = "127.0.0.1:${port}"\ndata_dir = ${JSON.stringify(root.replaceAll('\\','/')+'/data')}\n[[devspace]]\nid = "ui_fixture"\nkey_sha256 = ["${createHash('sha256').update(key).digest('hex')}"]\n`,{mode:0o600});
+    const brandToml=brand ? '\n[brand]\n'+Object.entries(brand).filter(([key])=>key!=='links').map(([key,value])=>`${key} = ${JSON.stringify(value)}\n`).join('')
+      +(brand.links?.length ? brand.links.map(link=>`[[brand.links]]\nlabel = ${JSON.stringify(link.label)}\nurl = ${JSON.stringify(link.url)}\n`).join('') : 'links = []\n') : '';
+    writeFileSync(config,`listen = "127.0.0.1:${port}"\ndata_dir = ${JSON.stringify(root.replaceAll('\\','/')+'/data')}\n[[devspace]]\nid = "ui_fixture"\nkey_sha256 = ["${createHash('sha256').update(key).digest('hex')}"]\n${brandToml}`,{mode:0o600});
     const env={...process.env};delete env.RROFLOW_DATABASE_URL;delete env.RROFLOW_INGEST_CONFIG;
     child=spawn(resolve(process.env.RROFLOW_UI_BINARY),['serve','--config',config],{env,windowsHide:true,stdio:['ignore','ignore','pipe']});
     child.stderr.on('data',bytes=>{stderr=(stderr+bytes.toString()).slice(-4000);});

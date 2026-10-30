@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
+  const brandName = $('brand-name')?.textContent?.trim() || document.title?.split(' \u00b7 ')[0] || 'AI workspace';
   const all = selector => [...document.querySelectorAll(selector)];
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const fmt = value => value == null ? 'Unknown' : Number(value).toLocaleString();
@@ -20,7 +21,7 @@
     sources:['Sources','See what has reported activity and how to connect your agents.'],
     learning:['From evidence to improvement','Corrections today. Consented datasets and evaluated learning next.'],
     settings:['Settings','Make this workspace yours. Control which signals are evaluated.'],
-    research:['Research & guides','The source notes, observations and decisions behind RROFLOW.'],
+    research:['Research & guides','The source notes, observations and decisions behind this service.'],
   };
   let key = '', signedIn = false, generation = 0, controller, metadata;
   let records = [], revisions = {}, reviews = [], reviewError = '', journal = [], journalError = '';
@@ -389,7 +390,7 @@
     $('main-content').setAttribute('aria-busy','true');
     $('page-title').textContent = views[currentRoute.view][0]; $('page-description').textContent = views[currentRoute.view][1];
     $('breadcrumb').textContent = 'Workspace / ' + views[currentRoute.view][0];
-    document.title = 'RROFLOW · ' + views[currentRoute.view][0];
+    document.title = brandName + ' \u00b7 ' + views[currentRoute.view][0];
     all('[data-nav]').forEach(a => { if (a.dataset.nav === currentRoute.view) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current'); });
     all('[data-view]').forEach(el => { el.hidden = el.dataset.view !== (['activity','signals'].includes(currentRoute.view) ? 'explorer' : currentRoute.view); });
     showError(''); $('loading').hidden = false; $('signal-overview').replaceChildren(); $('signal-overview').hidden = true;
@@ -623,7 +624,7 @@
       if (g !== generation) return;
       $('signin').hidden = !config.enabled;
       if (config.enabled && config.member_origin) $('signin').href = config.member_origin + '/auth/login';
-      $('signin-status').textContent = config.enabled ? 'Open your workspace with your Shippin account.' : 'Account sign-in is not enabled on this server yet. Return to the public page to learn about RROFLOW, or use an existing devspace key below.';
+      $('signin-status').textContent = config.enabled ? 'Open your workspace with your account.' : 'Account sign-in is not enabled on this server yet. Return to the public page to learn about this service, or use an existing devspace key below.';
       if (new URLSearchParams(location.search).has('signin')) { history.replaceState(null,'','/app' + location.hash); $('login-error').textContent = 'Sign-in could not finish. Please try again.'; return; }
       const who = await fetch('/v1/whoami',{credentials:'same-origin'});
       if (g !== generation) return;

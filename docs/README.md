@@ -61,6 +61,9 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 
 [Collector deployment configuration and license status](plan/deployment-configuration.md) records public profiles, endpoint/account binding and remaining customization work.
 
+[Public/member brand configuration](ux/brand-configuration.md) defines validated
+operator settings for names, introductory copy, links and vector accent colors.
+
 ## Rule
 
 A new or changed doc lands here by pull request. The project copy is updated from this file, not the other way round.

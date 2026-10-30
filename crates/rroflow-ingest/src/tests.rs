@@ -585,6 +585,67 @@ async fn catalogue_is_public_and_grouped_by_category() {
 }
 
 #[tokio::test]
+async fn brand_configuration_is_instance_scoped_and_never_opens_member_data() {
+    let mut env = Env::new(Backend::Jsonl, "brand");
+    env.cfg.brand = BrandConfig {
+        name: "Orbit AI".into(),
+        accent: "#124b70".into(),
+        highlight: "#b7e7ff".into(),
+        ..Default::default()
+    };
+    let custom = env.app().await;
+    let default = Env::new(Backend::Jsonl, "default_brand").app().await;
+    for (app, name, color) in [
+        (&custom, "Orbit AI", "#124b70"),
+        (&default, "RROFLOW", "#36634e"),
+    ] {
+        for path in ["/", "/app", "/app/"] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let csp = response.headers()["content-security-policy"]
+                .to_str()
+                .unwrap();
+            assert!(csp.contains("script-src 'self'; style-src 'self'"));
+            assert!(!csp.contains("unsafe-inline"));
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let html = std::str::from_utf8(&body).unwrap();
+            assert!(html.contains(name));
+            assert!(html.contains("/assets/brand.css"));
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/assets/brand.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/css; charset=utf-8"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(std::str::from_utf8(&body).unwrap().contains(color));
+        let (code, _) = call(
+            app,
+            Request::get("/v1/summary").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED);
+    }
+    env.cfg.brand.accent = "#ffffff".into();
+    let store = Arc::new(env.cfg.open_store().await.unwrap());
+    assert!(AppState::new(&env.cfg, store).is_err());
+}
+
+#[tokio::test]
 async fn public_product_entry_is_separate_from_member_data() {
     let app = Env::new(Backend::Jsonl, "public").app().await;
     for (path, needle) in [
