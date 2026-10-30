@@ -104,6 +104,13 @@ impl Store {
                 "store directory unavailable"
             ),
             Store::Postgres(store) => {
+                if store.require_allowance_policy {
+                    let exists: bool =
+                        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM allowance_policy)")
+                            .fetch_one(&store.pool)
+                            .await?;
+                    anyhow::ensure!(exists, "required allowance policy unavailable");
+                }
                 sqlx::query("SELECT event_id FROM turns LIMIT 0")
                     .execute(&store.pool)
                     .await?;

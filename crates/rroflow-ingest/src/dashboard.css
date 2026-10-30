@@ -140,3 +140,6 @@ main{max-width:1580px;margin:0 auto}
 .signal-day strong{display:block;font-size:12px;color:var(--text);font-weight:600}.signal-story details summary{cursor:pointer}.signal-story details p{line-height:1.7}
 
 .signal-day-detail{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* Account capacity uses the same theme tokens as the evidence workspace. */
+.allowance-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:20px 0}.allowance-card{padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--panel);overflow-wrap:anywhere}.allowance-card h3{margin:0 0 12px}.allowance-card strong{font-size:1.5rem}.allowance-card progress{display:block;width:100%;height:8px;accent-color:var(--accent);margin-top:16px}@media(max-width:480px){.allowance-grid{gap:10px}.allowance-card{padding:12px}.allowance-card strong{font-size:1.2rem}}

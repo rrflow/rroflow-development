@@ -80,7 +80,7 @@ been investigated. No unverified competitor security claim is inferred.
 | C35 | Supervised improvement | U1, H1 | designed | Consented journaled labels, bounded training jobs, holdout intervals, candidate evidence and monitored rollout |
 | C36 | Unsupervised discovery | U1, H1 | designed | Eligible unlabelled data, reproducible embeddings/clusters, novelty review; clusters never become truth labels |
 | C37 | Reversible promotion and recursive improvement | U1, H1 | designed: mechanism/RRFlow learning contract | Inactive candidates, independent held-out admission, versioned deployment, monitoring and revert receipts |
-| C38 | Free/paid entitlements and quota behavior | R0, U1 | missing integration | Server-owned Shippin entitlement contract, downgrade/expiry handling, quota and retry semantics |
+| C38 | Free/paid entitlements and quota behavior | R0, U1 | partial: [server-owned monthly allowances](../spec/account-allowances-v1.md), expiring grants, replay-safe enforcement and member status | Shippin entitlement synchronization, billing, rate/burst and retention policies remain open |
 | C39 | Member source/key management and onboarding | R0, U1 | partial: auth, public entry, setup guide and milestones | Live signup, self-service source credentials/revoke, same-account readback and no manual operator key handoff |
 | C40 | Organization/project RBAC, SSO and provisioning | R0, U1 | partial: isolated Nomen-owned devspaces | Shared platform identity contracts; roles, team/project permission tests and enterprise provisioning |
 | C41 | Audit, retention, deletion, residency and export controls | R0, U1 | missing service controls | Owned policies, complete audit trail, deletion/revocation propagation and operational verification |

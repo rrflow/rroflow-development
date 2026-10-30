@@ -13,6 +13,7 @@ use std::time::Duration;
 
 pub struct PgStore {
     pub(crate) pool: PgPool,
+    pub(crate) require_allowance_policy: bool,
 }
 
 impl PgStore {
@@ -25,6 +26,9 @@ impl PgStore {
         sqlx::query("SELECT id FROM devspaces WHERE id = $1 FOR UPDATE")
             .bind(ds)
             .fetch_one(&mut *tx)
+            .await?;
+        let ids: Vec<_> = events.iter().map(|e| e.event_id.clone()).collect();
+        crate::allowances::reserve(&mut tx, ds, "events", &ids, self.require_allowance_policy)
             .await?;
         for e in events {
             sqlx::query("INSERT INTO capture_events (devspace_id,event_id,capture_id,sequence,agent,observed_at,record) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING")
@@ -94,7 +98,10 @@ impl PgStore {
             .connect(url)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            require_allowance_policy: false,
+        })
     }
 
     pub async fn ensure_devspaces(&self, ids: &[String]) -> anyhow::Result<()> {
@@ -299,6 +306,18 @@ impl PgStore {
             .bind(devspace)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("SELECT id FROM devspaces WHERE id=$1 FOR UPDATE")
+            .bind(devspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        crate::allowances::reserve(
+            &mut tx,
+            devspace,
+            "turns",
+            &event_id,
+            self.require_allowance_policy,
+        )
+        .await?;
         let inserted: Vec<bool> = sqlx::query_scalar(
             r#"
             INSERT INTO turns (

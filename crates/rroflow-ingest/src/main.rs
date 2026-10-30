@@ -17,6 +17,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Install revisioned server-owned allowances (operator access only; no billing action).
+    Allowance {
+        #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
+        config: PathBuf,
+        #[arg(long, env = "RROFLOW_DATABASE_URL", hide_env_values = true)]
+        database_url: Option<String>,
+        /// JSON allowance-policy/v1, or allowance-grant/v1 when --devspace is supplied.
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        devspace: Option<String>,
+    },
     /// Print immutable release identity without reading configuration or opening a store.
     BuildInfo,
     /// Serve the ingest API.
@@ -79,6 +91,28 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
+        Cmd::Allowance {
+            config,
+            database_url,
+            file,
+            devspace,
+        } => {
+            let mut cfg = load_config(&config, database_url)?;
+            // This command installs the policy required by subsequent Serve startup.
+            cfg.require_allowance_policy = false;
+            let Store::Postgres(pg) = cfg.open_store().await? else {
+                anyhow::bail!("account allowances need Postgres");
+            };
+            let bytes = std::fs::read(file)?;
+            if let Some(ds) = devspace {
+                let grant: rroflow_ingest::allowances::Grant = serde_json::from_slice(&bytes)?;
+                pg.set_allowance_grant(&ds, &grant).await?;
+            } else {
+                let policy: rroflow_ingest::allowances::Policy = serde_json::from_slice(&bytes)?;
+                pg.set_allowance_policy(&policy).await?;
+            }
+            println!("Allowance revision saved. No billing or consent was changed.");
+        }
         Cmd::BuildInfo => println!("{}", serde_json::to_string(&rroflow_ingest::build_info())?),
         Cmd::Keygen { devspace } => {
             let mut bytes = [0u8; 32];
@@ -116,10 +150,7 @@ async fn main() -> anyhow::Result<()> {
             database_url,
         } => {
             let cfg = load_config(&config, database_url)?;
-            anyhow::ensure!(
-                !cfg.devspace.is_empty(),
-                "config has no [[devspace]] entries"
-            );
+            cfg.validate_authentication()?;
             let store = cfg.open_store().await.context("open store")?;
             let where_ = match &store {
                 Store::Postgres(_) => "postgres".to_string(),

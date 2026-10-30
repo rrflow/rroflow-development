@@ -42,3 +42,7 @@ key_sha256 = ["<hash printed by keygen>"]
 - No prompt text or key reached the server without `--content`.
 
 **Not yet:** deployment on Shippin.cloud with devspace ids from the Shippin IdP, TLS, and per-devspace rate limits.
+
+## Account allowances
+
+Hosted Postgres deployments can enforce operator-configured monthly turn and SDK-event allowances, with expiring account grants and replay-safe quota accounting. See [account allowances v1](../../docs/spec/account-allowances-v1.md) for configuration, migration and remaining billing boundaries. Settings displays the authenticated account status.

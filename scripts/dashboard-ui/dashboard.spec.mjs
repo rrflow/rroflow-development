@@ -244,3 +244,27 @@ test('guided next steps open evidence, accessible help and the right connection 
   await expect(page.locator('#setup-sdk')).toContainText('cannot read your subscription app history');
   await page.getByRole('button',{name:'Check my sources',exact:false}).click();await settled(page);await expect(page.locator('[data-nav="sources"]')).toHaveAttribute('aria-current','page');
 });
+
+test('account allowance explains capacity, expiry and unavailable states',async({page,service,isMobile},info)=>{
+  await signIn(page,service);await navigate(page,'settings');
+  await expect(page.locator('#account-allowance')).toContainText('local workspace has no cloud allowance');
+  // Controlled response fixture; hosted database enforcement is tested separately.
+  const allowance={mode:'enforced',allowance:{plan:'fixture',label:'Plus test allowance',turns_per_month:100,events_per_month:500},used:{turns:100,events:125},resets_at:'2026-11-01T00:00:00Z',as_of:'2026-10-30T12:00:00Z',grant_active:true,grant_expires_at:'2026-11-10T00:00:00Z',billing_connected:false};
+  await page.route('**/v1/allowances',route=>route.fulfill({json:allowance}));
+  await navigate(page,'overview');await navigate(page,'settings');
+  await expect(page.locator('#account-allowance')).toContainText('Monthly allowance reached');
+  await expect(page.locator('#account-allowance')).toContainText('375 remaining this month');
+  await expect(page.locator('#account-allowance')).toContainText('then returns to the service default');
+  await page.locator('#account-allowance summary').click();
+  await expect(page.locator('#account-allowance')).toContainText('Billing and plan changes are not connected');
+  await page.locator('#account-allowance summary').click();
+  await page.locator('#allowance-title').evaluate(el=>el.scrollIntoView({block:'start'}));
+  await page.evaluate(()=>window.scrollBy(0,-90));
+  await reflow(page);await accessible(page);await screenshot(page,info,'account-allowance');
+  await page.unroute('**/v1/allowances');await page.route('**/v1/allowances',route=>route.fulfill({status:503,json:{error:'fixture'}}));
+  await navigate(page,'overview');await navigate(page,'settings');
+  await expect(page.locator('#account-allowance')).toContainText('no remaining allowance is assumed');
+  await expect(page.locator('#account-allowance progress')).toHaveCount(0);
+  if(isMobile) await page.getByRole('button',{name:'Toggle navigation'}).click();
+  await page.locator('#logout').click();await expect(page.locator('#account-allowance')).toBeEmpty();
+});
