@@ -15,7 +15,7 @@ use std::{
 };
 
 const BATCH_LIMIT: usize = 4 * 1024 * 1024;
-mod service;
+pub(crate) mod service;
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -529,7 +529,7 @@ fn get(client: &ureq::Agent, sender: &account::Sender, path: &str) -> Result<Val
     Ok(response.body_mut().read_json()?)
 }
 
-fn default_root(env: &str, hidden: &str, leaf: &str) -> Result<PathBuf> {
+pub(crate) fn default_root(env: &str, hidden: &str, leaf: &str) -> Result<PathBuf> {
     let base = std::env::var_os(env)
         .map(PathBuf::from)
         .or_else(|| {

@@ -1,6 +1,6 @@
 # rroflow docs
 
-Everything that guides rroflow.ai and the RRFlow work lives here, in git, so nothing exists only in a chat or a project space. The claude.ai project "Rrflow" keeps copies under `claude/…`; documents written there refer to each other by those names, so the table below maps each one to its file here. When the two differ, this repository is the record.
+Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRFlow work lives here, in git, so nothing exists only in a chat or a project space. The claude.ai project "Rrflow" keeps copies under `claude/…`; documents written there refer to each other by those names, so the table below maps each one to its file here. When the two differ, this repository is the record.
 
 ## rroflow.ai (this product)
 
@@ -9,7 +9,9 @@ Everything that guides rroflow.ai and the RRFlow work lives here, in git, so not
 | [plan/rroflow-ai-plan.md](plan/rroflow-ai-plan.md) | The plan: product split (RRFlow engine vs rroflow.ai), learning vision, decisions D-1…D-6, build order | `claude/rroflow-ai-plan.md` |
 | [plan/capability-map.md](plan/capability-map.md) | Raindrop + Sentry + PostHog AI capability baseline, implementation status and acceptance gaps | `claude/rroflow-capability-map.md` |
 | [plan/identity-and-devspaces.md](plan/identity-and-devspaces.md) | Nomen identity, devspaces, Shippin tenant attach, API, Nomen app ids, sign-in setup on tx-infra-prod | `claude/rroflow-identity-and-devspaces.md` |
-| [plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md) | Installing the rroflow SDK, detecting installed agents and subscriptions, linking them to rroflow.ai | — |
+| [plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md) | Installing the rroflow SDK, detecting installed agents and subscriptions, linking them to rroflow.ai, releases | `claude/rroflow-sdk-install-and-linking.md` |
+| [deploy/README.md](deploy/README.md) | Where rroflow.ai runs (Texas), the VM-behind-the-edge layout, pull deploys, the dashboard stack, owner steps | `claude/rroflow-deploy.md` |
+| [STATUS.md](STATUS.md) | Where everything stands: built, released, deployed, open, and whose step it is | `claude/rroflow-status.md` |
 | [plan/canon-alignment-notes.md](plan/canon-alignment-notes.md) | Vocabulary and canon constraints the mechanism spec must follow | `claude/rroflow-canon-alignment-notes.md` |
 | [spec/mechanism-spec-v0.md](spec/mechanism-spec-v0.md) | RROFLOW mechanism spec v0 (behaviour signals, findings, experiments, the learning loops) | `claude/rroflow-mechanism-spec-v0.md` |
 | [ux/vibe-coder-onboarding.md](ux/vibe-coder-onboarding.md) | Onboarding plan for vibe coders | `claude/rroflow-vibe-coder-onboarding.md` |

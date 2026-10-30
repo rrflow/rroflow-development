@@ -17,7 +17,7 @@ the installer (`/etc/rroflow/nomen.toml`):
 ```toml
 [browser]
 origin = "https://app.rroflow.ai"
-client_id = "396821568908492804"
+client_id = "397185155288072195"
 ```
 
 Register the exact callback `https://app.rroflow.ai/auth/callback` on that public

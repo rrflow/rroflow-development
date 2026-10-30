@@ -46,15 +46,15 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 5. Public: `api.rroflow.ai` (API) and `app.rroflow.ai` (dashboard), both A records to 23.156.136.173, TLS at Caddy in front of `127.0.0.1:8787`. Both hosts reach the same service, so the dashboard's API calls are same-origin.
 6. Attach a devspace to a Shippin tenant (`shippin_tenant_id`), started from the Shippin console.
 
-## Nomen setup (created 2026-10-26, project `rroflow` in the Shippin Platform org)
+## Nomen setup (recreated 2026-10-28, project `rroflow` in the Hades org on id.shippin.cloud)
 
 | What | Value |
 |---|---|
 | Issuer | `https://id.shippin.cloud` (endpoints under `/oauth/v2/`) |
-| Project id (the `aud`) | `396821566727389188` |
-| `rroflow-ingest` API app, private-key JWT (introspection) | client id `396821567230771204`; key in Gold's `platform-core.sops.yaml` as `rroflow_ingest_jwt_key_b64` |
-| `rroflow-cli` native app, device flow + refresh, no secret | client id `396821568421953540` |
-| `rroflow-dashboard` web app, authorization code + PKCE + refresh, no secret | client id `396821568908492804`; redirect `https://app.rroflow.ai/auth/callback` |
+| Project id (the `aud`) | `397185153912274947` |
+| `rroflow-ingest` API app, private-key JWT (introspection) | client id `397185154214264835`; key in Gold's `platform-core.sops.yaml` as `rroflow_ingest_jwt_key_b64` |
+| `rroflow-cli` native app, device flow + refresh, no secret | client id `397185154935750659` |
+| `rroflow-dashboard` web app, authorization code + PKCE + refresh, no secret | client id `397185155288072195`; redirect `https://app.rroflow.ai/auth/callback` |
 
 DNS: `rroflow.ai` → 23.156.136.173 (Cloudflare proxy off). `api.rroflow.ai` and `app.rroflow.ai` to be added the same way.
 
@@ -66,8 +66,8 @@ DNS: `rroflow.ai` → 23.156.136.173 (Cloudflare proxy off). `api.rroflow.ai` an
    ```toml
    [nomen]
    issuer = "https://id.shippin.cloud"
-   audiences = ["396821566727389188"]
-   clients = ["396821568421953540", "396821568908492804"]
+   audiences = ["397185153912274947"]
+   clients = ["397185154935750659", "397185155288072195"]
    key_file = "/etc/rroflow/nomen-key.json"
    ```
 3. Re-run the deploy; it prints `nomen sign-in: on`.

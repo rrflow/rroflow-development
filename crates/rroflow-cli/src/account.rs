@@ -24,9 +24,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub(crate) const DEFAULT_ISSUER: &str = "https://id.shippin.cloud";
 /// `rroflow-cli`, the native application in Nomen's `rroflow` project (device
 /// authorization and refresh tokens, no secret).
-pub(crate) const DEFAULT_CLIENT_ID: &str = "396821568421953540";
-/// The `rroflow` project in Nomen (Shippin Platform org): the audience the ingest accepts.
-pub(crate) const DEFAULT_PROJECT_ID: &str = "396821566727389188";
+pub(crate) const DEFAULT_CLIENT_ID: &str = "397185154935750659";
+/// The `rroflow` project in Nomen (id.shippin.cloud, recreated 2026-10-28): the audience the ingest accepts.
+pub(crate) const DEFAULT_PROJECT_ID: &str = "397185153912274947";
 pub(crate) const DEFAULT_INGEST_URL: &str = "https://api.rroflow.ai";
 pub(crate) const FILE_NAME: &str = "account.json";
 const SCOPE: &str = "openid profile email offline_access urn:zitadel:iam:user:resourceowner";

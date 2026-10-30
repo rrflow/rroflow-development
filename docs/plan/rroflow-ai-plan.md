@@ -134,6 +134,8 @@ capture ─▶ signals ─▶ evidence ─▶ labels ─▶ candidates ─▶ he
 - **Public site:** same pattern as the decided rrflow.ai site (Astro static + islands, plus a Rust gateway that is the only data client; source chip on every live panel; planned states labelled, never sample data). Explainers rendered with Remotion. Lives in `site/` in this repo (repo scope already decided: outward lab + site).
 - **Hosted track runs on Shippin.cloud.** `api.rroflow.ai` ingest and the hosted dashboard are deployed as Shippin.cloud services. Accounts and plans come from shippin.ai, and auth from the shared IdP. Endpoints are configuration, nothing hardcoded.
 - **Store:** hosted ingest on Postgres (D-4); the on-machine store is still open. Identity and devspaces: [identity-and-devspaces.md](identity-and-devspaces.md).
+- **Dashboard (D-7):** Rust API + React 19/Vite/TypeScript in `web/`, embedded in and served by `rroflow-ingest`; TypeScript types generated from the Rust records. No Go layer.
+- **Deploy (D-8):** Texas, in a VM behind the edge container; the VM pulls verified GitHub releases. [../deploy/README.md](../deploy/README.md).
 
 ## 8. Build order (one PR each; each builds on the last)
 
@@ -159,6 +161,8 @@ Hosted track, in parallel from increment 2 on the same event model:
 - **D-4 Store — hosted answered 2026-10-26: Postgres on tx-infra-prod.** The rroflow.ai ingest keeps devspaces, turns, signal hits and signal settings in Postgres (schema in `crates/rroflow-ingest/migrations/`). The on-machine store stays open: Parquet + DataFusion (devpulselabs, 2026-08) vs Turso vs RRFlow when ready. Not canon until saved as an ADR.
 - **D-5 Term.** "Behaviour signal" for the learned classifier, because "signal" is already H-05 telemetry in RRFlow.
 - **D-6 Devspace identity — answered 2026-10-26:** a devspace is owned by the user's Nomen account (issuer + `sub`), the identity shared by all Shippin services. If the user grows into Shippin.cloud, the devspace is attached to their Shippin tenant; the data does not move. Not canon until saved as an ADR.
+- **D-7 Dashboard stack — answered 2026-10-27: Rust API + React.** The API stays Rust (it shares `rroflow-core` with the CLI); the dashboard is React 19 + Vite + TypeScript in `web/`, the stack of Devagotchi's apps, with types generated from the Rust records and a CI drift check. Rejected: a Go layer (it would duplicate the types and add nothing the Rust API lacks) and a Go rewrite of the API. Not canon until saved as an ADR.
+- **D-8 Deploys — answered 2026-10-27: the server pulls releases.** rroflow.ai runs on Texas in its own VM behind the edge container (Nomen's layout). The repository is public, so no self-hosted runner or GitHub credential lives on the server: `rroflow-host update` pulls the newest GitHub release, verifies its checksum and build attestation, installs, health-checks and rolls back on failure. Details: [../deploy/README.md](../deploy/README.md). Not canon until saved as an ADR.
 
 ## 10. Sources
 
