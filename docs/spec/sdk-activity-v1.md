@@ -1,8 +1,8 @@
 # SDK activity and evidence v1
 
-Status: core projector and structural capture facts implemented on `codex/sdk-monitoring`.
-Hosted projection jobs/indexes, shared UI and SDK review persistence are not implemented
-by this contract alone. TASK-037 stays open until that complete path is verified.
+Status: implemented on `codex/sdk-monitoring`: core projector, structural facts, hosted
+PostgreSQL work/indexes, member dashboard and immutable SDK reviews. Verification and
+release receipts are recorded in the owning execution plan; this is not a deployment claim.
 
 ## What an activity means
 
@@ -59,19 +59,64 @@ Initial fixed, versioned observations are `sdk_call_failed`, `sdk_tool_failed`,
 root cause. A non-terminal error item does not establish failure of the whole call.
 Future configurable signal policies must preserve the definition and evidence revisions.
 
-## Storage and UI work still required
+## Durable hosted storage and publication
 
-The hosted implementation needs account-scoped derived records and durable work/backfill
-tracking. New source events must invalidate the relevant projection without charging a
-second turn allowance. Worker publication must reject stale revisions, recover crashes
-and expose pending/error coverage. Raw events cannot be discarded after projection.
-All list/count/filter paths must use the same published cohort and report its coverage.
+Migration `0010_sdk_activities.sql` queues existing captures without changing raw events.
+Newly inserted events update a capture's source revision in the same transaction; exact
+replay does not dirty it or consume another allowance. Derived activities do not consume
+turn allowance. All work, activities and reviews are scoped by authenticated devspace.
 
-Activity and Findings must expose SDK operations alongside session work with clear kind
-labels, hierarchy, outcome explanation and exact source-event drill-down. Reviews must
-pin the projection digest and rule version, retaining the reviewed snapshot when later
-events change the current projection. They must not trigger training or promotion.
-These server and user-facing requirements are acceptance criteria, not shipped claims.
+Workers claim durable leases with `SKIP LOCKED`, read one complete received capture in a
+repeatable-read snapshot, strip private payloads in SQL, and atomically publish a complete
+set of operation projections. An expired or replaced lease cannot publish. New arrivals
+while processing preserve the active lease: the verified older snapshot can publish, with
+`new_events_pending`, and the next source revision stays queued. This avoids starving a
+busy source while making staleness explicit. Crash recovery and capped retry exhaustion
+are visible. A failed/capacity-limited job keeps raw events and its last published result.
+
+`serve` starts the PostgreSQL worker by default. `[sdk_activity]` can set:
+
+```toml
+embedded_worker = true
+max_events_per_capture = 20000
+max_snapshot_bytes = 16777216
+poll_seconds = 2
+lease_seconds = 60
+max_attempts = 3
+retry_seconds = 30
+```
+
+For dedicated workers set `embedded_worker = false` and run
+`rroflow-ingest activity-worker --config <service.toml>`. `--once` processes at most one
+claim. `--retry-errors` resets failed work after the operator fixes its source/configuration.
+The CLI reads the same database configuration; it does not take an account key. Each
+snapshot is bounded before allocation, projection output is byte-bounded, and database
+statements have a ten-second timeout. These limits are explicit capacity controls, not
+production load qualification. Failed jobs and pending captures are workspace-wide counts.
+
+## Monitoring and immutable reviews
+
+`GET /v1/sdk/activity` uses one published cohort for list/count filters: agent, session,
+outcome, signal, literal metadata search, observation interval, exact ID, and has-findings.
+Keyset pages use observation time plus activity ID and return at most 100 compact rows.
+The same repeatable-read transaction supplies counts and pending/error coverage. Detailed
+provenance is fetched only for an exact ID. `/v1/events?event_id=...` resolves the original
+source record within the same account, without relying on the latest journal page.
+
+Activity and Findings have an SDK operations view alongside Session turns. It explains
+outcomes, usage unknowns, parent links, unsupported events and waiting updates. Lists are
+compact; the same-origin UI module loads on demand. Event lists expand in batches of 50.
+Recorded content is escaped text, never HTML. Sign-out and route changes invalidate late
+responses. The JSONL/local service explicitly reports SDK indexing as unavailable; its raw
+events remain in Sources. Standalone local indexing is separate future work.
+
+`POST /v1/sdk/reviews` pins activity revision, signal/rule version, reviewer and immutable
+metadata snapshot. Stale new reviews are refused; identical accepted retries stay valid
+after later source events. A review ID cannot be reused with different evidence/verdict.
+`GET /v1/sdk/reviews` returns bounded metadata, optionally scoped by activity; exact review
+ID returns the saved snapshot. The dashboard can inspect earlier reviews after the current
+projection changes. Review snapshots are private and do not grant training consent.
+SDK reviews are not yet included in the existing turn-based dataset collection policies.
 
 ## Sources and verification
 
@@ -91,3 +136,11 @@ terminals, zero/missing usage, tool errors, interrupted consumers and parent int
 The SDK fixture suite sends actual recorded events through Rust ingest/readback and the
 same core projector using `project-capture`, a bounded verification example. It makes no
 paid model calls and is not proof of live Grok or browser/mobile subscription capture.
+
+PostgreSQL integration tests exercise pre-migration backfill, raw-event preservation,
+replay, late arrivals, stale/expired leases, retry exhaustion, capacity recovery, identical
+filter/count pagination, exact event ownership and pinned review readback. The isolated
+member browser fixture uses all three actual JavaScript adapters and the Rust durable
+recorder against the hosted store/worker, then inspects activity, findings, original events,
+late revisions and immutable reviews on desktop and phone. Its native responses are fixtures;
+there is no paid provider call or claim of subscription web/mobile history access.

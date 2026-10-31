@@ -90,7 +90,7 @@ jobs:
       - name: Toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - name: Build hosted service from the pinned revision
-        run: cargo build --release --locked -p rroflow-ingest
+        run: cargo build --release --locked -p rroflow-ingest -p rroflow
       - name: Package server and embedded identity
         run: node scripts/package-ingest.mjs target/release/rroflow-ingest target/hosted "$RROFLOW_BUILD_REVISION" x86_64-unknown-linux-gnu
       - name: Verify the exact packaged server with disposable fixture data

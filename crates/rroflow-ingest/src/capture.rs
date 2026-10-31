@@ -17,6 +17,7 @@ pub(crate) struct Batch {
 pub(crate) struct Filter {
     agent: Option<String>,
     capture_id: Option<String>,
+    event_id: Option<String>,
     limit: Option<usize>,
 }
 
@@ -62,10 +63,22 @@ pub(crate) async fn list(
     let limit = f.limit.unwrap_or(100).min(1000);
     let events = match st.store.as_ref() {
         Store::Postgres(p) => {
-            p.capture_list(&ds, f.agent.as_deref(), f.capture_id.as_deref(), limit)
-                .await
+            p.capture_list(
+                &ds,
+                f.agent.as_deref(),
+                f.capture_id.as_deref(),
+                f.event_id.as_deref(),
+                limit,
+            )
+            .await
         }
-        Store::Jsonl(s) => s.capture_list(&ds, f.agent.as_deref(), f.capture_id.as_deref(), limit),
+        Store::Jsonl(s) => s.capture_list(
+            &ds,
+            f.agent.as_deref(),
+            f.capture_id.as_deref(),
+            f.event_id.as_deref(),
+            limit,
+        ),
     }
     .map_err(internal)?;
     Ok(Json(serde_json::json!({"devspace": ds, "events": events})))

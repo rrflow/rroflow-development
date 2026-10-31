@@ -36,3 +36,11 @@ Primary setup references: [Playwright CI](https://playwright.dev/docs/ci-intro),
 execution.
 
 Windows is also supported for disposable fixture runs: set `RROFLOW_UI_BINARY` to an isolated build of `rroflow-ingest.exe`, then run `npm test`. The helper always creates a fresh temporary store, random key and loopback listener and closes that child afterward. It cannot attach to the personal preview. The tests now also cover contextual guidance, focus return, the connection-choice dialog and evidence-linked next actions.
+
+The PostgreSQL member fixtures also cover automatic dataset consent and SDK monitoring.
+Set `RROFLOW_DATASET_UI_DATABASE_URL` to a disposable PostgreSQL database and put the
+matching `rroflow` collector binary beside `RROFLOW_UI_BINARY`. SDK fixtures use the real
+Claude/Codex/Grok adapters and durable recorder, with explicit provider response fixtures;
+they verify the background projection, filters, exact event lookup and historical reviews.
+These tests do not call paid providers. Without that database the member cases are skipped;
+CI always supplies it. Never point the fixture variable at a personal or production database.

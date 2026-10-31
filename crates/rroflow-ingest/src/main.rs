@@ -17,6 +17,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Rebuild SDK monitoring projections from the immutable event journal.
+    ActivityWorker {
+        #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
+        config: PathBuf,
+        #[arg(long, env = "RROFLOW_DATABASE_URL", hide_env_values = true)]
+        database_url: Option<String>,
+        #[arg(long)]
+        once: bool,
+        /// Explicitly retry failed/capacity-limited captures after correcting the cause.
+        #[arg(long)]
+        retry_errors: bool,
+    },
     /// Build consented metadata datasets outside the HTTP request process.
     DatasetWorker {
         #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
@@ -100,6 +112,28 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
+        Cmd::ActivityWorker {
+            config,
+            database_url,
+            once,
+            retry_errors,
+        } => {
+            let cfg = load_config(&config, database_url)?;
+            let Store::Postgres(pg) = cfg.open_store().await? else {
+                anyhow::bail!("SDK activity worker needs Postgres");
+            };
+            if retry_errors {
+                rroflow_ingest::sdk_activity::retry_errors(&pg).await?;
+            }
+            loop {
+                let status = rroflow_ingest::sdk_activity::run_once(&pg, &cfg.sdk_activity).await?;
+                println!("{status}");
+                if once {
+                    break;
+                }
+                tokio::select! {_=shutdown_signal()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(cfg.sdk_activity.poll_seconds))=>{}}
+            }
+        }
         Cmd::DatasetWorker {
             config,
             database_url,
@@ -197,7 +231,8 @@ async fn main() -> anyhow::Result<()> {
                 Store::Postgres(_) => "postgres".to_string(),
                 Store::Jsonl(_) => format!("jsonl in {}", cfg.data_dir.display()),
             };
-            let app = router(AppState::new(&cfg, Arc::new(store))?, cfg.max_body_bytes);
+            let store = Arc::new(store);
+            let app = router(AppState::new(&cfg, store.clone())?, cfg.max_body_bytes);
             let listener = tokio::net::TcpListener::bind(&cfg.listen)
                 .await
                 .with_context(|| format!("bind {}", cfg.listen))?;
@@ -206,9 +241,15 @@ async fn main() -> anyhow::Result<()> {
                 cfg.listen,
                 cfg.devspace.len()
             );
-            axum::serve(listener, app)
+            let worker =
+                rroflow_ingest::sdk_activity::start_worker(store, cfg.sdk_activity.clone());
+            let result = axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
-                .await?;
+                .await;
+            if let Some(worker) = worker {
+                worker.abort();
+            }
+            result?;
         }
     }
     Ok(())

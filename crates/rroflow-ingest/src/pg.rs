@@ -30,8 +30,9 @@ impl PgStore {
         let ids: Vec<_> = events.iter().map(|e| e.event_id.clone()).collect();
         crate::allowances::reserve(&mut tx, ds, "events", &ids, self.require_allowance_policy)
             .await?;
+        let mut changed = std::collections::BTreeSet::new();
         for e in events {
-            sqlx::query("INSERT INTO capture_events (devspace_id,event_id,capture_id,sequence,agent,observed_at,record) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING")
+            let inserted = sqlx::query("INSERT INTO capture_events (devspace_id,event_id,capture_id,sequence,agent,observed_at,record) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING")
                 .bind(ds).bind(&e.event_id).bind(&e.capture_id).bind(e.sequence as i64).bind(&e.agent)
                 .bind(timestamp(&e.observed_at)).bind(Json(e)).execute(&mut *tx).await?;
             let stored: Option<Json<rroflow_core::capture::CaptureEvent>> = sqlx::query_scalar(
@@ -44,6 +45,13 @@ impl PgStore {
             if stored.as_ref().map(|s| &s.0) != Some(e) {
                 return Err(crate::capture::Conflict.into());
             }
+            if inserted.rows_affected() > 0 {
+                changed.insert(e.capture_id.clone());
+            }
+        }
+        for capture in changed {
+            sqlx::query("INSERT INTO sdk_activity_work(devspace_id,capture_id) VALUES($1,$2) ON CONFLICT(devspace_id,capture_id) DO UPDATE SET source_revision=sdk_activity_work.source_revision+1,status=CASE WHEN sdk_activity_work.status='running' THEN 'running' ELSE 'queued' END,attempts=0,last_error=NULL,next_attempt_at=clock_timestamp(),changed_at=clock_timestamp()")
+                .bind(ds).bind(capture).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -53,10 +61,11 @@ impl PgStore {
         ds: &str,
         agent: Option<&str>,
         capture: Option<&str>,
+        event: Option<&str>,
         limit: usize,
     ) -> anyhow::Result<Vec<rroflow_core::capture::CaptureEvent>> {
-        let rows: Vec<Json<rroflow_core::capture::CaptureEvent>> = sqlx::query_scalar("SELECT record FROM capture_events WHERE devspace_id=$1 AND ($2::text IS NULL OR agent=$2) AND ($3::text IS NULL OR capture_id=$3) ORDER BY observed_at DESC, capture_id, sequence DESC LIMIT $4")
-            .bind(ds).bind(agent).bind(capture).bind(limit as i64).fetch_all(&self.pool).await?;
+        let rows: Vec<Json<rroflow_core::capture::CaptureEvent>> = sqlx::query_scalar("SELECT record FROM capture_events WHERE devspace_id=$1 AND ($2::text IS NULL OR agent=$2) AND ($3::text IS NULL OR capture_id=$3) AND ($4::text IS NULL OR event_id=$4) ORDER BY observed_at DESC, capture_id, sequence DESC LIMIT $5")
+            .bind(ds).bind(agent).bind(capture).bind(event).bind(limit as i64).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 }

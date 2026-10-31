@@ -41,3 +41,16 @@ alongside existing account-owned turn views.
 Still required: real Grok verification for the selected surface, pinned-release
 installation, native CLI setup/hooks, sustained load and recovery tests,
 retention policy, and trusted Texas deployment with real-account read-back.
+
+
+## Hosted monitoring integration
+
+The `scripts/dashboard-ui` member fixture now connects the real adapters and Rust durable
+recorder to PostgreSQL ingestion and its projection worker. Codex tool failures, Claude
+terminal outcomes and Grok incomplete responses reach Activity and Findings. Desktop/phone
+checks inspect original events, save exact-revision reviews, ingest late events and reopen
+the earlier immutable evidence. Providers remain explicit contract fixtures. This expands
+automated integration coverage; it does not change the live-provider ledger above.
+
+See `docs/spec/sdk-activity-v1.md` for semantics, capacity controls, worker configuration
+and the explicit separation of SDK operations from session turns and dataset policies.

@@ -381,3 +381,10 @@ test('SDK recovery is distinct from session counts and never treats incomplete c
   assert.match(p.el.get('source-health').innerHTML,/Counts are incomplete/);
   assert.match(p.el.get('source-health').innerHTML,/Reporting with a problem/);
 });
+
+test('SDK monitoring parses independently and stays within its lazy-loading budget',()=>{
+  const source=readFileSync(new URL('../crates/rroflow-ingest/src/dashboard-sdk.js',import.meta.url),'utf8');
+  const context={window:{}};runInNewContext(source,context);assert.equal(typeof context.window.RroflowSdkActivity,'function');
+  assert(Buffer.byteLength(source)<32*1024);assert(gzipSync(source).length<10*1024);
+  assert(!html.includes('src="/assets/dashboard-sdk.js"'));
+});
