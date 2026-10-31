@@ -1,36 +1,35 @@
 # Browser sign-in and your Claude Code / Codex activity
 
-Implementation in the Texas readiness worktree. Live Texas deployment and real
-Nomen account sign-in remain unverified.
+Updated 2026-10-31. Implemented in the application source. Live Texas deployment
+and real Nomen account sign-in remain unverified.
 
 The dashboard uses the existing Nomen dashboard public client with authorization
 code + S256 PKCE. The Rust gateway exchanges the code and introspects the access
 token before opening the same account-owned devspace used by the collector.
 Neither the browser nor RROFLOW needs a Claude or Codex provider credential.
 
-## Configuration on Texas
+## Deployment configuration
 
-Keep the existing `[nomen]` configuration and provision its API key through the
-operator's secrets mechanism. Add this block to the configuration retained by
-the installer (`/etc/rroflow/nomen.toml`):
+Configure the service's retained external TOML as described in
+[identity and devspaces](identity-and-devspaces.md#configure-the-deployment).
+The `[browser]` origin and public client come from that deployment's verified
+identity registration. No production client ID or hostname is a compiled default.
+The ingest application's private key remains an operator-managed server file;
+neither the browser nor the collector receives it.
 
-```toml
-[browser]
-origin = "https://app.rroflow.ai"
-client_id = "397185155288072195"
-```
-
-Register the exact callback `https://app.rroflow.ai/auth/callback` on that public
-client, with token endpoint authentication `none` and PKCE enabled. It must also
-appear in `nomen.clients`. The service refuses insecure origins, and browser
-sign-in requires one configured Nomen project audience. Without `[browser]`,
-the UI says account sign-in is unavailable and retains the key entry.
+Register the exact configured origin plus `/auth/callback` on the dashboard
+public client, with token endpoint authentication `none` and PKCE enabled.
+The client must also appear in `nomen.clients`. The service refuses insecure
+origins and requires one configured project audience for browser sign-in.
+Without `[browser]`, the UI reports that account sign-in is unavailable and
+retains the advanced key entry.
 
 Use the canonical app hostname: cookies are host-only, so signing in there does
-not sign a browser into the API hostname. Both can reach the same Rust service.
-Do not log query strings on `/auth/callback` in the reverse proxy: they contain
-short-lived authorization codes. Tokens and callback responses are never logged
-by this implementation.
+not sign a browser into a different API hostname. Both may reach the same Rust
+service. Do not log callback query strings in the reverse proxy; they contain
+short-lived authorization codes. Tokens and callback responses are not logged
+by this implementation. Use the [managed release procedure](hosted-releases.md)
+after placement/recovery checks, not the old source-build installer.
 
 ## Session behavior
 
@@ -49,29 +48,43 @@ by this implementation.
   data. It does not sign the user out of every Shippin service.
 - Responses have `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
 
-## Populate the owner's dashboard
+## Connect the activity you expect to see
 
-On the computer running Claude Code and Codex, install the collector release,
-run `rroflow login`, then `rroflow whoami`. Use the **same Shippin account** as
-the browser. An ingest-key environment override takes precedence over login;
-inspect `whoami` before sending, and remove that override if it names a different
-devspace. Run the existing ingest commands with explicit session-directory paths:
+On the execution machine, use the operator-provided public deployment file:
+
+```sh
+rroflow setup --deployment /absolute/path/to/deployment.json
+rroflow whoami
+rroflow sources status
+```
+
+Use the same Shippin account as the dashboard. Setup asks before linking Claude
+Code/Codex session sources and registers per-user startup unless `--no-service`
+is chosen. Check Sources for fresh received reports and Activity for the actual
+turns. A registered startup service alone does not prove delivery. Text remains
+opt-in. See [deployment configuration](deployment-configuration.md) and
+[source collection](source-collection.md) for queue/account binding and recovery.
+
+Member-oriented setup refuses an ambient headless ingest key. For deliberate
+key-based collection, follow the separate headless path in the deployment guide;
+inspect `whoami` before sending. An unrelated key must not silently redirect a
+member's activity into another workspace.
+
+One-shot historical imports remain available with explicit local session paths:
 
 ```powershell
 rroflow ingest-claude "$HOME/.claude/projects"
 rroflow ingest-codex "$HOME/.codex/sessions"
 ```
 
-Use the actual configured session folders when different. These commands upload
-metrics and signal results; content is omitted unless `--content` is explicitly
-chosen. They are one-shot imports; ongoing capture hooks and automatic discovery
-are separate work. Refresh the dashboard to see both agents' received records.
-No record means **no captured activity**, not proof of a provider connection.
+Use the actual folders when different. These commands do not establish ongoing
+collection; managed sources provide that separate capability. SDK application
+calls also require their [wrappers and delivery setup](../../sdk/javascript/README.md).
+Neither path establishes coverage of provider browser/mobile history.
 
-Existing key-owned data needs the operator's explicit `rroflow-ingest claim`
-operation after checking the account subject. Never assign the `jesse` devspace
-automatically to the first user who signs in. Existing ownership/claim safeguards
-remain in force.
+Existing key-owned data requires the operator's explicit ownership claim after
+checking the intended account subject; see [identity and devspaces](identity-and-devspaces.md).
+No existing owner space is automatically assigned to the first visitor.
 
 ## Proof required before calling it live
 

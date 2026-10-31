@@ -1,75 +1,103 @@
-# Identity and devspaces on rroflow.ai
+# Identity and devspaces
 
-Date: 2026-10-26. Decisions D-4 (hosted store: Postgres on tx-infra-prod) and D-6 (devspace owned by the Nomen account) in [rroflow-ai-plan.md](rroflow-ai-plan.md).
+Updated 2026-10-31. This guide describes implemented source behavior. Texas placement,
+public TLS and a real hosted member session remain unverified. It supersedes the old
+Gold-based credential instructions and source-build activation steps.
 
-## Model
+## Account ownership
 
-```
-Nomen account (issuer, sub)  ──owns──▶  devspace  ──holds──▶  turns, signal hits, signal settings
-                                            │
-                                            └──attached to (optional)──▶  Shippin.cloud tenant
-```
+Nomen supplies account identity. RROFLOW stores an account-owned devspace in Postgres;
+it does not store a member's provider password or issue its own identity-provider account.
+The server resolves the devspace from the accepted credential. A request cannot select
+another person's workspace by changing a tenant parameter.
 
-- **Nomen** is the identity provider shared by every Shippin service (a Zitadel fork). rroflow.ai does not keep its own accounts.
-- **Devspace** is one person's space on rroflow.ai. Table `devspaces`: `id`, `owner_issuer`, `owner_subject`, `owner_org` (Nomen claim `urn:zitadel:iam:user:resourceowner:id`), `shippin_tenant_id`. One devspace per Nomen account (unique index on issuer + subject).
-- **Growing into Shippin.cloud** sets `shippin_tenant_id`. Turns stay where they are, so nothing is copied and nothing can be lost in a move.
-- **The credential decides the devspace.** A client never names a devspace; the server derives it from the key or token. Requests can only read and write their own devspace.
+`devspaces` records the owner issuer and subject, optional identity-provider organization,
+and an optional Shippin tenant reference. The issuer/subject ownership pair is unique.
+The Shippin reference is an integration field, not proof of subscription synchronization
+or an implemented organization/invitation workflow. Identity alone grants neither a paid
+plan nor permission to collect datasets or train models.
 
-## Credentials
-
-| Who | Today (built) | Next (Nomen) |
+| Surface | Implemented credential path | Boundary |
 |---|---|---|
-| Collector (`rroflow ingest-claude`, `ingest-codex`) | ingest key; server stores only its SHA-256 | `rroflow login` via the OAuth device flow, like `devagotchi-cli@shippin`; refresh token kept in the OS keychain |
-| Dashboard | Nomen authorization code + PKCE when configured; ingest key fallback | account-owned devspace, server-held token and HttpOnly session cookie |
-| Server check | key hash lookup, then Nomen (built) | opaque token introspection (RFC 7662) with private-key JWT client auth, answers cached 60 s; Nomen unreachable → 503 `issuer_unavailable`. Same pattern as the Devagotchi hub (`crates/hub/src/nomen.rs`). Required: issuer, `aud` = the rroflow project, `client_id` in the allowed list, `exp`, `sub` |
+| Member dashboard | Authorization code + S256 PKCE; access token held by the Rust service; opaque HttpOnly browser cookie | Requires configured dashboard client and verified callback; live member session still needs proof |
+| Collector | Device-flow login with protected account storage, or an explicit headless ingest key | Saved queues are bound to their account and ingest destination; changing a profile does not move history |
+| Hosted API | Key-hash lookup or Nomen token introspection using the ingest application's private-key assertion | Checks issuer, project audience, allowed client, expiry and subject; unavailable identity service is not an authenticated member |
+| Static ingest keys | Operator registration/key generation and hashed server lookup | Member-facing key management is not implemented; key access cannot authorize member-only dataset consent |
 
-Keys stay supported after sign-in exists, for headless machines and CI, but are minted by a signed-in user for their own devspace.
+The collector's current protected `account.json` is separate from its public deployment
+configuration; this guide does not claim OS-keychain token storage. See the owning
+[deployment configuration guide](deployment-configuration.md) for precedence and account
+switching, and [browser sign-in](browser-sign-in.md) for cookie/session behavior.
 
-## API (ingest)
+## Configure the deployment
 
-| Method and path | Auth | What it does |
-|---|---|---|
-| `POST /v1/turns` | devspace | upsert `rroflow.turn/v1` records by `event_id` |
-| `GET /v1/turns?agent=&signal=&limit=` | devspace | newest first; filter by agent (`claude-code`, `codex`) and signal |
-| `GET /v1/summary` | devspace | totals, per-agent signal counts, the catalogue, the devspace's settings |
-| `GET /v1/signals` | public | catalogue `rroflow.signals/v1`: categories (Failure, Friction, Cost, Context), signals, options with defaults and ranges |
-| `GET`/`PUT /v1/signals/settings` | devspace | which signals run and their thresholds; collectors read this before evaluating |
-| `GET /v1/whoami` | devspace | which devspace the credential opens, and how (`key` or `nomen`, account ID, org) |
-| `GET /healthz`, `GET /`, `GET /app` | public shell | health; public product page; member dashboard shell (data requires authentication) |
+Obtain the issuer, project audience, CLI client, dashboard client and canonical ingest/app
+origins from the operator's verified deployment record. There are no compiled production
+identity defaults. Keep actual credential files and deployment references outside Git.
+For this project, [the access tool](project-access-tooling.md) reads private project-local
+references and can check discovery, the ingest credential, DNS and a trusted SSH route.
+It does not prove a real member login, paid plan or deployed service. Gold is not an access
+dependency for this work.
 
-## Build steps
+The service reads a retained external TOML file. These are illustrative values to replace,
+not a live environment:
 
-1. **Built:** Postgres store with migrations, signal catalogue grouped with options, per-devspace settings, dashboard with Claude Code and Codex side by side, deploy script with Postgres for tx-infra-prod.
-2. **Built:** Nomen token introspection on the ingest (ported from the Devagotchi hub, same checks and caching); first sign-in creates the devspace for that `sub`; `rroflow-ingest claim` gives an existing key devspace to an account; Nomen down → 503 `issuer_unavailable`, keys keep working.
-3. **Built:** `rroflow login` / `logout` / `whoami` (device flow ported from the Devagotchi CLI, refresh within 5 min of expiry, 7-day offline grace, tokens in `account.json` 0600). The collector sends as the signed-in account; `RROFLOW_INGEST_KEY` still wins for headless machines.
-4. **Implemented, deployment unverified:** Dashboard sign-in (authorization code + PKCE), opaque browser session, account-owned Claude Code/Codex views. See [browser-sign-in.md](browser-sign-in.md). Key management in the page remains future work.
-5. Public: `api.rroflow.ai` (API) and `app.rroflow.ai` (dashboard), both A records to 23.156.136.173, TLS at Caddy in front of `127.0.0.1:8787`. Both hosts reach the same service, so the dashboard's API calls are same-origin.
-6. Attach a devspace to a Shippin tenant (`shippin_tenant_id`), started from the Shippin console.
+```toml
+[nomen]
+issuer = "https://identity.example.test"
+audiences = ["PROJECT_AUDIENCE"]
+clients = ["CLI_CLIENT", "DASHBOARD_CLIENT"]
+key_file = "/etc/rroflow/nomen-key.json"
 
-## Nomen setup (recreated 2026-10-28, project `rroflow` in the Hades org on id.shippin.cloud)
+[browser]
+origin = "https://app.example.test"
+client_id = "DASHBOARD_CLIENT"
+```
 
-| What | Value |
-|---|---|
-| Issuer | `https://id.shippin.cloud` (endpoints under `/oauth/v2/`) |
-| Project id (the `aud`) | `397185153912274947` |
-| `rroflow-ingest` API app, private-key JWT (introspection) | client id `397185154214264835`; key in Gold's `platform-core.sops.yaml` as `rroflow_ingest_jwt_key_b64` |
-| `rroflow-cli` native app, device flow + refresh, no secret | client id `397185154935750659` |
-| `rroflow-dashboard` web app, authorization code + PKCE + refresh, no secret | client id `397185155288072195`; redirect `https://app.rroflow.ai/auth/callback` |
+The key file is the ingest application's private credential, readable only by its intended
+service/operator. The dashboard and CLI are separate public clients; they do not receive
+that key. Register the exact dashboard origin plus `/auth/callback`, with the matching
+public-client and PKCE settings described in the browser guide. Use the configured origin
+for sign-in; a cookie on one hostname does not authenticate another hostname.
 
-DNS: `rroflow.ai` → 23.156.136.173 (Cloudflare proxy off). `api.rroflow.ai` and `app.rroflow.ai` to be added the same way.
+Use the [GitHub hosted release and activation procedure](hosted-releases.md) after verified
+VM placement and recovery checks. Adding identity settings is not an instruction to rerun
+the old source-build installer or overwrite a proxy. DNS records and HTTP liveness alone
+do not establish usable sign-in.
 
-## Turning on sign-in (tx-infra-prod)
+## Connect a person's agents
 
-1. Put the API application's key file at `/etc/rroflow/nomen-key.json`, owner `rroflow`, mode 0600.
-2. Write `/etc/rroflow/nomen.toml` (kept across deploys):
+Provide the public deployment JSON described in [deployment configuration](deployment-configuration.md).
+Run `rroflow setup --deployment /absolute/path/to/deployment.json` on the execution machine,
+using the same Shippin account as the dashboard. Setup asks before linking agent sessions
+and can register per-user startup. Verify the account with `rroflow whoami`, local delivery
+with `rroflow sources status`, and received reports in the dashboard's Sources view.
 
-   ```toml
-   [nomen]
-   issuer = "https://id.shippin.cloud"
-   audiences = ["397185153912274947"]
-   clients = ["397185154935750659", "397185155288072195"]
-   key_file = "/etc/rroflow/nomen-key.json"
-   ```
-3. Re-run the deploy; it prints `nomen sign-in: on`.
-4. Sign in once, read your account ID from `GET /v1/whoami`, then give your existing devspace to it:
-   `rroflow-ingest claim --config /etc/rroflow/ingest.toml --devspace jesse --subject <sub>` (run as `rroflow`). An empty devspace made by that first sign-in gives way; one with turns does not.
+For SDK calls, use the [SDK wrappers](../../sdk/javascript/README.md) and
+[managed SDK delivery](../ux/sdk-background-delivery.md). A connected session collector
+does not automatically wrap arbitrary application SDK calls. Subscription browser/mobile
+history and provider-internal actions are separate coverage questions.
+
+Existing key-owned data can be explicitly claimed by an operator after verifying the
+intended account subject:
+
+```sh
+rroflow-ingest claim --config /etc/rroflow/ingest.toml --devspace EXISTING_SPACE --subject VERIFIED_SUBJECT
+```
+
+The command applies ownership safeguards; do not assign an owner's historical space to
+the first visitor. It is not a general data-merge or organization-transfer facility.
+
+## Account-facing boundaries
+
+Authenticated turn, SDK event/activity, source-health, findings and review endpoints resolve
+the caller's devspace. Public pages and the signal catalogue contain no private activity.
+Dataset consent requires member identity, and account allowances are owned by the server.
+See [SDK monitoring](../spec/sdk-activity-v1.md), [dataset consent](../spec/metadata-datasets-v1.md)
+and [account allowances](../spec/account-allowances-v1.md) for their specific contracts.
+
+Before calling the hosted service live, prove real sign-in, same-owner Claude and Codex
+capture/readback, second-account isolation and sign-out on the verified deployment.
+Production recovery, public TLS and subscription synchronization remain separate acceptance
+requirements. Local fixtures and successful ingest-credential introspection do not replace
+those checks.
