@@ -13,6 +13,7 @@ fn policy(purpose: Purpose) -> Policy {
         enabled: true,
         consent: true,
         agents: vec!["codex".into()],
+        sdk_agents: vec![],
         all_projects: false,
         projects: vec!["shippinai".into()],
         retention_days: 7,
@@ -55,6 +56,17 @@ fn consent_is_explicit_bounded_and_separate_from_training() {
     assert!(p.validate().is_err());
     p.all_projects = true;
     assert!(p.validate().is_ok());
+    let legacy: Policy =
+        serde_json::from_value(serde_json::to_value(policy(Purpose::Patterns)).unwrap()).unwrap();
+    assert!(legacy.sdk_agents.is_empty());
+    let mut sdk_only = legacy;
+    sdk_only.agents.clear();
+    sdk_only.projects.clear();
+    assert!(sdk_only.validate().is_err());
+    sdk_only.sdk_agents = vec!["codex".into()];
+    assert!(sdk_only.validate().is_ok());
+    sdk_only.sdk_agents = vec!["unsupported".into()];
+    assert!(sdk_only.validate().is_err());
     let value = json!({"purpose":"patterns","enabled":true,"consent":true,"training":true,"agents":["codex"],"all_projects":true,"projects":[],"retention_days":7});
     assert!(serde_json::from_value::<Policy>(value).is_err());
     let cfg = DatasetConfig {
@@ -420,6 +432,273 @@ async fn dataset_jobs_are_consented_private_immutable_recoverable_and_revocable(
     let old_metadata: i64 = sqlx::query_scalar("SELECT count(*) FROM dataset_jobs WHERE devspace_id='a' AND created_at<clock_timestamp()-interval '90 days'")
         .fetch_one(&pg.pool).await.unwrap();
     assert_eq!(old_metadata, 0);
+    pg.pool.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+#[tokio::test]
+async fn sdk_datasets_require_separate_consent_and_preserve_review_revisions() {
+    let Ok(base) = std::env::var("RROFLOW_TEST_DATABASE_URL") else {
+        eprintln!("dataset PostgreSQL proof skipped");
+        return;
+    };
+    let admin = sqlx::PgPool::connect(&base).await.unwrap();
+    let schema = format!("dataset_fixture_{}", rand::random::<u64>());
+    // Identifier is generated locally from a fixed prefix and u64, never external input.
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let mut url = reqwest::Url::parse(&base).unwrap();
+    url.query_pairs_mut()
+        .append_pair("options", &format!("-csearch_path={schema}"));
+    let pg = PgStore::connect(url.as_str(), 8).await.unwrap();
+    let fake = fake_nomen().await;
+    for (token, sub) in [("member-a", "a"), ("member-b", "b")] {
+        fake.answers
+            .lock()
+            .unwrap()
+            .insert(token.into(), signed_in(&fake.issuer, sub));
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let keypath = dir.path().join("key.json");
+    std::fs::write(&keypath,json!({"type":"application","keyId":"fixture","key":crate::test_keys::rsa().pem,"clientId":"fixture-ingest"}).to_string()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&keypath, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let options = DatasetConfig::default();
+    let cfg = Config {
+        datasets: Some(options.clone()),
+        nomen: Some(NomenConfig {
+            issuer: fake.issuer.clone(),
+            audiences: vec!["rroflow-project".into()],
+            clients: vec!["rroflow-cli".into()],
+            key_file: keypath.to_string_lossy().into(),
+        }),
+        devspace: vec![Devspace {
+            id: "a".into(),
+            key_sha256: vec![hash_key("ingest-a")],
+        }],
+        ..Config::default()
+    };
+    let store = Arc::new(Store::Postgres(pg));
+    let app = router(
+        AppState::new(&cfg, store.clone()).unwrap(),
+        cfg.max_body_bytes,
+    );
+    let Store::Postgres(pg) = store.as_ref() else {
+        unreachable!()
+    };
+    assert_eq!(
+        call(&app, get("member-a", "/v1/whoami")).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, get("member-b", "/v1/whoami")).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, get("unknown", "/v1/datasets")).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let e:rroflow_core::capture::CaptureEvent=serde_json::from_value(json!({"schema":"rroflow.capture/v1","event_id":"11111111-1111-4111-8111-111111111111","capture_id":"22222222-2222-4222-8222-222222222222","sequence":0,"agent":"codex","session_id":"PRIVATE_SESSION","operation_id":"PRIVATE_OPERATION","observed_at":"2026-10-31T00:00:00Z","kind":"call.failed","payload":{"text":"PRIVATE_PROMPT"}})).unwrap();
+    pg.capture_insert("a", std::slice::from_ref(&e))
+        .await
+        .unwrap();
+    crate::sdk_activity::run_once(pg, &Default::default())
+        .await
+        .unwrap();
+    let (_, list) = call(&app, get("member-a", "/v1/sdk/activity")).await;
+    let activity = &list["activities"][0];
+    let sdk_review = |n: u32, revision: &Value, verdict: &str| {
+        Request::post("/v1/sdk/reviews").header("authorization","Bearer member-a").header("content-type","application/json").body(Body::from(json!({"review_id":format!("33333333-3333-4333-8333-{n:012}"),"activity_id":activity["activity"]["activity_id"],"revision":revision,"signal":"sdk_call_failed","rule_version":1,"verdict":verdict}).to_string())).unwrap()
+    };
+    assert_eq!(
+        call(&app, sdk_review(1, &activity["revision"], "match"))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let mut legacy = policy(Purpose::SignalReviews);
+    legacy.all_projects = true;
+    legacy.projects.clear();
+    let mut tx = pg.pool.begin().await.unwrap();
+    let old = projection::snapshot(&mut tx, "a", &legacy, &options)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(old.rows.is_empty());
+    assert_eq!(old.schema, "rroflow.dataset-input/v1");
+    assert!(
+        serde_json::to_value(&legacy)
+            .unwrap()
+            .get("sdk_agents")
+            .is_none()
+    );
+    let mut selected = legacy.clone();
+    selected.agents.clear();
+    selected.all_projects = false;
+    selected.sdk_agents = vec!["codex".into()];
+    assert!(selected.validate().is_ok());
+    let snapshot = async |ds: &str, p: &Policy, c: &DatasetConfig| {
+        let mut tx = pg.pool.begin().await.unwrap();
+        let result = projection::snapshot(&mut tx, ds, p, c).await;
+        tx.rollback().await.unwrap();
+        result
+    };
+    let input = snapshot("a", &selected, &options).await.unwrap();
+    assert_eq!(input.rows.len(), 1);
+    assert_eq!(input.schema, "rroflow.dataset-input/v2");
+    assert_eq!(input.rows[0]["features"]["event_count"], 1);
+    assert_eq!(input.rows[0]["features"]["usage"], Value::Null);
+    assert_eq!(
+        input.rows[0]["source_activity_digest"],
+        activity["revision"]
+    );
+    assert!(!serde_json::to_string(&input).unwrap().contains("PRIVATE"));
+    assert!(
+        !serde_json::to_string(&input)
+            .unwrap()
+            .contains(&e.capture_id)
+    );
+    assert!(
+        snapshot("b", &selected, &options)
+            .await
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    let mut late = e.clone();
+    late.event_id = "44444444-4444-4444-8444-444444444444".into();
+    late.sequence = 1;
+    pg.capture_insert("a", &[late]).await.unwrap();
+    crate::sdk_activity::run_once(pg, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        digest(&snapshot("a", &selected, &options).await.unwrap()),
+        digest(&input),
+        "review input does not follow later evidence"
+    );
+    assert_eq!(
+        call(&app, sdk_review(2, &activity["revision"], "match"))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST,
+        "stale new review refused"
+    );
+    // A duplicate accepted review is tested by creating two before changing evidence on a separate current revision.
+    let (_, fresh) = call(&app, get("member-a", "/v1/sdk/activity")).await;
+    let revision = &fresh["activities"][0]["revision"];
+    for n in [3, 4] {
+        assert_eq!(
+            call(&app, sdk_review(n, revision, "match")).await.0,
+            StatusCode::OK
+        );
+    }
+    let dedup = snapshot("a", &selected, &options).await.unwrap();
+    assert_eq!(dedup.rows.len(), 2);
+    assert_eq!(dedup.exclusions["duplicate_sdk_reviews"], 1);
+    assert_eq!(
+        call(&app, sdk_review(5, revision, "not_match")).await.0,
+        StatusCode::OK
+    );
+    let conflicted = snapshot("a", &selected, &options).await.unwrap();
+    assert_eq!(conflicted.rows.len(), 1);
+    assert_eq!(conflicted.exclusions["conflicting_sdk_reviews"], 3);
+    let mut patterns = selected.clone();
+    patterns.purpose = Purpose::Patterns;
+    assert!(
+        snapshot("a", &patterns, &options)
+            .await
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+    let mut other = e.clone();
+    other.event_id = "55555555-5555-4555-8555-555555555555".into();
+    other.capture_id = "66666666-6666-4666-8666-666666666666".into();
+    pg.capture_insert("a", &[other]).await.unwrap();
+    assert!(
+        snapshot("a", &patterns, &options)
+            .await
+            .unwrap()
+            .rows
+            .is_empty(),
+        "pending SDK capture excluded"
+    );
+    crate::sdk_activity::run_once(pg, &Default::default())
+        .await
+        .unwrap();
+    let unlabelled = snapshot("a", &patterns, &options).await.unwrap();
+    assert_eq!(unlabelled.rows.len(), 1);
+    assert!(unlabelled.rows[0]["label"].is_null());
+    let turn = rec("unlabelled-session", None);
+    call(&app, post("ingest-a", &[turn])).await;
+    patterns.agents = vec!["codex".into()];
+    patterns.all_projects = true;
+    let mixed = snapshot("a", &patterns, &options).await.unwrap();
+    assert_eq!(mixed.rows.len(), 2);
+    assert!(
+        mixed
+            .rows
+            .iter()
+            .any(|r| r["source_kind"] == "session_turn")
+    );
+    assert!(
+        mixed
+            .rows
+            .iter()
+            .any(|r| r["source_kind"] == "sdk_operation")
+    );
+    let bounded = DatasetConfig {
+        max_rows: 1,
+        ..options.clone()
+    };
+    assert!(
+        snapshot("a", &patterns, &bounded)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("row_capacity")
+    );
+    assert_eq!(
+        call(&app, update_request("member-a", 0, &selected)).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(run_once(pg, &options).await.unwrap()["published"], true);
+    let id = newest(pg, "signal_reviews").await;
+    let uri = format!("/v1/datasets/jobs/{id}/artifact");
+    let (_, artifact) = call(&app, get("member-a", &uri)).await;
+    assert_eq!(
+        artifact["artifact"]["manifest"]["projection"],
+        "metrics-only/v2"
+    );
+    assert_eq!(
+        artifact["artifact"]["manifest"]["training_authorized"],
+        false
+    );
+    assert_eq!(
+        call(&app, get("member-b", &uri)).await.0,
+        StatusCode::NOT_FOUND
+    );
+    selected.enabled = false;
+    selected.consent = false;
+    assert_eq!(
+        call(&app, update_request("member-a", 1, &selected)).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, get("member-a", &uri)).await.0,
+        StatusCode::NOT_FOUND
+    );
     pg.pool.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)

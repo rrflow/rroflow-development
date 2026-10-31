@@ -1,5 +1,6 @@
 //! Consented metadata datasets. Collection grants no training or publication rights.
 mod projection;
+mod sdk;
 #[cfg(test)]
 mod tests;
 mod worker;
@@ -87,6 +88,8 @@ pub struct Policy {
     pub enabled: bool,
     pub consent: bool,
     pub agents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sdk_agents: Vec<String>,
     pub all_projects: bool,
     pub projects: Vec<String>,
     pub retention_days: u32,
@@ -98,9 +101,17 @@ impl Policy {
         }
         if !(1..=90).contains(&self.retention_days)
             || self.agents.len() > 32
+            || self.sdk_agents.len() > 3
             || self.projects.len() > 64
         {
             return Err("Dataset policy exceeds supported bounds.".into());
+        }
+        if self
+            .sdk_agents
+            .iter()
+            .any(|a| !["claude", "codex", "grok"].contains(&a.as_str()))
+        {
+            return Err("Choose supported SDK sources.".into());
         }
         if self.agents.iter().any(|s| !crate::valid_devspace_id(s))
             || self
@@ -111,7 +122,8 @@ impl Policy {
             return Err("Invalid source or project.".into());
         }
         if self.enabled
-            && (self.agents.is_empty() || (!self.all_projects && self.projects.is_empty()))
+            && ((self.agents.is_empty() && self.sdk_agents.is_empty())
+                || (!self.agents.is_empty() && !self.all_projects && self.projects.is_empty()))
         {
             return Err(
                 "Choose at least one source and project, or explicitly choose all projects.".into(),
@@ -199,8 +211,9 @@ pub(crate) async fn status(
         .bind(&caller.devspace).fetch_all(&pg.pool).await.map_err(|e| internal(e.into()))?;
     let jobs:Vec<SqlJson<Value>>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'purpose',purpose,'policy_revision',policy_revision,'status',CASE WHEN expires_at<=clock_timestamp() AND status NOT IN ('revoked','failed') THEN 'expired' ELSE status END,'rows',row_count,'exclusions',exclusions,'created_at',created_at,'expires_at',expires_at,'artifact_digest',artifact_digest,'error_code',error_code) FROM dataset_jobs WHERE devspace_id=$1 ORDER BY created_at DESC,id LIMIT 50")
         .bind(&caller.devspace).fetch_all(&pg.pool).await.map_err(|e| internal(e.into()))?;
+    let sdk_summary:SqlJson<Value>=sqlx::query_scalar("SELECT jsonb_build_object('operations',(SELECT count(*) FROM sdk_activities WHERE devspace_id=$1),'reviews',(SELECT count(*) FROM sdk_activity_reviews WHERE devspace_id=$1))").bind(&caller.devspace).fetch_one(&pg.pool).await.map_err(|e|internal(e.into()))?;
     Ok(Json(
-        json!({"mode":"available","devspace":caller.devspace,"policies":policies.into_iter().map(|x|x.0).collect::<Vec<_>>(),"jobs":jobs.into_iter().map(|x|x.0).collect::<Vec<_>>(),"limits":cfg,"training_enabled":false}),
+        json!({"mode":"available","devspace":caller.devspace,"policies":policies.into_iter().map(|x|x.0).collect::<Vec<_>>(),"jobs":jobs.into_iter().map(|x|x.0).collect::<Vec<_>>(),"limits":cfg,"sdk_summary":sdk_summary.0,"training_enabled":false}),
     ))
 }
 pub(crate) async fn save(

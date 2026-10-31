@@ -1,4 +1,4 @@
-# Consented metadata datasets v1
+# Consented metadata datasets v1 / SDK extension v2
 
 Status: implemented collection workflow, pending release and hosted activation.
 This is the first executable part of [automatic datasets v0](automatic-datasets-v0.md).
@@ -68,8 +68,8 @@ The separate worker scans enabled policies. It materializes a bounded metadata
 snapshot and queues a job in one transaction. Job identity combines account,
 purpose, consent revision and input digest. An unchanged input does not create
 another version; mutable turn updates cannot alter an already published artifact.
-The selected records themselves form the immutable read stamp. Raw SDK lifecycle
-events are not yet normalized into this turn-metrics format.
+The selected records themselves form the immutable read stamp. SDK operations use the
+separately consented, typed metadata extension below; they are never coerced into turns.
 
 Workers claim jobs using database leases and unique lease tokens. An expired lease
 can be recovered up to the configured attempt limit. Publication checks the current
@@ -135,3 +135,41 @@ run the actual server and worker binaries against PostgreSQL, inspect/download
 the resulting artifact and verify withdrawal. Their bearer identities come from
 a disposable introspection issuer; they do not establish live Wisconsin sign-in
 or Texas deployment. OAuth/PKCE/session tests remain separate.
+
+
+## SDK sources: metrics-only/v2
+
+Policies may explicitly select `sdk_agents` (`claude`, `codex`, `grok`). Missing or empty
+means no SDK collection: an old permission does not expand after upgrading. Existing
+`agents`, `projects` and `all_projects` still govern session turns. SDK sources are a
+separate member choice covering their current and future operations; the SDK event model
+has no project field, so session project filters cannot truthfully constrain those sources.
+SDK-only policies do not need session sources or project selection. Saving or withdrawing
+SDK consent uses the same revision, revocation, retention and member authorization gates.
+
+SDK review rows read the immutable snapshot saved with each review, not the latest activity.
+They retain the source activity digest and pseudonymous activity, parent, signal, review
+and reviewer references. Different evidence revisions remain separate; matching duplicate
+reviews combine references, and conflicting verdicts for one activity revision/rule are
+excluded. Pattern rows select only fully published current operations without any saved
+review for that activity; queued/error/stale projections are excluded. Pattern labels stay
+null even if the operation failed or a deterministic finding fired. Nothing treats a
+cluster member or observed failure as a supervised label.
+
+Features include the SDK projection version, operation kind/outcome/basis, provider outcome,
+optional terminal usage, event and unsupported-event counts, and tool/error counts. They
+exclude prompts, responses, tool names, model names, session identifiers, arguments/results,
+paths, original event IDs and error messages. References use the same account-scoped tuple
+hash with distinct `sdk_activity`, `sdk_signal` and `sdk_review` namespaces. Outcome and
+usage semantics remain those of [SDK activity v1](sdk-activity-v1.md).
+
+Explicit SDK consent selects `rroflow.dataset-input/v2` and `metrics-only/v2`. Its rows
+carry `source_kind` (`session_turn` or `sdk_operation`) so consumers can handle different
+feature types explicitly. Legacy session-only policies retain v1 serialization and inputs.
+The scheduler uses a repeatable-read transaction across both sources and applies a combined
+row limit and total snapshot byte limit. It refuses oversized inputs without sampling.
+Artifacts remain private, unassigned, not evaluated, and not authorized for training.
+
+Migration `0011_sdk_dataset_consent.sql` marks the strict-reader compatibility boundary.
+Upgrade workers with the API before enabling SDK policies; old workers cannot deserialize
+new permissions or build v2 inputs. Reviewed deployment and recovery remain required.

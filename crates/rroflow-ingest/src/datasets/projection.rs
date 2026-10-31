@@ -75,6 +75,7 @@ pub(super) async fn snapshot(
         .fetch_all(&mut **tx)
         .await?;
     anyhow::ensure!(rows.len() <= cfg.max_rows, "row_capacity");
+    let turn_source_count = rows.len();
     let mut exclusions = BTreeMap::new();
     let mut output = Vec::new();
     let mut reviewed: BTreeMap<String, Vec<Value>> = BTreeMap::new();
@@ -151,9 +152,27 @@ pub(super) async fn snapshot(
         *exclusions.entry("duplicate_reviews".into()).or_default() += rows.len() - 1;
         output.push(first);
     }
+    if !policy.sdk_agents.is_empty() {
+        let (sdk_rows, sdk_exclusions, source_count) =
+            super::sdk::snapshot(tx, ds, policy, cfg).await?;
+        anyhow::ensure!(
+            turn_source_count + source_count <= cfg.max_rows,
+            "row_capacity"
+        );
+        for row in &mut output {
+            row["source_kind"] = json!("session_turn");
+        }
+        output.extend(sdk_rows);
+        exclusions.extend(sdk_exclusions);
+    }
     output.sort_by_key(digest);
     let input = Input {
-        schema: "rroflow.dataset-input/v1".into(),
+        schema: if policy.sdk_agents.is_empty() {
+            "rroflow.dataset-input/v1"
+        } else {
+            "rroflow.dataset-input/v2"
+        }
+        .into(),
         purpose: policy.purpose.clone(),
         rows: output,
         exclusions,
@@ -175,14 +194,15 @@ pub(super) fn build(
     expires: &str,
 ) -> anyhow::Result<Value> {
     anyhow::ensure!(
-        input.schema == "rroflow.dataset-input/v1" && digest(input) == input_digest,
+        ["rroflow.dataset-input/v1", "rroflow.dataset-input/v2"].contains(&input.schema.as_str())
+            && digest(input) == input_digest,
         "input_integrity"
     );
     // Qualification is deliberately separate: no partition or training readiness is invented.
     Ok(json!({"manifest":{
         "schema":"rroflow.dataset/v1","id":id,"owner_ref":reference(ds,"owner",ds),"sharing":"private",
         "purpose":input.purpose,"policy_revision":revision,"consent_revision":revision,
-        "projection":"metrics-only/v1","input_digest":input_digest,"rows_digest":digest(&input.rows),
+        "projection":if input.schema=="rroflow.dataset-input/v2"{"metrics-only/v2"}else{"metrics-only/v1"},"input_digest":input_digest,"rows_digest":digest(&input.rows),
         "row_count":input.rows.len(),"exclusions":input.exclusions,"snapshot_at":created,"expires_at":expires,
         "builder_revision":crate::build_info().revision,"training_authorized":false,
         "qualification":"not_evaluated","partitions":{"unassigned":input.rows.len()},
