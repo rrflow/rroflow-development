@@ -12,16 +12,30 @@ cache-read and cache-write count is optional. An explicitly reported integer
 zero stays zero. An absent, null, negative, non-integer or otherwise malformed
 count is unknown. Reported usage survives even if the model name is absent.
 
-For the messages accumulated into a turn, a field is a complete total only when
+For the unique messages accumulated into a turn, a field is a complete total only when
 every counted message reports that field and its sum fits in `u64`. One missing
 field makes that total unknown; a later report does not repair the missing
 earlier value. Other complete fields remain available. Overflow becomes unknown
 in the hosted projection rather than wrapping, panicking or becoming zero.
 
-Claude assistant records participate in completeness checking even when their
+Claude assistant messages participate in completeness checking even when their
 usage object is absent. Legacy Codex `last_token_usage` objects participate when
 present; null informational token-count notifications are not an additional usage
 report. The existing `input_includes_cache` distinction is preserved.
+
+## Claude message attribution
+
+Hosted input/cache totals count each session/message ID once, following
+[Anthropic's usage guidance](https://code.claude.com/docs/en/agent-sdk/cost-tracking).
+Repeated assistant blocks for parallel tools do not add usage again. The guidance
+identifies per-step output as a placeholder; it stays unknown here until an
+authoritative turn-result mapping exists.
+
+Original text/tool records remain intact. Identical replay retains its first
+turn owner. Missing IDs, mismatched sessions or conflicting counts make affected
+totals unknown. IDs in different sessions are independent. This is attribution
+within a parsed transcript, not a claim of global deduplication across arbitrary
+copied files or a change to the SDK wrapper's separate native-event contract.
 
 ## Codex response attribution
 
@@ -54,7 +68,7 @@ projection as proof of complete spend coverage.
 Old Codex rollouts with no response-specific records still use the legacy
 notification mapping with explicit field completeness. Duplicate notifications
 and cumulative-counter resets in that older format remain an open attribution
-gap. Repeated Claude message IDs, mixed-model turns and usage never exposed by
+gap. Authoritative Claude output totals, mixed-model turns and usage never exposed by
 either source also need separate coverage before a complete cost claim. No price
 table or subscription bill is inferred.
 
@@ -77,3 +91,8 @@ logs with an independent aggregation of 1,280 unique response records. All
 compared usage fields matched. It used an empty configuration, no credentials,
 no upload and a temporary metadata dump that was removed. This is source-parser
 evidence, not a hosted member-capture or provider-billing test.
+
+A second isolated audit compared four stable Claude logs: 393 assistant blocks,
+188 unique usage records and 205 repeated blocks excluded from usage totals. All
+input/cache fields matched independent aggregation; output remained unknown.
+Parallel-tool fixtures prove that usage deduplication retains the tool calls.

@@ -6,6 +6,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+mod usage;
+
 /// User-message prefixes written by the harness, not typed by a person.
 pub(crate) const HARNESS_PREFIXES: [&str; 5] = [
     "<task-notification>",
@@ -142,6 +144,7 @@ pub(crate) fn collect_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
 
 fn parse(path: &std::path::Path, bounded_text: bool) -> Result<Vec<Turn>> {
     let mut turns: Vec<Turn> = Vec::new();
+    let mut message_usage = usage::MessageUsage::default();
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
     // promptId -> prompt text, so a compaction summary can point back at the prompt it continues.
     let mut prompts: HashMap<String, String> = HashMap::new();
@@ -249,6 +252,7 @@ fn parse(path: &std::path::Path, bounded_text: bool) -> Result<Vec<Turn>> {
             "assistant" => {
                 let n = turns.len();
                 let Some(t) = turns.last_mut() else { continue };
+                message_usage.observe(n - 1, &t.session, &d);
                 if let Some(m) = msg["model"].as_str() {
                     t.model = Some(m.to_string());
                 }
@@ -282,6 +286,7 @@ fn parse(path: &std::path::Path, bounded_text: bool) -> Result<Vec<Turn>> {
             _ => {}
         }
     }
+    message_usage.apply(&mut turns);
     Ok(turns)
 }
 
@@ -399,8 +404,8 @@ mod tests {
         let path = directory.path().join("usage.jsonl");
         let lines = [
             serde_json::json!({"type":"user","promptId":"p","sessionId":"s","message":{"content":"work"}}),
-            serde_json::json!({"type":"assistant","message":{"content":[],"usage":{"input_tokens":0,"output_tokens":"unknown","cache_read_input_tokens":0}}}),
-            serde_json::json!({"type":"assistant","message":{"content":[],"usage":{"input_tokens":7,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":9}}}),
+            serde_json::json!({"type":"assistant","message":{"id":"message-1","content":[],"usage":{"input_tokens":0,"output_tokens":"unknown","cache_read_input_tokens":0}}}),
+            serde_json::json!({"type":"assistant","message":{"id":"message-2","content":[],"usage":{"input_tokens":7,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":9}}}),
         ];
         std::fs::write(
             &path,
