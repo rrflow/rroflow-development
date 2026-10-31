@@ -25,6 +25,10 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 
 ## Research
 
+[Research adoption and implementation ownership](plan/research-adoption.md) maps
+the preserved notes to adopt/rewrite/archive/reject decisions, destination-native
+tests and remaining acceptance gaps. It does not claim completed feature parity.
+
 | File | What it is | Project name |
 |---|---|---|
 | [research/devpulse/devpulse-research-ledger.md](research/devpulse/devpulse-research-ledger.md) | DevPulse repos and Drive notes: signals, learning loops, cost tracking, vibe-coder UX | `claude/devpulse-research-ledger.md` |
