@@ -27,6 +27,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
+mod legacy_usage;
 mod usage;
 
 /// Text Codex injects as user-role messages; never the person's prompt.
@@ -132,6 +133,7 @@ fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
     let mut seen_meta = false;
     let mut inherited = false;
     let mut response_usage = usage::ResponseUsage::default();
+    let mut legacy_usage = legacy_usage::LegacyUsage::default();
 
     let new_turn = |turns: &mut Vec<Turn>, s: &Session, key: String, ts: &str| {
         turns.push(Turn {
@@ -262,6 +264,7 @@ fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
                     );
                 }
                 "token_count" => {
+                    legacy_usage.observe(turns.len().checked_sub(1), &p["info"]);
                     let u = &p["info"]["last_token_usage"];
                     if let Some(t) = turns.last_mut().filter(|_| u.is_object()) {
                         t.observe_usage([
@@ -376,6 +379,7 @@ fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
         }
     }
     // A turn with no prompt (e.g. a review or compaction task) is not a user turn.
+    legacy_usage.apply(&mut turns);
     turns.retain(|t| !t.input.is_empty());
     response_usage.apply(&mut turns);
     Ok(turns)
@@ -433,7 +437,7 @@ mod tests {
             r#"{"type":"turn_context","payload":{"turn_id":"T1","model":"known-model"}}"#,
             r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"T1"}}"#,
             r#"{"type":"event_msg","payload":{"type":"user_message","message":"work"}}"#,
-            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"output_tokens":2}}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0,"output_tokens":2},"last_token_usage":{"input_tokens":0,"output_tokens":2}}}}"#,
             r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#,
         ];
         std::fs::write(&path, lines.join("\n")).unwrap();

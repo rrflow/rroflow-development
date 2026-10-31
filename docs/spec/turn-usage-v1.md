@@ -65,10 +65,16 @@ hosted projection's completeness guarantee. Its payload compatibility is tested
 separately; invalid numeric overflow is now bounded. Do not use that legacy
 projection as proof of complete spend coverage.
 
-Old Codex rollouts with no response-specific records still use the legacy
-notification mapping with explicit field completeness. Duplicate notifications
-and cumulative-counter resets in that older format remain an open attribution
-gap. Authoritative Claude output totals, mixed-model turns and usage never exposed by
+Old Codex rollouts with no response-specific records use consecutive cumulative
+snapshots to verify the reported increment per field. Repeated snapshots count
+once. A first snapshot must agree with its increment; later counter differences
+must agree with theirs. Gaps, resets or missing counters make affected totals
+unknown. A later valid baseline can support a subsequent turn, but cannot repair
+an earlier unknown turn. Contradictory increments for an unchanged snapshot
+invalidate both affected owners. This compatibility path has fixture coverage;
+it does not establish every historical Codex version's semantics.
+
+Authoritative Claude output totals, mixed-model turns and usage never exposed by
 either source also need separate coverage before a complete cost claim. No price
 table or subscription bill is inferred.
 
@@ -85,6 +91,8 @@ test compares full event/span payloads before and after observation tracking.
 The collector's durable delivery and account-binding tests run in the same suite.
 Response tests additionally cover identity conflicts, duplicate/equal-count
 responses, late arrival, foreign threads and cumulative-total exclusion.
+Legacy fixtures exercise both readers, duplicate snapshots across turn boundaries,
+equal-size distinct increments, incomplete history, counter gaps and resets.
 
 An isolated local dry run on 2026-10-31 compared 52 turns from three real Codex
 logs with an independent aggregation of 1,280 unique response records. All
