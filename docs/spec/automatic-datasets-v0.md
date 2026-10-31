@@ -96,4 +96,4 @@ or retraining is an explicit downstream action.
 9. A passing candidate can be shadowed, admitted and reverted with journaled
    evidence. The existing ingest alone satisfies none of these acceptance gates.
 
-No dataset worker or training engine is claimed built by this document.
+This contract alone does not establish a built worker or training engine. The first executable collection increment is [metadata datasets v1](metadata-datasets-v1.md): scoped consent, immutable metrics/review artifacts, durable jobs, expiry and revocation. Training, text corpora, leakage qualification and promotion remain open under the full acceptance gates above.

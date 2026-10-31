@@ -46,3 +46,7 @@ key_sha256 = ["<hash printed by keygen>"]
 ## Account allowances
 
 Hosted Postgres deployments can enforce operator-configured monthly turn and SDK-event allowances, with expiring account grants and replay-safe quota accounting. See [account allowances v1](../../docs/spec/account-allowances-v1.md) for configuration, migration and remaining billing boundaries. Settings displays the authenticated account status.
+
+## Consented datasets
+
+Optional `[datasets]` configuration enables private metadata/review collection for verified members. Run `dataset-worker` from the same release artifact. See [metadata datasets v1](../../docs/spec/metadata-datasets-v1.md) for consent, lease/recovery, export, retention and the remaining training/qualification gates.

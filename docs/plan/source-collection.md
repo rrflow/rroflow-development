@@ -71,7 +71,9 @@ quotas and retention; ordered revisions across
 multiple collectors; large individual turn handling; hosted Texas deployment.
 The follow-ups below implement settings refresh and latest source reports. Grok SDK event capture is
 a separate path; subscription ownership alone does not make every Grok surface
-observable. Dataset generation and training remain unimplemented.
+observable. Consented metadata dataset collection now has a separate
+[implementation](../spec/metadata-datasets-v1.md); full dataset qualification and
+training remain open. Source collection alone never grants dataset permission.
 
 Tests cover more than twelve files across multiple projects, offline recording,
 restart without duplicate revisions, changed turns, lock exclusion, malformed and

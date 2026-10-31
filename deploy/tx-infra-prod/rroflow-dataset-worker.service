@@ -1,0 +1,34 @@
+[Unit]
+Description=RROFLOW consented metadata dataset worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Installation template: use the same release and external config as ingest.
+ExecStart=/opt/rroflow/current/rroflow-ingest dataset-worker --config /etc/rroflow/ingest.toml
+User=rroflow
+Group=rroflow
+StateDirectory=rroflow
+WorkingDirectory=/var/lib/rroflow
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

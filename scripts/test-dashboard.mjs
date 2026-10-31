@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {gzipSync} from 'node:zlib';
 const html = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.html',import.meta.url),'utf8');
-const script = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard-a2ui.js',import.meta.url),'utf8') + '\n' + readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.js',import.meta.url),'utf8');
+const script = readFileSync(new URL('../crates/rroflow-ingest/src/dashboard-datasets.js',import.meta.url),'utf8') + '\n' + readFileSync(new URL('../crates/rroflow-ingest/src/dashboard-a2ui.js',import.meta.url),'utf8') + '\n' + readFileSync(new URL('../crates/rroflow-ingest/src/dashboard.js',import.meta.url),'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function node(id = '', attrs = '') {
   const data = Object.fromEntries([...attrs.matchAll(/data-([\w-]+)="([^"]*)"/g)].map(([,k,v]) => [k.replace(/-([a-z])/g,(_,c) => c.toUpperCase()),v]));
@@ -339,4 +339,35 @@ test('late allowance responses cannot restore a signed-out account',async()=>{
   const p=await page({signedIn:true,hash:'#settings',intercept:async path=>path==='/v1/allowances'?pending:null});
   await p.el.get('logout').onclick();release({ok:true,status:200,json:async()=>allowanceFixture()});await p.settle();
   assert.equal(p.el.get('account-allowance').innerHTML,'');
+});
+
+const datasetFixture=()=>({mode:'available',policies:[],jobs:[],limits:{max_retained_per_purpose:10},training_enabled:false});
+test('dataset consent is explicit, scoped and never sends a training grant',async()=>{
+  const p=await page({signedIn:true,hash:'#datasets',intercept:async path=>path==='/v1/datasets'?{ok:true,status:200,json:async()=>datasetFixture()}:null});
+  assert.equal(p.el.get('dataset-form').hidden,false);assert.equal(p.el.get('dataset-consent').checked,false);
+  await p.el.get('dataset-form').onsubmit({preventDefault(){}});assert.equal(p.requests.filter(r=>r.path==='/v1/datasets/policy').length,0);
+  p.document.querySelectorAll('[data-dataset-agent]').find(el=>el.dataset.datasetAgent==='codex').checked=true;
+  p.el.get('dataset-all-projects').checked=true;p.el.get('dataset-consent').checked=true;p.el.get('dataset-purpose').value='patterns';
+  await p.el.get('dataset-form').onsubmit({preventDefault(){}});
+  const request=p.requests.find(r=>r.path==='/v1/datasets/policy');const body=JSON.parse(request.init.body);
+  assert.equal(body.expected_revision,0);assert.deepEqual(body.policy.agents,['codex']);assert.deepEqual(body.policy.projects,[]);assert.equal(body.policy.all_projects,true);assert.equal(body.policy.consent,true);assert.equal(body.policy.purpose,'patterns');assert(!Object.hasOwn(body.policy,'training'));assert.equal(p.el.get('dataset-consent').checked,false);assert.equal(p.el.get('dataset-save').disabled,false);
+});
+test('dataset status failure and key-only access never expose consent controls',async()=>{
+  for(const mode of ['disabled','member_signin_required']){
+    const p=await page({signedIn:true,hash:'#datasets',intercept:async path=>path==='/v1/datasets'?{ok:true,status:200,json:async()=>({mode})}:null});assert.equal(p.el.get('dataset-form').hidden,true);
+  }
+  const p=await page({signedIn:true,hash:'#datasets',intercept:async path=>path==='/v1/datasets'?{ok:false,status:503,json:async()=>({})}:null});assert.match(p.el.get('dataset-mode').textContent,/No collection state is assumed/);
+});
+test('a late dataset manifest cannot restore private examples after logout',async()=>{
+  let release;const pending=new Promise(r=>release=r);
+  const p=await page({signedIn:true,hash:'#datasets',intercept:async path=>path==='/v1/datasets'?{ok:true,status:200,json:async()=>datasetFixture()}:path.includes('/artifact')?pending:null});
+  const opening=p.click({datasetOpen:'fixture'});await p.settle();await p.el.get('logout').onclick();
+  release({ok:true,status:200,json:async()=>({artifact:{manifest:{row_count:1},rows:[{secret:'private'}]},sha256:'fixture'})});await opening;
+  assert.equal(p.el.get('dataset-manifest').textContent,'');assert.equal(p.el.get('dataset-dialog').open,false);assert.equal(p.el.get('dataset-jobs').innerHTML,'');
+});
+test('dataset controls load on demand with a separate bounded same-origin script',()=>{
+  const source=readFileSync(new URL('../crates/rroflow-ingest/src/dashboard-datasets.js',import.meta.url));
+  assert(gzipSync(source).length<6*1024,'Lazy dataset controls exceed 6 KiB compressed');
+  assert.doesNotMatch(html,/<script[^>]+src="[^"]*dashboard-datasets/);
+  assert.match(script,/script.src='\/assets\/dashboard-datasets.js'/);
 });

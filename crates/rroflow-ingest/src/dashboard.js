@@ -17,7 +17,7 @@
     signals:['Findings','See the moments your signals picked out. Open one to understand what happened.'],
     library:['Signal library','Use our built-in checks or create your own. You decide what deserves attention.'],
     projects:['Projects','Keep work organized and jump straight to the activity you care about.'],
-    datasets:['Datasets','See how captured work and your corrections will become useful examples.'],
+    datasets:['Datasets','Collect private examples from captured work and your decisions.'],
     sources:['Sources','See what has reported activity and how to connect your agents.'],
     learning:['From evidence to improvement','Corrections today. Consented datasets and evaluated learning next.'],
     settings:['Settings','Make this workspace yours. Control which signals are evaluated.'],
@@ -101,6 +101,7 @@
     return body;
   }
   function clearPrivateView() {
+    datasetUI?.clear();
     $('signal-overview').replaceChildren(); $('signal-overview').hidden = true;
     ui.reset(); uiSequence = 0; $('guide-dialog').close(); $('guide-title').textContent = ''; $('guide-body').textContent = ''; $('overview-focus').replaceChildren(); $('overview-headline').textContent = ''; $('overview-summary').textContent = '';
     clearTimeout(healthTimer); healthData = null; healthError = ''; $('source-health').replaceChildren();
@@ -295,8 +296,16 @@
     const query = $('project-search').value.toLowerCase();
     $('project-cards').innerHTML = Object.entries(metadata.summary.by_project).filter(([p]) => p.toLowerCase().includes(query)).sort((a,b) => b[1]-a[1]).map(([project,count]) => `<article class="research-card"><h2>${esc(project)}</h2><p><span class="project-capture-count">${fmt(count)}</span> captured turns</p><a class="button" href="${link('activity',{project})}">Open project activity →</a><p class="small muted">Source: received project label or working directory.</p></article>`).join('') || empty('No projects match','Projects appear when captured work arrives.');
   }
-  function renderDatasets() {
-    $('dataset-readiness').innerHTML = [['Captured turns',fmt(metadata.summary.turns),'Received activity, not yet a dataset'],['Saved decisions',reviewError ? 'Unavailable' : fmt(reviews.length),'Latest 1,000 reviews; not training labels yet'],['Published datasets','Not available','Dataset building is not active'],['Learning jobs','Not available','Training and clustering are not active']].map(([label,value,note]) => `<article class="stat"><span>${label}</span><b>${value}</b><small>${note}</small></article>`).join('');
+  let datasetUI=null,datasetLoading=null;
+  async function getDatasetUI() {
+    if(datasetUI)return datasetUI;
+    if(!datasetLoading) datasetLoading=(async()=>{
+      if(!window.RroflowDatasetUI) await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');script.src='/assets/dashboard-datasets.js';script.onload=resolve;script.onerror=()=>{script.remove();reject(new Error('Dataset controls could not be loaded.'));};document.head.appendChild(script);
+      });
+      datasetUI=window.RroflowDatasetUI({$,all,esc,fmt,name,date,empty,api,load,state:()=>({metadata,reviews,reviewError,generation})});return datasetUI;
+    })().catch(e=>{datasetLoading=null;throw e;});
+    return datasetLoading;
   }
   function draftSignal() {
     const kind = $('custom-kind').value;
@@ -466,7 +475,11 @@
       }
       if (currentRoute.view === 'library') renderLibrary();
       if (currentRoute.view === 'projects') renderProjects();
-      if (currentRoute.view === 'datasets') renderDatasets();
+      if (currentRoute.view === 'datasets') {
+        $('dataset-save-status').textContent='';
+        try { const ui=await getDatasetUI();if(g!==generation)return;const data=await api('/v1/datasets'); if(g!==generation)return; ui.render(data); }
+        catch(e) {if(g!==generation || e.name==='AbortError')return;if(e.status===401)throw e;if(datasetUI)datasetUI.render(null);else $('dataset-mode').textContent='Dataset controls could not be loaded. Refresh to retry.';}
+      }
       if (currentRoute.view === 'research') {
         if (!research.length) {
           const notes = await api('/assets/research.json');
@@ -605,6 +618,7 @@
       all('[data-setup-kind]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.setupKind === button.dataset.setupKind)));
     }
     if (button.hasAttribute('data-setup-done')) { $('setup-dialog').close(); uiAction({kind:'view.select',target_id:'workspace.views',view_id:'sources'}); }
+    if (button.dataset.datasetOpen || button.dataset.datasetStop) await datasetUI?.handle(button);
     if (button.dataset.event) await openTurn(button.dataset.event,button.dataset.openTab);
     if (button.dataset.tab) setTab(button.dataset.tab);
     if (button.dataset.libraryToggle) await toggleLibrary(button);
