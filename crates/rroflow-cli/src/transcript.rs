@@ -64,6 +64,9 @@ pub(crate) struct Turn {
     /// The legacy numeric totals above remain available to the Raindrop sink.
     pub(crate) usage_known: [bool; 4],
     pub(crate) usage_seen: bool,
+    /// Identity-bound provider usage supersedes legacy notification totals for
+    /// hosted records, without changing the Raindrop compatibility projection.
+    pub(crate) hosted_usage: Option<rroflow_core::Usage>,
     pub(crate) tools: Vec<Tool>,
     pub(crate) cwd: String,
     pub(crate) branch: String,

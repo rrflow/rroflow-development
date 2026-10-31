@@ -17,14 +17,17 @@
 //!   `function_call_output` / `custom_tool_call_output` by `call_id`; `web_search_call`
 //!   has no output record. Codex persists no success flag, so a failure is read from
 //!   the output: `Exit code: N` (text form) or `metadata.exit_code` (JSON form).
-//! - Model from `turn_context.model`; tokens summed from `token_count`
-//!   `info.last_token_usage` (OpenAI's `input_tokens` already includes cached input).
+//! - Model from `turn_context.model`. Hosted usage prefers identity-bound
+//!   `token_usage_record` responses; legacy notification totals remain the
+//!   Raindrop compatibility projection. Input counts include cached input.
 
 use crate::transcript::{Tool, Turn, read_records};
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
+
+mod usage;
 
 /// Text Codex injects as user-role messages; never the person's prompt.
 const INJECTED_PREFIXES: [&str; 5] = [
@@ -128,6 +131,7 @@ fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
     // rollout, so it is skipped until the child's first own turn.
     let mut seen_meta = false;
     let mut inherited = false;
+    let mut response_usage = usage::ResponseUsage::default();
 
     let new_turn = |turns: &mut Vec<Turn>, s: &Session, key: String, ts: &str| {
         turns.push(Turn {
@@ -172,6 +176,7 @@ fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
             }
         }
         match kind {
+            "token_usage_record" => response_usage.observe(&s.id, p),
             "session_meta" if seen_meta => {
                 // The parent's meta: inherited history follows.
                 inherited = true;
@@ -372,6 +377,7 @@ fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
     }
     // A turn with no prompt (e.g. a review or compaction task) is not a user turn.
     turns.retain(|t| !t.input.is_empty());
+    response_usage.apply(&mut turns);
     Ok(turns)
 }
 
