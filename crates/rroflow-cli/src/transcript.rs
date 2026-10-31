@@ -60,6 +60,10 @@ pub(crate) struct Turn {
     pub(crate) cache_read: u64,
     /// Cache writes (Anthropic `cache_creation_input_tokens`).
     pub(crate) cache_write: u64,
+    /// Completeness of each hosted usage total, independent of model availability.
+    /// The legacy numeric totals above remain available to the Raindrop sink.
+    pub(crate) usage_known: [bool; 4],
+    pub(crate) usage_seen: bool,
     pub(crate) tools: Vec<Tool>,
     pub(crate) cwd: String,
     pub(crate) branch: String,
@@ -78,6 +82,29 @@ pub(crate) struct Turn {
     pub(crate) subagent: Option<String>,
     /// The turn was interrupted (Codex `turn_aborted`).
     pub(crate) aborted: bool,
+}
+
+impl Turn {
+    /// Merge one usage-bearing message. A missing/malformed field makes that
+    /// turn total unknown, even when other messages reported the field. Explicit
+    /// zero remains known; arithmetic overflow never becomes a priced total.
+    pub(crate) fn observe_usage(&mut self, values: [Option<u64>; 4]) {
+        let totals = [
+            &mut self.in_tokens,
+            &mut self.out_tokens,
+            &mut self.cache_read,
+            &mut self.cache_write,
+        ];
+        for (i, (total, value)) in totals.into_iter().zip(values).enumerate() {
+            let sum = total.checked_add(value.unwrap_or(0));
+            self.usage_known[i] =
+                (!self.usage_seen || self.usage_known[i]) && value.is_some() && sum.is_some();
+            // Preserve the legacy sink's numeric projection for valid inputs.
+            // Invalid overflow is bounded, while hosted usage remains unknown.
+            *total = sum.unwrap_or(u64::MAX);
+        }
+        self.usage_seen = true;
+    }
 }
 
 fn text_of(content: &Value) -> Option<String> {
@@ -222,14 +249,12 @@ fn parse(path: &std::path::Path, bounded_text: bool) -> Result<Vec<Turn>> {
                 if let Some(m) = msg["model"].as_str() {
                     t.model = Some(m.to_string());
                 }
-                t.in_tokens += msg["usage"]["input_tokens"].as_u64().unwrap_or(0);
-                t.out_tokens += msg["usage"]["output_tokens"].as_u64().unwrap_or(0);
-                t.cache_read += msg["usage"]["cache_read_input_tokens"]
-                    .as_u64()
-                    .unwrap_or(0);
-                t.cache_write += msg["usage"]["cache_creation_input_tokens"]
-                    .as_u64()
-                    .unwrap_or(0);
+                t.observe_usage([
+                    msg["usage"]["input_tokens"].as_u64(),
+                    msg["usage"]["output_tokens"].as_u64(),
+                    msg["usage"]["cache_read_input_tokens"].as_u64(),
+                    msg["usage"]["cache_creation_input_tokens"].as_u64(),
+                ]);
                 if !ts.is_empty() {
                     t.end = ts.clone();
                 }
@@ -365,6 +390,36 @@ pub(crate) fn collect(paths: &[PathBuf]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn usage_completeness_survives_both_transcript_readers() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("usage.jsonl");
+        let lines = [
+            serde_json::json!({"type":"user","promptId":"p","sessionId":"s","message":{"content":"work"}}),
+            serde_json::json!({"type":"assistant","message":{"content":[],"usage":{"input_tokens":0,"output_tokens":"unknown","cache_read_input_tokens":0}}}),
+            serde_json::json!({"type":"assistant","message":{"content":[],"usage":{"input_tokens":7,"output_tokens":4,"cache_read_input_tokens":0,"cache_creation_input_tokens":9}}}),
+        ];
+        std::fs::write(
+            &path,
+            lines
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        for bounded in [false, true] {
+            let turns = parse(&path, bounded).unwrap();
+            assert_eq!(turns.len(), 1);
+            let record = crate::record::to_record(&turns[0], None, &crate::redact::Redactor::new());
+            assert_eq!(record.model, None);
+            assert_eq!(record.usage.input_tokens, Some(7));
+            assert_eq!(record.usage.output_tokens, None);
+            assert_eq!(record.usage.cache_read_tokens, Some(0));
+            assert_eq!(record.usage.cache_write_tokens, None);
+        }
+    }
+
     #[test]
     fn compaction_summary_continues_the_original_prompt() {
         let lines = [
