@@ -9,6 +9,7 @@
 pub mod activity;
 pub mod capture;
 pub mod custom;
+pub mod engine_observation;
 pub mod record;
 pub mod signals;
 pub mod source_health;
