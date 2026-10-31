@@ -17,6 +17,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Build consented metadata datasets outside the HTTP request process.
+    DatasetWorker {
+        #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
+        config: PathBuf,
+        #[arg(long, env = "RROFLOW_DATABASE_URL", hide_env_values = true)]
+        database_url: Option<String>,
+        #[arg(long)]
+        once: bool,
+    },
     /// Install revisioned server-owned allowances (operator access only; no billing action).
     Allowance {
         #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
@@ -91,6 +100,38 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
+        Cmd::DatasetWorker {
+            config,
+            database_url,
+            once,
+        } => {
+            let cfg = load_config(&config, database_url)?;
+            let options = cfg
+                .datasets
+                .as_ref()
+                .context("dataset worker needs a [datasets] configuration")?;
+            let Store::Postgres(pg) = cfg.open_store().await? else {
+                anyhow::bail!("dataset worker needs Postgres");
+            };
+            loop {
+                match rroflow_ingest::datasets::run_once(&pg, options).await {
+                    Ok(status) => println!("{status}"),
+                    Err(_) if !once => {
+                        eprintln!("dataset worker unavailable; retrying without publishing")
+                    }
+                    Err(_) => {
+                        anyhow::bail!("dataset worker unavailable; no successful build is claimed")
+                    }
+                }
+                if once {
+                    break;
+                }
+                tokio::select! {
+                    _=shutdown_signal()=>break,
+                    _=tokio::time::sleep(std::time::Duration::from_secs(options.poll_seconds))=>{}
+                }
+            }
+        }
         Cmd::Allowance {
             config,
             database_url,

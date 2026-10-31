@@ -16,6 +16,7 @@
 pub mod allowances;
 mod analytics;
 mod brand;
+pub mod datasets;
 pub use brand::{BrandConfig, BrandLink};
 mod web_auth;
 pub use web_auth::BrowserConfig;
@@ -98,6 +99,8 @@ pub struct Config {
     pub brand: BrandConfig,
     /// Fail closed unless a database-owned allowance policy has been installed.
     pub require_allowance_policy: bool,
+    /// Operator-enabled metadata dataset collection. Training is not enabled by this.
+    pub datasets: Option<datasets::DatasetConfig>,
 }
 
 /// How the ingest checks Nomen tokens (RFC 7662 introspection, private-key JWT).
@@ -127,6 +130,7 @@ impl Default for Config {
             browser: None,
             brand: BrandConfig::default(),
             require_allowance_policy: false,
+            datasets: None,
         }
     }
 }
@@ -141,6 +145,13 @@ impl Config {
     }
     /// Open the store this config names.
     pub async fn open_store(&self) -> anyhow::Result<Store> {
+        if let Some(cfg) = &self.datasets {
+            cfg.validate()?;
+            anyhow::ensure!(
+                self.database_url.is_some(),
+                "dataset collection needs Postgres"
+            );
+        }
         anyhow::ensure!(
             !self.require_allowance_policy || self.database_url.is_some(),
             "required allowance policy needs Postgres"
@@ -209,6 +220,7 @@ pub struct Caller {
 /// Shared state: key-hash → devspace, the Nomen verifier, the store, limits.
 #[derive(Clone)]
 pub struct AppState {
+    datasets: Option<datasets::DatasetConfig>,
     keys: Arc<HashMap<String, String>>,
     brand: Arc<brand::RenderedBrand>,
     web: Option<Arc<web_auth::WebAuth>>,
@@ -219,6 +231,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(cfg: &Config, store: Arc<Store>) -> anyhow::Result<Self> {
+        if let Some(datasets) = &cfg.datasets {
+            datasets.validate()?;
+            anyhow::ensure!(
+                matches!(*store, Store::Postgres(_)),
+                "dataset collection needs Postgres"
+            );
+        }
         let mut keys = HashMap::new();
         for d in &cfg.devspace {
             anyhow::ensure!(
@@ -260,6 +279,7 @@ impl AppState {
             }
         };
         Ok(Self {
+            datasets: cfg.datasets.clone(),
             keys: Arc::new(keys),
             brand: Arc::new(brand::RenderedBrand::new(&cfg.brand)?),
             web: web_auth::WebAuth::new(cfg)?,
@@ -319,6 +339,9 @@ impl AppState {
 
 #[derive(Debug)]
 pub enum ApiError {
+    DatasetPolicyConflict,
+    MemberRequired,
+    NotFound,
     Quota(allowances::QuotaExceeded),
     AllowanceUnavailable,
     Unauthorized,
@@ -340,6 +363,18 @@ impl IntoResponse for ApiError {
             }))).into_response();
         }
         let (code, msg) = match self {
+            ApiError::DatasetPolicyConflict => (
+                StatusCode::CONFLICT,
+                "Dataset permission changed. Refresh before saving.".into(),
+            ),
+            ApiError::MemberRequired => (
+                StatusCode::FORBIDDEN,
+                "Sign in with your member account to manage dataset consent or exports.".into(),
+            ),
+            ApiError::NotFound => (
+                StatusCode::NOT_FOUND,
+                "Dataset unavailable, expired or withdrawn.".into(),
+            ),
             ApiError::Quota(_) => unreachable!(),
             ApiError::AllowanceUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -739,6 +774,21 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
         .route("/v1/allowances", get(allowances::status))
+        .route("/v1/datasets", get(datasets::status))
+        .route("/v1/datasets/policy", axum::routing::put(datasets::save))
+        .route("/v1/datasets/jobs/{id}/artifact", get(datasets::artifact))
+        .route(
+            "/assets/dashboard-datasets.js",
+            get(|| async {
+                (
+                    [
+                        ("content-type", "text/javascript; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                    include_str!("dashboard-datasets.js"),
+                )
+            }),
+        )
         .route("/v1/signals", get(get_signals))
         .route("/v1/signals/stats", get(analytics::get))
         .route("/v1/signals/preview", post(preview_signal))

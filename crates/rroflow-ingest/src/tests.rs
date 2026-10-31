@@ -893,13 +893,13 @@ async fn config_rejects_unsafe_ids_and_shared_keys() {
 
 /// A stand-in for Nomen's introspection endpoint: answers per token, or a fixed status.
 /// The client assertion itself is checked in `nomen::tests`.
-struct FakeNomen {
-    issuer: String,
-    answers: std::sync::Mutex<HashMap<String, serde_json::Value>>,
+pub(crate) struct FakeNomen {
+    pub(crate) issuer: String,
+    pub(crate) answers: std::sync::Mutex<HashMap<String, serde_json::Value>>,
     status: std::sync::atomic::AtomicU16,
 }
 
-async fn fake_nomen() -> Arc<FakeNomen> {
+pub(crate) async fn fake_nomen() -> Arc<FakeNomen> {
     use axum::extract::Form;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let fake = Arc::new(FakeNomen {
@@ -931,7 +931,7 @@ async fn fake_nomen() -> Arc<FakeNomen> {
 const NOMEN_PROJECT: &str = "rroflow-project";
 const NOMEN_CLIENT: &str = "rroflow-cli";
 
-fn signed_in(issuer: &str, sub: &str) -> serde_json::Value {
+pub(crate) fn signed_in(issuer: &str, sub: &str) -> serde_json::Value {
     let exp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
