@@ -3,6 +3,9 @@ use sqlx::Row;
 
 pub(super) async fn schedule(pg: &PgStore, cfg: &DatasetConfig) -> anyhow::Result<bool> {
     let mut tx = pg.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("SET LOCAL statement_timeout='10s'")
         .execute(&mut *tx)
         .await?;

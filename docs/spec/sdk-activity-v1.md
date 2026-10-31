@@ -116,7 +116,9 @@ after later source events. A review ID cannot be reused with different evidence/
 `GET /v1/sdk/reviews` returns bounded metadata, optionally scoped by activity; exact review
 ID returns the saved snapshot. The dashboard can inspect earlier reviews after the current
 projection changes. Review snapshots are private and do not grant training consent.
-SDK reviews are not yet included in the existing turn-based dataset collection policies.
+SDK reviews can enter private datasets only through the explicit `sdk_agents` consent
+extension in [metadata datasets](metadata-datasets-v1.md); existing session-only permissions
+do not include them.
 
 ## Sources and verification
 

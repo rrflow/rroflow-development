@@ -1,6 +1,6 @@
 # rroflow-development
 
-**RROFLOW (rroflow.ai): AI monitoring, with the evidence.** It captures coding-agent activity and produces behaviour signals for review. Automatic datasets and supervised/unsupervised learning are planned; they are not active. Hosted delivery targets Shippin.cloud / shippin.ai on Texas, whose deployment remains unverified. The reasoning engine, RRFlow (rrflow.ai), lives in [rrflow/rrflow-development](https://github.com/rrflow/rrflow-development). This repo is the RROFLOW lab and site; it moves to `rrflow/rroflow` at alpha.
+**RROFLOW (rroflow.ai): AI monitoring, with the evidence.** It captures coding-agent activity and produces behaviour signals for review. Consented private metadata datasets are implemented as an operator-enabled member preview; qualification, supervised/unsupervised training and governed promotion remain planned. Hosted delivery targets Shippin.cloud / shippin.ai on Texas, whose deployment remains unverified. The reasoning engine, RRFlow (rrflow.ai), lives in [rrflow/rrflow-development](https://github.com/rrflow/rrflow-development). This repo is the RROFLOW lab and site; it moves to `rrflow/rroflow` at alpha.
 
 | Path | What it is | State |
 |---|---|---|

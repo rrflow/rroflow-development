@@ -199,7 +199,7 @@ test('a person creates, tests, uses and pauses an organized custom signal',async
   turn.event_id='fixture-custom-paused';expect((await fetch(service.base+'/v1/turns',{method:'POST',headers:service.headers,body:JSON.stringify({turns:[turn]})})).ok).toBe(true);
   const history=await (await fetch(service.base+'/v1/turns?signal='+rule.id,{headers:service.headers})).json();expect(history.turns).toHaveLength(1);
   await page.reload();await expect(page.locator('#app')).toBeVisible();await settled(page);await expect(card).toContainText('Paused');
-  await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('Saved decisions');await expect(page.locator('#dataset-readiness')).toContainText('Unavailable');
+  await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('Turn reviews');await expect(page.locator('#dataset-readiness')).toContainText('Unavailable');
 });
 
 
@@ -317,8 +317,8 @@ test('SDK adapters become inspectable activity and reviewed findings in the memb
     const scripts=[];page.on('request',r=>{if(r.url().includes('dashboard-sdk.js'))scripts.push(r.url());});
     await page.goto(service.base+'/app');await expect(page.locator('#app')).toBeVisible();await settled(page);
     expect(scripts).toHaveLength(0);await expect(page.locator('#overview-sdk')).toContainText('3 published operations');
-    await page.getByRole('link',{name:'Explore SDK activity'}).click();await settled(page);expect(scripts).toHaveLength(1);
-    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(3);await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-activity');
+    await page.getByRole('link',{name:'Explore SDK activity'}).click();await settled(page);
+    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(3);expect(scripts).toHaveLength(1);await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-activity');
     await page.locator('#sdk-filters select[name=agent]').selectOption('codex');await page.locator('#sdk-filters').getByRole('button',{name:'Apply',exact:true}).click();await settled(page);
     await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);await page.getByRole('button',{name:'Open evidence',exact:true}).click();
     await expect(page.locator('#sdk-inspector')).toBeVisible();await expect(page.locator('#sdk-detail')).toContainText('Tool failed');await expect(page.locator('#sdk-detail')).toContainText('Output: 0');await expect(page.locator('#sdk-detail')).toContainText('1 events have types');
@@ -336,6 +336,17 @@ test('SDK adapters become inspectable activity and reviewed findings in the memb
     await expect(page.locator('#sdk-saved-reviews')).toContainText('Earlier evidence revision');await page.locator('[data-sdk-review]').click();await expect(page.locator('#sdk-detail')).toContainText('immutable evidence saved');
     await expect(page.locator('#sdk-detail')).toContainText(saved.request.revision);await expect(page.locator('[data-sdk-verdict]')).toHaveCount(0);
     await page.getByRole('button',{name:'Close SDK evidence'}).click();await page.evaluate(()=>{location.hash='#signals?kind=sdk';});await settled(page);await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);
+    await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('SDK operations');
+    await expect(page.locator('[data-dataset-sdk-agent="codex"]')).not.toBeChecked();
+    await page.locator('[data-dataset-sdk-agent="codex"]').check();await page.locator('#dataset-consent').check();await page.locator('#dataset-save').click();await settled(page);
+    const policy=(await service.api('/v1/datasets')).body.policies.find(p=>p.policy.purpose==='signal_reviews').policy;
+    expect(policy.sdk_agents).toEqual(['codex']);expect(policy.agents).toEqual([]);expect(policy.all_projects).toBe(false);
+    await expect.poll(async()=>{await service.work();return (await service.api('/v1/datasets')).body.jobs.some(j=>j.status==='published');},{timeout:15000}).toBe(true);
+    await page.locator('#dataset-refresh').click();await settled(page);await page.getByRole('button',{name:'Inspect dataset',exact:true}).click();
+    await expect(page.locator('#dataset-manifest')).toContainText('metrics-only/v2');await expect(page.locator('#dataset-sample')).toContainText('sdk_operation');await expect(page.locator('#dataset-sample')).toContainText(saved.request.revision);await expect(page.locator('#dataset-sample')).not.toContainText('PRIVATE_SDK');
+    await reflow(page);await accessible(page);await screenshot(page,info,'sdk-private-dataset');
+    await page.getByRole('button',{name:'Close dataset evidence'}).click();await page.getByRole('button',{name:'Stop & remove these datasets',exact:true}).click();await settled(page);await expect(page.locator('#dataset-policies')).toContainText('Stopped');
+
     if(isMobile)await page.getByRole('button',{name:'Toggle navigation'}).click();await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.locator('#sdk-detail')).toBeEmpty();await expect(page.locator('#sdk-explorer')).toBeEmpty();
   }finally{await service.close();}
 });
