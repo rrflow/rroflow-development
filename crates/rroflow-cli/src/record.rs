@@ -29,9 +29,6 @@ fn termination(t: &Turn) -> Termination {
 /// in [`records`], which sees the whole session.
 pub(crate) fn to_record(t: &Turn, project: Option<&str>, r: &Redactor) -> TurnRecord {
     let finished: Vec<_> = t.tools.iter().filter(|x| x.end.is_some()).collect();
-    // A turn the agent never answered has no usage report: unknown, not zero.
-    let reported = t.model.is_some();
-    let some = |n: u64| reported.then_some(n);
     TurnRecord {
         schema: SCHEMA.into(),
         event_id: event_id(t),
@@ -53,10 +50,10 @@ pub(crate) fn to_record(t: &Turn, project: Option<&str>, r: &Redactor) -> TurnRe
             .map(str::to_string)
             .or_else(|| (!t.cwd.is_empty()).then(|| r.apply(&t.cwd))),
         usage: Usage {
-            input_tokens: some(t.in_tokens),
-            output_tokens: some(t.out_tokens),
-            cache_read_tokens: some(t.cache_read),
-            cache_write_tokens: some(t.cache_write),
+            input_tokens: t.usage_known[0].then_some(t.in_tokens),
+            output_tokens: t.usage_known[1].then_some(t.out_tokens),
+            cache_read_tokens: t.usage_known[2].then_some(t.cache_read),
+            cache_write_tokens: t.usage_known[3].then_some(t.cache_write),
             // OpenAI's input_tokens include cached input; Anthropic's do not.
             input_includes_cache: t.agent == "codex",
         },
@@ -124,6 +121,8 @@ mod tests {
             in_tokens: 10,
             out_tokens: 20,
             cache_read: 900,
+            usage_known: [true, true, true, false],
+            usage_seen: true,
             agent: "claude-code",
             provider: "anthropic".into(),
             tools: vec![
@@ -185,10 +184,47 @@ mod tests {
     }
 
     #[test]
+    fn known_model_does_not_imply_reported_usage() {
+        let t = Turn {
+            model: Some("known-model".into()),
+            ..Default::default()
+        };
+        let usage = to_record(&t, None, &Redactor::new()).usage;
+        assert_eq!(usage.input_tokens, None);
+        assert_eq!(usage.output_tokens, None);
+        assert_eq!(usage.cache_read_tokens, None);
+        assert_eq!(usage.cache_write_tokens, None);
+    }
+
+    #[test]
     fn unanswered_turn_has_unknown_usage_not_zero() {
-        let mut t = turn();
-        t.model = None;
+        let t = Turn::default();
         let r = to_record(&t, None, &Redactor::new());
         assert_eq!(r.usage.input_tokens, None);
+    }
+
+    #[test]
+    fn explicit_zero_and_usage_without_model_remain_known() {
+        let mut t = Turn::default();
+        t.observe_usage([Some(0), Some(7), None, Some(0)]);
+        let r = to_record(&t, None, &Redactor::new());
+        assert_eq!(r.usage.input_tokens, Some(0));
+        assert_eq!(r.usage.output_tokens, Some(7));
+        assert_eq!(r.usage.cache_read_tokens, None);
+        assert_eq!(r.usage.cache_write_tokens, Some(0));
+        assert_eq!(r.model, None);
+    }
+
+    #[test]
+    fn incomplete_reports_and_overflow_cannot_be_complete_totals() {
+        let mut t = Turn::default();
+        t.observe_usage([Some(u64::MAX), Some(2), None, Some(0)]);
+        t.observe_usage([Some(1), None, Some(9), Some(0)]);
+        t.observe_usage([Some(0), Some(3), Some(1), Some(0)]);
+        let r = to_record(&t, None, &Redactor::new());
+        assert_eq!(r.usage.input_tokens, None);
+        assert_eq!(r.usage.output_tokens, None);
+        assert_eq!(r.usage.cache_read_tokens, None);
+        assert_eq!(r.usage.cache_write_tokens, Some(0));
     }
 }

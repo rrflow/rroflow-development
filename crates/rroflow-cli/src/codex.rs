@@ -258,10 +258,13 @@ fn parse(path: &Path, bounded_text: bool) -> Result<Vec<Turn>> {
                 }
                 "token_count" => {
                     let u = &p["info"]["last_token_usage"];
-                    if let Some(t) = turns.last_mut() {
-                        t.in_tokens += u["input_tokens"].as_u64().unwrap_or(0);
-                        t.out_tokens += u["output_tokens"].as_u64().unwrap_or(0);
-                        t.cache_read += u["cached_input_tokens"].as_u64().unwrap_or(0);
+                    if let Some(t) = turns.last_mut().filter(|_| u.is_object()) {
+                        t.observe_usage([
+                            u["input_tokens"].as_u64(),
+                            u["output_tokens"].as_u64(),
+                            u["cached_input_tokens"].as_u64(),
+                            None, // This source does not report cache-write usage.
+                        ]);
                     }
                 }
                 _ => {}
@@ -414,6 +417,31 @@ mod tests {
     }
 
     const META: &str = r#"{"timestamp":"2026-10-25T10:00:00.000Z","type":"session_meta","payload":{"id":"019a-thread","session_id":"019a-thread","timestamp":"2026-10-25T10:00:00Z","cwd":"/work/shippinai","originator":"codex_cli_rs","cli_version":"0.130.0","model_provider":"openai","git":{"branch":"main"}}}"#;
+
+    #[test]
+    fn usage_reports_are_per_field_and_null_notifications_do_not_invent_tokens() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("usage.jsonl");
+        let lines = [
+            META,
+            r#"{"type":"turn_context","payload":{"turn_id":"T1","model":"known-model"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"T1"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"work"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"output_tokens":2}}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        for bounded in [false, true] {
+            let turns = parse(&path, bounded).unwrap();
+            assert_eq!(turns.len(), 1);
+            let record = crate::record::to_record(&turns[0], None, &crate::redact::Redactor::new());
+            assert_eq!(record.usage.input_tokens, Some(0));
+            assert_eq!(record.usage.output_tokens, Some(2));
+            assert_eq!(record.usage.cache_read_tokens, None);
+            assert_eq!(record.usage.cache_write_tokens, None);
+            assert!(record.usage.input_includes_cache);
+        }
+    }
 
     #[test]
     fn paginated_rollout_with_task_events() {

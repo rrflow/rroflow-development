@@ -162,6 +162,24 @@ pub(crate) fn trace_body(service: &str, spans: &[Value]) -> Value {
 mod tests {
     use super::*;
     #[test]
+    fn explicit_usage_tracking_preserves_legacy_raindrop_payload() {
+        let mut observed = Turn::default();
+        observed.observe_usage([Some(3), None, Some(0), None]);
+        observed.observe_usage([Some(4), Some(2), None, Some(1)]);
+        let legacy = Turn {
+            in_tokens: 7,
+            out_tokens: 2,
+            cache_write: 1,
+            ..Default::default()
+        };
+        let redactor = Redactor::new();
+        let before = build(&legacy, "u", None, false, &redactor);
+        let after = build(&observed, "u", None, false, &redactor);
+        assert_eq!(before.event, after.event);
+        assert_eq!(before.spans, after.spans);
+    }
+
+    #[test]
     fn event_ids_are_deterministic() {
         let t = Turn {
             session: "s".into(),
