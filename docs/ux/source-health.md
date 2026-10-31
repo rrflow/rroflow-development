@@ -18,7 +18,9 @@ last delivery check result. Queue details include the oldest waiting batch times
 retained journal size, collector version and saved signal-settings revision.
 The oldest timestamp comes from the local batch file's modification time; restored
 or copied journals may change it. Retained bytes include acknowledged records.
-Numbers describe this session collector, not SDK-only capture or browser chats.
+Session counts describe this collector, never browser chats. Updated collectors
+also report separately counted [explicitly linked SDK queues](sdk-background-delivery.md),
+including SDK-only mode, pending events, retries and incomplete-count warnings.
 
 Refresh fetches new reports. The visible report ages while the page remains open;
 it cannot stay marked recent indefinitely. An unavailable health endpoint is shown

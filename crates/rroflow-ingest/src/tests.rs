@@ -1581,6 +1581,33 @@ async fn source_reports_are_owner_scoped_durable_and_replay_never_refreshes_rece
             );
         }
         let mut unknown = report.clone();
+        let mut sdk_report = source_health_report(6);
+        sdk_report["session_capture"] = false.into();
+        sdk_report["sdk"] = serde_json::json!({"linked_queues":2,"pending_events":9,"pending_bytes":1024,"retained_bytes":2048,"retrying_queues":1,"queue_errors":0});
+        let (code, sdk_receipt) =
+            call(&restored, json_post("key-jesse", uri, sdk_report.clone())).await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(sdk_receipt["observation"]["report"], sdk_report);
+        assert_eq!(
+            call(&restored, json_post("key-jesse", uri, sdk_report.clone()))
+                .await
+                .1,
+            sdk_receipt
+        );
+        for (field, value) in [
+            ("linked_queues", 17),
+            ("retrying_queues", 3),
+            ("pending_bytes", 2049),
+        ] {
+            let mut invalid = sdk_report.clone();
+            invalid["sdk"][field] = value.into();
+            assert_eq!(
+                call(&restored, json_post("key-jesse", uri, invalid))
+                    .await
+                    .0,
+                StatusCode::BAD_REQUEST
+            );
+        }
         unknown["path"] = serde_json::json!("/private/session");
         assert_eq!(
             call(&restored, json_post("key-jesse", uri, unknown))

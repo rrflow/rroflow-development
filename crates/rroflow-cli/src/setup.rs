@@ -138,6 +138,7 @@ pub(crate) fn run(args: Args) -> Result<()> {
             claude_root: None,
             codex_root: None,
             content: args.content,
+            sdk_only: false,
         })?;
     }
 

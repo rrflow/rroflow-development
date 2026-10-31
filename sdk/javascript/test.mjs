@@ -28,6 +28,22 @@ test('capture refuses absent or unsafe destinations before spawning a collector'
   }
 });
 
+test('an early recorder refusal survives a broken stdin pipe', { timeout: 15000 }, async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'rroflow-sdk-refusal-'));
+  const options = { agent: 'codex', sessionId: 'fixture', spool, executable: binary,
+    endpoint: 'http://127.0.0.1:1', devspace: 'owner', content: true };
+  const owner = new Capture(options);
+  await owner.record('call.started');
+  await owner.close({ flush: false });
+  // Larger than an OS pipe buffer: the recorder refuses before consuming input.
+  // Both record and close must retain the useful destination refusal.
+  const other = new Capture({ ...options, devspace: 'other' });
+  await assert.rejects(other.record('call.started', { payload: { text: 'x'.repeat(1024 * 1024) } }), /another endpoint or account/);
+  await assert.rejects(other.close({ flush: false }), /another endpoint or account/);
+  const status = JSON.parse((await exec(binary, ['capture', 'status', '--spool', spool])).stdout);
+  assert.equal(status.pending, 1);
+});
+
 test('three SDKs record, replay, isolate, redact and retain failures through the real collector', { timeout: 60000 }, async t => {
   const dir = await mkdtemp(join(tmpdir(), 'rroflow-sdk-proof-'));
   const listener = createServer(); await new Promise(r => listener.listen(0, '127.0.0.1', r));

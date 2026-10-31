@@ -52,7 +52,7 @@ jobs:
       - name: Build collector and ingest for SDK proof
         run: cargo build --workspace --locked
       - name: SDK capture end to end (fixture providers)
-        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs
+        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs scripts/test-managed-sdk.mjs
       - name: Account quotas and durable collector recovery (disposable database)
         env:
           RROFLOW_ALLOWANCE_TEST_DATABASE_URL: ${{ env.RROFLOW_TEST_DATABASE_URL }}
@@ -143,7 +143,7 @@ jobs:
       - name: Build collector and ingest for SDK proof
         run: cargo build --workspace --locked
       - name: SDK capture end to end (fixture providers)
-        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs
+        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs scripts/test-managed-sdk.mjs
       - name: Native user collector lifecycle (disposable runner only)
         env:
           RROFLOW_SERVICE_TEST: '1'

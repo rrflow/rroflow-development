@@ -163,7 +163,7 @@ fn record<R: BufRead, W: Write>(
                 .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)),
         "invalid devspace binding"
     );
-    private_dir(spool)?;
+    bind(spool, &base, devspace)?;
     let redactor = Redactor::new();
     loop {
         let mut line = Vec::new();
@@ -219,52 +219,158 @@ fn record<R: BufRead, W: Write>(
     Ok(())
 }
 
-fn pending(spool: &Path) -> Result<Vec<(PathBuf, Queued)>> {
-    let mut rows = vec![];
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Destination {
+    schema: String,
+    endpoint: String,
+    devspace: String,
+}
+
+pub(crate) fn bind(spool: &Path, base: &str, devspace: &str) -> Result<()> {
+    private_dir(spool)?;
+    let expected = Destination {
+        schema: "rroflow.sdk-destination/v1".into(),
+        endpoint: endpoint(base)?,
+        devspace: devspace.into(),
+    };
+    let path = spool.join("destination.state");
+    if path.try_exists()? {
+        ensure!(
+            std::fs::symlink_metadata(&path)?.file_type().is_file(),
+            "invalid SDK destination file"
+        );
+        ensure!(
+            std::fs::metadata(&path)?.len() <= 4096,
+            "invalid SDK destination size"
+        );
+        let actual: Destination = serde_json::from_slice(&std::fs::read(path)?)?;
+        ensure!(
+            actual == expected,
+            "SDK queue belongs to another endpoint or account; use a separate queue"
+        );
+        return Ok(());
+    }
+    // Adopt a legacy queue only after checking every retained record, including receipts.
+    for entry in std::fs::read_dir(spool)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "json") {
+            let row = read_event(&path)?;
+            ensure!(
+                row.endpoint == expected.endpoint && row.devspace == expected.devspace,
+                "legacy SDK queue contains another destination; nothing reassigned"
+            );
+        }
+    }
+    write_once(&path, &serde_json::to_vec(&expected)?)
+}
+
+fn read_event(path: &Path) -> Result<Queued> {
+    let meta = std::fs::symlink_metadata(path)?;
+    ensure!(
+        meta.file_type().is_file() && meta.len() <= MAX_EVENT as u64,
+        "invalid or oversized queued event"
+    );
+    let queued: Queued = serde_json::from_slice(&std::fs::read(path)?)
+        .context("damaged queue; nothing discarded")?;
+    queued.event.validate().map_err(anyhow::Error::msg)?;
+    ensure!(
+        path.file_stem().and_then(|s| s.to_str()) == Some(&queued.event.event_id),
+        "queue filename mismatch"
+    );
+    Ok(queued)
+}
+
+// Keep only paths and ordering keys in memory, never an entire backlog of payloads.
+fn pending_index(spool: &Path) -> Result<Vec<(PathBuf, String, u64)>> {
+    let mut index = vec![];
     for entry in std::fs::read_dir(spool)? {
         let path = entry?.path();
         if path.extension().is_some_and(|e| e == "json") && !path.with_extension("acked").exists() {
-            ensure!(
-                std::fs::symlink_metadata(&path)?.file_type().is_file(),
-                "spool entries must be files"
-            );
-            let bytes = std::fs::read(&path)?;
-            ensure!(bytes.len() <= MAX_EVENT, "oversized queued event");
-            let queued: Queued =
-                serde_json::from_slice(&bytes).context("damaged queue; nothing discarded")?;
-            queued.event.validate().map_err(anyhow::Error::msg)?;
-            ensure!(
-                path.file_stem().and_then(|s| s.to_str()) == Some(&queued.event.event_id),
-                "queue filename mismatch"
-            );
-            rows.push((path, queued));
+            let row = read_event(&path)?;
+            index.push((path, row.event.capture_id, row.event.sequence));
         }
     }
-    rows.sort_by(|a, b| {
-        a.1.event
-            .capture_id
-            .cmp(&b.1.event.capture_id)
-            .then(a.1.event.sequence.cmp(&b.1.event.sequence))
-    });
-    Ok(rows)
+    index.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
+    Ok(index)
 }
-
-fn deliver(spool: &Path) -> Result<usize> {
+#[cfg(test)]
+fn pending(spool: &Path) -> Result<Vec<(PathBuf, Queued)>> {
+    pending_index(spool)?
+        .into_iter()
+        .map(|(p, _, _)| read_event(&p).map(|q| (p, q)))
+        .collect()
+}
+#[derive(Default, Serialize)]
+pub(crate) struct QueueStats {
+    pub pending_events: u64,
+    pub pending_bytes: u64,
+    pub retained_bytes: u64,
+}
+pub(crate) fn stats(spool: &Path) -> Result<QueueStats> {
+    private_dir(spool)?;
+    let mut stats = QueueStats::default();
+    for entry in std::fs::read_dir(spool)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "json") {
+            let meta = std::fs::symlink_metadata(&path)?;
+            ensure!(
+                meta.file_type().is_file() && meta.len() <= MAX_EVENT as u64,
+                "invalid SDK queue entry"
+            );
+            stats.retained_bytes += meta.len();
+            if !path.with_extension("acked").exists() {
+                stats.pending_events += 1;
+                stats.pending_bytes += meta.len();
+            }
+        }
+    }
+    Ok(stats)
+}
+fn flush_lock(spool: &Path) -> Result<std::fs::File> {
+    let path = spool.join("flush.lock");
+    if path.try_exists()? {
+        ensure!(
+            std::fs::symlink_metadata(&path)?.file_type().is_file(),
+            "SDK flush lock must be a regular file"
+        );
+    }
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(spool.join("flush.lock"))?;
+        .open(path)?;
     lock.try_lock().context("another flush is running")?;
+    Ok(lock)
+}
+fn deliver(spool: &Path) -> Result<usize> {
+    let _lock = flush_lock(spool)?;
     retry::attempt(spool, || {
         let sender = account::sender()?.context("sign in with rroflow login before flushing")?;
-        deliver_ready(spool, &sender)
+        deliver_ready(spool, &sender, usize::MAX, None, None)
     })
 }
-
-fn deliver_ready(spool: &Path, sender: &account::Sender) -> Result<usize> {
-    let rows = pending(spool)?;
+pub(crate) fn deliver_managed(
+    spool: &Path,
+    sender: impl FnOnce() -> Result<account::Sender>,
+    limit: usize,
+    seconds: u64,
+    owner: &str,
+) -> Result<usize> {
+    let _lock = flush_lock(spool)?;
+    retry::attempt(spool, || {
+        deliver_ready(spool, &sender()?, limit, Some(seconds), Some(owner))
+    })
+}
+fn deliver_ready(
+    spool: &Path,
+    sender: &account::Sender,
+    limit: usize,
+    seconds: Option<u64>,
+    owner: Option<&str>,
+) -> Result<usize> {
+    let rows = pending_index(spool)?;
     if rows.is_empty() {
         return Ok(0);
     }
@@ -282,18 +388,33 @@ fn deliver_ready(spool: &Path, sender: &account::Sender) -> Result<usize> {
         .call()?;
     retry::require_ok(&who)?;
     let who: Value = who.body_mut().read_json()?;
-    for (_, q) in &rows {
+    ensure!(
+        owner.is_none_or(|ds| who["devspace"].as_str() == Some(ds)),
+        "SDK source belongs to another account; queue retained"
+    );
+    // Validate the whole pending backlog before sending any event.
+    for (path, _, _) in &rows {
+        let q = read_event(path)?;
         ensure!(
             q.endpoint == base && who["devspace"].as_str() == Some(&q.devspace),
             "queue belongs to a different endpoint or devspace; no events uploaded"
         );
     }
     let mut count = 0;
-    for (path, q) in rows {
+    let started = std::time::Instant::now();
+    for (path, _, _) in rows.into_iter().take(limit) {
+        if count > 0 && seconds.is_some_and(|n| started.elapsed().as_secs() >= n) {
+            break;
+        }
+        let q = read_event(&path)?;
+        ensure!(
+            q.endpoint == base && who["devspace"].as_str() == Some(&q.devspace),
+            "queue destination changed; record retained"
+        );
         let mut response = client
             .post(&format!("{base}/v1/events"))
             .header("Authorization", &format!("Bearer {}", sender.token))
-            .send_json(json!({"events": [&q.event]}))?;
+            .send_json(json!({"events":[&q.event]}))?;
         retry::require_ok(&response)?;
         let receipt: Value = response.body_mut().read_json()?;
         ensure!(
@@ -333,10 +454,10 @@ pub(crate) fn run(command: Command) -> Result<()> {
         }
         Command::Status { spool } => {
             private_dir(&spool)?;
-            let rows = pending(&spool)?;
+            let state = stats(&spool)?;
             println!(
                 "{}",
-                json!({"pending": rows.len(), "retry": retry::read(&spool)?, "note": "queued is not yet server-acknowledged"})
+                json!({"pending": state.pending_events, "bytes": state, "retry": retry::read(&spool)?, "note": "queued is not yet server-acknowledged"})
             );
             Ok(())
         }
@@ -415,5 +536,37 @@ mod tests {
         assert!(ack.is_empty());
         assert!(endpoint("http://external.example").is_err());
         assert!(endpoint("https://u:p@example.test").is_err());
+    }
+
+    #[test]
+    fn queue_binding_survives_receipts_and_legacy_adoption_checks_all_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = event();
+        record(
+            format!("{e}\n").as_bytes(),
+            vec![],
+            dir.path(),
+            "https://api.example.test",
+            "owner",
+            false,
+        )
+        .unwrap();
+        let receipt = dir
+            .path()
+            .join(format!("{}.acked", e["event_id"].as_str().unwrap()));
+        std::fs::write(receipt, b"{}").unwrap();
+        assert_eq!(stats(dir.path()).unwrap().pending_events, 0);
+        assert!(bind(dir.path(), "https://api.example.test", "other").is_err());
+        assert!(bind(dir.path(), "https://other.example.test", "owner").is_err());
+        // Simulate the previous collector's queue without a destination file.
+        std::fs::remove_file(dir.path().join("destination.state")).unwrap();
+        assert!(bind(dir.path(), "https://api.example.test", "other").is_err());
+        assert!(!dir.path().join("destination.state").exists());
+        bind(dir.path(), "https://api.example.test", "owner").unwrap();
+        assert!(stats(dir.path()).unwrap().retained_bytes > 0);
+        let held = flush_lock(dir.path()).unwrap();
+        assert!(flush_lock(dir.path()).is_err());
+        drop(held);
+        assert!(flush_lock(dir.path()).is_ok());
     }
 }

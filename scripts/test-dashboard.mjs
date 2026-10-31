@@ -371,3 +371,13 @@ test('dataset controls load on demand with a separate bounded same-origin script
   assert.doesNotMatch(html,/<script[^>]+src="[^"]*dashboard-datasets/);
   assert.match(script,/script.src='\/assets\/dashboard-datasets.js'/);
 });
+
+
+test('SDK recovery is distinct from session counts and never treats incomplete counts as healthy',async()=>{
+  const p=await page({signedIn:true,hash:'#sources',intercept:async path=>path==='/v1/sources/health'?{ok:true,status:200,json:async()=>({sources:[{report:{source_id:'sdk-fixture',sequence:1,observed_at:'2026-10-30T00:00:00Z',collector_version:'fixture',pending_revisions:0,pending_bytes:0,journal_bytes:0,capture_errors:0,delivery_ok:true,signal_settings_revision:0,session_capture:false,sdk:{linked_queues:2,pending_events:9,pending_bytes:1024,retained_bytes:2048,retrying_queues:1,queue_errors:1}},received_at:'2026-10-30T00:00:00Z'}],as_of:'2026-10-30T00:00:00Z',recent_for_seconds:120})}:null});
+  assert.match(p.el.get('source-health').innerHTML,/SDK delivery collector; session scanning is off/);
+  assert.match(p.el.get('source-health').innerHTML,/9 events waiting across 2 linked queues/);
+  assert.doesNotMatch(p.el.get('source-health').innerHTML,/turn revisions waiting to send/);
+  assert.match(p.el.get('source-health').innerHTML,/Counts are incomplete/);
+  assert.match(p.el.get('source-health').innerHTML,/Reporting with a problem/);
+});

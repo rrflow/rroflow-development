@@ -74,8 +74,21 @@ export class Capture {
       this.#pending.push({ id: event.event_id, resolve, reject });
       this.#child.stdin.write(line, error => { if (error) { this.#failure = error; reject(error); } });
     }));
-    this.#tail = task;
-    return task;
+    // A recorder may reject its destination before reading stdin. On Linux the
+    // pipe can break before stderr/close arrives; preserve that refusal instead
+    // of hiding it behind EPIPE. A bounded wait also covers a stuck subprocess.
+    const observed = task.catch(async error => {
+      if (!['EPIPE', 'EOF', 'ERR_STREAM_DESTROYED'].includes(error?.code)) throw error;
+      let timer;
+      try {
+        await Promise.race([this.#done, new Promise((_, reject) => {
+          timer = setTimeout(() => reject(error), 1000);
+        })]);
+      } finally { clearTimeout(timer); }
+      throw error;
+    });
+    this.#tail = observed;
+    return observed;
   }
   /** Record the observable stream before handing each event to its consumer. */
   async *stream(create, { input = null, operationId = randomUUID(), parentOperationId = null } = {}) {

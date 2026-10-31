@@ -98,3 +98,10 @@ retain link-time settings and need an upgrade. See [signal workspace](../ux/sign
 ## Source health reports
 
 The source-health increment sends bounded latest-only reports with a durable sequence, pending queue counts, retained bytes, scan-error count and last upload result. The Sources page distinguishes recent reports from stale or unavailable status; old activity is never a heartbeat. See [source reporting and recovery](../ux/source-health.md). See [collector startup](../ux/collector-startup.md) for native per-user installation, lifecycle and logout limitations. Hosted activation remains unfinished.
+
+
+## Managed SDK queues
+
+[SDK background delivery](../ux/sdk-background-delivery.md) adds explicit account-bound
+queue links to this collector. SDK-only mode avoids session scanning. SDK events
+remain separately counted and are not inferred to be normalized session turns.
