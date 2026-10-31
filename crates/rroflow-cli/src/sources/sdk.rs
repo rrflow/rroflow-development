@@ -171,6 +171,33 @@ pub(super) fn cycle(
         &link.devspace,
     )
 }
+fn canonical_missing(path: &Path) -> Result<PathBuf> {
+    let mut ancestor = path;
+    let mut tail = vec![];
+    loop {
+        match fs::canonicalize(ancestor) {
+            Ok(mut base) => {
+                for part in tail.into_iter().rev() {
+                    base.push(part);
+                }
+                return Ok(base);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tail.push(
+                    ancestor
+                        .file_name()
+                        .context("missing queue has no resolvable parent")?
+                        .to_os_string(),
+                );
+                ancestor = ancestor
+                    .parent()
+                    .context("missing queue parent unavailable")?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 pub(super) fn run(journal: &Journal, action: Action) -> Result<()> {
     if matches!(action, Action::Status) {
         let links = links(journal)?;
@@ -213,20 +240,13 @@ pub(super) fn run(journal: &Journal, action: Action) -> Result<()> {
     let spool = match fs::canonicalize(spool) {
         Ok(path) => path,
         Err(error) if matches!(action, Action::Unlink { .. }) => {
-            // A removed queue must still be unlinkable. Match only a stored absolute path.
-            let spelling = |p: &Path| {
-                let text = p.to_string_lossy();
-                if cfg!(windows) {
-                    text.trim_start_matches(r"\\?\").replace('\\', "/")
-                } else {
-                    text.into_owned()
-                }
-            };
+            // Resolve a surviving parent first: Windows temp paths may use an
+            // 8.3 alias while the saved link contains its canonical long name.
+            let requested = canonical_missing(spool).context(error)?;
             links(journal)?
                 .into_iter()
-                .find(|l| spelling(&l.spool) == spelling(spool))
+                .find(|l| l.spool == requested)
                 .map(|l| l.spool)
-                .ok_or(error)
                 .context("SDK link not found for unavailable queue")?
         }
         Err(error) => return Err(error).context("SDK queue path unavailable"),
@@ -277,4 +297,20 @@ pub(super) fn run(journal: &Journal, action: Action) -> Result<()> {
         serde_json::json!({"linked":true,"queue":link.spool,"batch_size":batch_size,"startup":"Use sources service install or the existing running collector"})
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn missing_queue_keeps_canonical_parent_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let requested = dir.path().join(".").join("removed-parent").join("queue");
+        let expected = fs::canonicalize(dir.path())
+            .unwrap()
+            .join("removed-parent")
+            .join("queue");
+        assert_eq!(canonical_missing(&requested).unwrap(), expected);
+        assert!(!requested.exists());
+    }
 }
