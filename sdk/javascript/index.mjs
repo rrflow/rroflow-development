@@ -59,15 +59,24 @@ export class Capture {
       cache_write_tokens: n(u.cache_creation_input_tokens ?? u.cache_write_input_tokens), input_includes_cache: this.agent !== 'claude' } : null;
     const model = payload?.model || payload?.response?.model || payload?.message?.model || payload?.event?.message?.model || null;
     const block = payload?.event?.content_block;
-    const native_id = payload?.item?.id || payload?.response?.id || payload?.tool_use_id || payload?.uuid || block?.id || null;
+    const native_id = payload?.item?.id || payload?.response?.id || (payload?.object === 'response' ? payload?.id : null) || payload?.tool_use_id || payload?.uuid || block?.id || null;
     const parent_native_id = payload?.parent_tool_use_id || payload?.parent_id || null;
-    const native_status = payload?.item?.status || payload?.response?.status || payload?.subtype || null;
-    const tool_name = payload?.tool_name || payload?.item?.name || block?.name || null;
+    const native_status = payload?.item?.status || payload?.response?.status || payload?.status || payload?.subtype || null;
+    const tool_name = payload?.tool_name || payload?.item?.tool || payload?.item?.name || block?.name || null;
     const exit_code = Number.isInteger(payload?.item?.exit_code) ? payload.item.exit_code : null;
+    // Only structural facts are carried without content consent. Never serialize
+    // provider errors, commands, arguments or result text into metadata.
+    const bool = value => typeof value === 'boolean' ? value : null;
+    const response = payload?.response || (payload?.object === 'response' ? payload : null);
+    const responseError = response && Object.hasOwn(response, 'error') ? response.error !== null && response.error !== undefined : null;
+    const native = { version: 1, item_type: payload?.item?.type || null,
+      event_type: payload?.event?.type || null, object_type: payload?.response?.object || payload?.object || null,
+      stop_reason: payload?.stop_reason || payload?.message?.stop_reason || payload?.event?.delta?.stop_reason || null,
+      is_error: bool(payload?.is_error) ?? responseError, is_interrupt: bool(payload?.is_interrupt) };
     const event = { schema: 'rroflow.capture/v1', event_id: randomUUID(), capture_id: this.captureId,
       sequence: this.#sequence++, agent: this.agent, session_id: this.sessionId,
       operation_id: operationId || randomUUID(), parent_operation_id: parentOperationId,
-      observed_at: new Date().toISOString(), kind, native_type: nativeType, native_id, parent_native_id, native_status, tool_name, exit_code, model, usage, payload: this.#content ? payload : null };
+      observed_at: new Date().toISOString(), kind, native_type: nativeType, native_id, parent_native_id, native_status, tool_name, exit_code, native, model, usage, payload: this.#content ? payload : null };
     const task = this.#tail.then(() => new Promise((resolve, reject) => {
       if (this.#failure) return reject(this.#failure);
       let line; try { line = JSON.stringify(event) + '\n'; } catch (e) { return reject(e); }

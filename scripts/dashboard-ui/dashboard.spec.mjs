@@ -2,6 +2,8 @@ import {test as base,expect} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import {startFixture} from './service.mjs';
 import {startDatasetFixture} from './dataset-service.mjs';
+import {seedSdk} from './sdk-fixture.mjs';
+import {randomUUID} from 'node:crypto';
 const test=base.extend({service:[async({},use)=>{const service=await startFixture();try{await use(service);}finally{await service.close();}},{scope:'worker'}]});
 async function signIn(page,service) {
   await page.goto(service.base+'/app');
@@ -301,4 +303,39 @@ test('member consents to automatic datasets, inspects immutable evidence and wit
     expect((await service.api(path)).status).toBe(404);await expect(page.getByRole('link',{name:'Download JSON',exact:true})).toHaveCount(0);
     if(isMobile)await page.getByRole('button',{name:'Toggle navigation'}).click();await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.locator('#dataset-manifest')).toBeEmpty();await expect(page.locator('#dataset-jobs')).toBeEmpty();
   } finally {await service.close();}
+});
+
+
+test('SDK adapters become inspectable activity and reviewed findings in the member workspace',async({page,isMobile},info)=>{
+  test.skip(!process.env.RROFLOW_DATASET_UI_DATABASE_URL,'Postgres SDK UI fixture is required');
+  const service=await startDatasetFixture(process.env.RROFLOW_DATASET_UI_DATABASE_URL);
+  try{
+    await seedSdk(service);
+    await expect.poll(async()=>(await service.api('/v1/sdk/activity')).body.matched_activities,{timeout:15000}).toBe(3);
+    await page.unroute('**/*');await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());
+    await page.setExtraHTTPHeaders({Authorization:'Bearer '+service.token});
+    const scripts=[];page.on('request',r=>{if(r.url().includes('dashboard-sdk.js'))scripts.push(r.url());});
+    await page.goto(service.base+'/app');await expect(page.locator('#app')).toBeVisible();await settled(page);
+    expect(scripts).toHaveLength(0);await expect(page.locator('#overview-sdk')).toContainText('3 published operations');
+    await page.getByRole('link',{name:'Explore SDK activity'}).click();await settled(page);
+    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(3);expect(scripts).toHaveLength(1);await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-activity');
+    await page.locator('#sdk-filters select[name=agent]').selectOption('codex');await page.locator('#sdk-filters').getByRole('button',{name:'Apply',exact:true}).click();await settled(page);
+    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);await page.getByRole('button',{name:'Open evidence',exact:true}).click();
+    await expect(page.locator('#sdk-inspector')).toBeVisible();await expect(page.locator('#sdk-detail')).toContainText('Tool failed');await expect(page.locator('#sdk-detail')).toContainText('Output: 0');await expect(page.locator('#sdk-detail')).toContainText('1 events have types');
+    await page.locator('[data-sdk-event]').first().click();await expect(page.locator('#sdk-raw-event')).toContainText('exit_code');await expect(page.locator('#sdk-raw-event')).not.toContainText('PRIVATE_SDK');
+    await page.getByRole('button',{name:'Matches',exact:true}).click();await expect(page.locator('#sdk-review-status')).toContainText('Review saved');
+    await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-evidence');
+    const reviews=(await service.api('/v1/sdk/reviews')).body.reviews;expect(reviews).toHaveLength(1);
+    const saved=reviews[0],original=(await service.api('/v1/events?agent=codex')).body.events;
+    const added={...original[0],event_id:randomUUID(),sequence:Math.max(...original.map(e=>e.sequence))+1,kind:'stream.event',native_type:'future.late_event',native:null,native_status:null,exit_code:null,usage:null};
+    expect((await service.api('/v1/events',{events:[added]})).status).toBe(200);
+    await expect.poll(async()=>(await service.api('/v1/sdk/activity?id='+saved.request.activity_id)).body.activities[0].revision,{timeout:15000}).not.toBe(saved.request.revision);
+    expect((await service.api('/v1/sdk/activity',null,service.otherToken)).body.matched_activities).toBe(0);
+    expect((await service.api('/v1/sdk/reviews?review_id='+saved.request.review_id,null,service.otherToken)).body.reviews).toEqual([]);
+    await page.getByRole('button',{name:'Close SDK evidence'}).click();await page.reload();await settled(page);await page.getByRole('button',{name:'Open evidence',exact:true}).click();
+    await expect(page.locator('#sdk-saved-reviews')).toContainText('Earlier evidence revision');await page.locator('[data-sdk-review]').click();await expect(page.locator('#sdk-detail')).toContainText('immutable evidence saved');
+    await expect(page.locator('#sdk-detail')).toContainText(saved.request.revision);await expect(page.locator('[data-sdk-verdict]')).toHaveCount(0);
+    await page.getByRole('button',{name:'Close SDK evidence'}).click();await page.evaluate(()=>{location.hash='#signals?kind=sdk';});await settled(page);await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);
+    if(isMobile)await page.getByRole('button',{name:'Toggle navigation'}).click();await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.locator('#sdk-detail')).toBeEmpty();await expect(page.locator('#sdk-explorer')).toBeEmpty();
+  }finally{await service.close();}
 });

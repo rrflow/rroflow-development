@@ -18,6 +18,7 @@ const suffix = process.platform === 'win32' ? '.exe' : '';
 const binDir = process.env.RROFLOW_TEST_BIN_DIR || resolve(root, 'target/debug');
 const binary = resolve(binDir, 'rroflow' + suffix);
 const ingest = resolve(binDir, 'rroflow-ingest' + suffix);
+const projector = resolve(binDir, 'examples', 'project-capture' + suffix);
 async function* events(items) { yield* items; }
 async function consume(stream) { const out=[]; for await (const e of stream) out.push(e); return out; }
 
@@ -93,7 +94,7 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   assert.equal(JSON.parse((await exec(binary,['capture','flush','--spool',join(dir,'codex')])).stdout).acknowledged,0);
 
   const claude=make('claude',true); let receivedOptions;
-  await consume(claudeStream(claude, args => { receivedOptions=args.options;return events([{type:'stream_event',event:{type:'message_start',message:{model:'claude-fixture',usage:{input_tokens:2}}}},{type:'assistant',message:{content:[{type:'tool_use',id:'tool-c',name:'Read'}]}},{type:'result',subtype:'success',usage:{input_tokens:2,output_tokens:3},api_key:'never-store-me',text:'sk-ABCDEFGHIJKLMNOPQRSTUV'}]); }, {prompt:'fixture',options:{permissionMode:'default'}}));
+  await consume(claudeStream(claude, args => { receivedOptions=args.options;return events([{type:'stream_event',event:{type:'message_start',message:{model:'claude-fixture',usage:{input_tokens:2}}}},{type:'assistant',message:{content:[{type:'tool_use',id:'tool-c',name:'Read'}]}},{type:'result',subtype:'success',is_error:false,stop_reason:'end_turn',usage:{input_tokens:2,output_tokens:3},api_key:'never-store-me',text:'sk-ABCDEFGHIJKLMNOPQRSTUV'}]); }, {prompt:'fixture',options:{permissionMode:'default'}}));
   assert.equal(receivedOptions.includePartialMessages,true);
   assert.equal(receivedOptions.permissionMode,'default');
   assert.deepEqual(await receivedOptions.hooks.PostToolUse[0].hooks[0]({hook_event_name:'PostToolUse',tool_name:'Read',tool_response:'fixture result'},'tool-c'),{});
@@ -101,7 +102,7 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   await claude.close();
 
   const grok=make('grok'); let request;
-  await consume(grokStream(grok,{responses:{create:async r=>{request=r;return events([{type:'response.created',response:{id:'resp-g'}},{type:'response.output_item.done',item:{type:'function_call',call_id:'call-g',name:'lookup'}},{type:'response.completed',response:{model:'grok-fixture',usage:{input_tokens:9,output_tokens:1}}}]);}}},{model:'grok-fixture',input:'fixture'}));
+  await consume(grokStream(grok,{responses:{create:async r=>{request=r;return events([{type:'response.created',response:{id:'resp-g'}},{type:'response.output_item.done',item:{type:'function_call',call_id:'call-g',name:'lookup'}},{type:'response.completed',response:{object:'response',id:'resp-g',status:'completed',error:null,model:'grok-fixture',usage:{input_tokens:9,output_tokens:1}}}]);}}},{model:'grok-fixture',input:'fixture'}));
   assert.equal(request.stream,true);
   await grok.call(async()=>({model:'grok-fixture',usage:{input_tokens:1,output_tokens:0}}));
   const opaque={};opaque.self=opaque;await grok.call(async()=>opaque);
@@ -119,9 +120,32 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   assert(rows.some(e=>e.native_type==='future.event'));
   assert.equal(codexRows.find(e=>e.native_type==='item.completed').exit_code,1);
   assert.equal(codexRows.find(e=>e.native_type==='item.completed').native_id,'tool-1');
+  assert.equal(codexRows.find(e=>e.native_type==='item.completed').native.item_type,'command_execution');
+  const terminal=rows.find(e=>e.native_type==='response.completed');
+  assert.equal(terminal.native.object_type,'response');assert.equal(terminal.native.is_error,false);assert.equal(terminal.native_status,'completed');
+  const claudeResult=rows.find(e=>e.native_type==='result');
+  assert.equal(claudeResult.native.is_error,false);assert.equal(claudeResult.native.stop_reason,'end_turn');
   assert(rows.some(e=>e.kind==='stream.cancelled'));
   assert(rows.some(e=>e.kind==='tool.failed'));
   assert(rows.some(e=>e.kind==='call.failed'));
+  const project = input => new Promise((resolve,reject) => {
+    const child=spawn(projector,[],{stdio:['pipe','pipe','pipe'],windowsHide:true});let out='',err='';
+    child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);child.on('error',reject);child.stdin.on('error',reject);
+    child.on('close',code=>{if(code!==0)return reject(Error(err));try{resolve(JSON.parse(out));}catch(e){reject(e);}});
+    child.stdin.end(JSON.stringify(input));
+  });
+  const activities=await project(rows),reversed=await project([...rows].reverse().concat(rows[0]));
+  assert.deepEqual(activities,reversed,'actual received events converge after replay and reorder');
+  const codexCall=activities.find(a=>a.agent==='codex');
+  assert.equal(codexCall.outcome,'completed');assert.equal(codexCall.tools[0].outcome,'failed');
+  assert.equal(codexCall.findings[0].signal,'sdk_tool_failed');assert.equal(codexCall.usage.output_tokens,0);
+  assert.equal(codexCall.unsupported_event_ids.length,1);
+  assert(activities.some(a=>a.agent==='claude'&&a.provider_outcome==='completed'));
+  assert(activities.some(a=>a.agent==='grok'&&a.provider_outcome==='completed'));
+  assert(activities.some(a=>a.outcome==='cancelled'));assert(activities.some(a=>a.outcome==='failed'));
+  const eventIds=new Set(rows.map(e=>e.event_id));
+  assert(activities.every(a=>a.events.every(e=>eventIds.has(e.event_id))&&a.findings.every(f=>f.event_ids.every(id=>eventIds.has(id)))));
+  assert(!JSON.stringify(activities).includes('private prompt'));
   assert(!JSON.stringify(rows).includes('never-store-me'));
   assert(!JSON.stringify(rows).includes('ABCDEFGHIJKLMNOP'));
   assert.equal((await (await api('/v1/events','fixture-other')).json()).events.length,0);
@@ -159,5 +183,22 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   // Local journal files carry the same redaction guarantee as uploaded records.
   for(const name of await readdir(join(dir,'claude'))) if(name.endsWith('.json')) {
     const data=await readFile(join(dir,'claude',name),'utf8');assert(!data.includes('never-store-me'));
+  }
+});
+
+test('native outcome facts survive with content disabled for each adapter', { timeout: 20000 }, async () => {
+  const dir=await mkdtemp(join(tmpdir(),'rroflow-sdk-facts-'));
+  for(const agent of ['codex','claude','grok']) {
+    const spool=join(dir,agent),c=new Capture({agent,sessionId:'facts',devspace:'owner',spool,endpoint:'http://127.0.0.1:1',executable:binary});
+    const payload=agent==='codex' ? {type:'item.completed',item:{id:'mcp-1',type:'mcp_tool_call',tool:'lookup',status:'failed',arguments:{private:'never-upload'},error:{message:'private-error'}}}
+      : agent==='claude' ? {type:'result',subtype:'success',is_error:true,stop_reason:'end_turn',result:'never-upload'}
+      : {type:'response.completed',response:{id:'response-1',object:'response',status:'incomplete',error:null,output:'never-upload',usage:{input_tokens:0,output_tokens:0}}};
+    await c.record('stream.event',{nativeType:payload.type,payload});await c.close({flush:false});
+    const files=(await readdir(spool)).filter(f=>f.endsWith('.json'));assert.equal(files.length,1);
+    const {event}=JSON.parse(await readFile(join(spool,files[0]),'utf8'));
+    assert.equal(event.payload,null);assert(!JSON.stringify(event).includes('never-upload'));assert(!JSON.stringify(event).includes('private-error'));
+    if(agent==='codex'){assert.equal(event.native.item_type,'mcp_tool_call');assert.equal(event.tool_name,'lookup');}
+    if(agent==='claude')assert.equal(event.native.is_error,true);
+    if(agent==='grok'){assert.equal(event.native_status,'incomplete');assert.equal(event.native.object_type,'response');assert.equal(event.usage.output_tokens,0);}
   }
 });

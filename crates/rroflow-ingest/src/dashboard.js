@@ -101,7 +101,7 @@
     return body;
   }
   function clearPrivateView() {
-    datasetUI?.clear();
+    datasetUI?.clear(); sdkUI?.clear(true); $('overview-sdk').replaceChildren();
     $('signal-overview').replaceChildren(); $('signal-overview').hidden = true;
     ui.reset(); uiSequence = 0; $('guide-dialog').close(); $('guide-title').textContent = ''; $('guide-body').textContent = ''; $('overview-focus').replaceChildren(); $('overview-headline').textContent = ''; $('overview-summary').textContent = '';
     clearTimeout(healthTimer); healthData = null; healthError = ''; $('source-health').replaceChildren();
@@ -297,7 +297,14 @@
     const query = $('project-search').value.toLowerCase();
     $('project-cards').innerHTML = Object.entries(metadata.summary.by_project).filter(([p]) => p.toLowerCase().includes(query)).sort((a,b) => b[1]-a[1]).map(([project,count]) => `<article class="research-card"><h2>${esc(project)}</h2><p><span class="project-capture-count">${fmt(count)}</span> captured turns</p><a class="button" href="${link('activity',{project})}">Open project activity →</a><p class="small muted">Source: received project label or working directory.</p></article>`).join('') || empty('No projects match','Projects appear when captured work arrives.');
   }
-  let datasetUI=null,datasetLoading=null;
+  let datasetUI=null,datasetLoading=null,sdkUI=null,sdkLoading=null;
+  async function getSdkUI() {
+    if(sdkUI)return sdkUI;
+    if(!sdkLoading)sdkLoading=(async()=>{
+      if(!window.RroflowSdkActivity)await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/assets/dashboard-sdk.js';script.onload=resolve;script.onerror=()=>{script.remove();reject(new Error('SDK monitoring could not be loaded.'));};document.head.appendChild(script);});
+      sdkUI=window.RroflowSdkActivity({$,esc,fmt,date,api,link,onUnauthorized:()=>{clearPrivateView();$('login-error').textContent='Your session has expired. Sign in again.';}});return sdkUI;
+    })().catch(e=>{sdkLoading=null;throw e;});return sdkLoading;
+  }
   async function getDatasetUI() {
     if(datasetUI)return datasetUI;
     if(!datasetLoading) datasetLoading=(async()=>{
@@ -413,10 +420,14 @@
     clearTimeout(healthTimer);
     controller?.abort(); controller = new AbortController();
     currentRoute = readRoute();
+    sdkUI?.clear();
+    const sdkView=['activity','signals'].includes(currentRoute.view)&&currentRoute.params.get('kind')==='sdk';
+    $('sdk-explorer').hidden=!sdkView; $('turn-explorer').hidden=sdkView;
+    $('turn-mode').href=link(currentRoute.view);$('sdk-mode').href=link(currentRoute.view,{kind:'sdk'});
     closeNavigation();
     $('inspector').close(); $('signal-builder').close(); builderAttempt++; currentTurn = null;
     $('main-content').setAttribute('aria-busy','true');
-    $('page-title').textContent = views[currentRoute.view][0]; $('page-description').textContent = views[currentRoute.view][1];
+    $('page-title').textContent = views[currentRoute.view][0]; $('page-description').textContent = sdkView ? 'Explore recorded SDK calls and tools, then open the evidence behind each finding.' : views[currentRoute.view][1];
     $('breadcrumb').textContent = 'Workspace / ' + views[currentRoute.view][0];
     document.title = brandName + ' \u00b7 ' + views[currentRoute.view][0];
     all('[data-nav]').forEach(a => { if (a.dataset.nav === currentRoute.view) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current'); });
@@ -427,21 +438,26 @@
       if (g !== generation) return;
       metadata = sum; $('workspace-name').textContent = sum.devspace;
       $('workspace-scope').textContent = ['127.0.0.1','localhost','[::1]'].includes(location.hostname) ? 'Private local workspace' : 'Received workspace records';
-      if (['overview','activity','signals'].includes(currentRoute.view)) {
+      if (['overview','activity','signals'].includes(currentRoute.view) && !sdkView) {
         const list = await api(turnQuery());
         if (g !== generation) return;
         records = list.turns; revisions = list.revisions || {}; nextCursor = list.next_cursor;
       }
-      if (['overview','sources','signals','activity','learning','datasets'].includes(currentRoute.view)) {
+      if (['overview','sources','signals','activity','learning','datasets'].includes(currentRoute.view) && !sdkView) {
         const results = await Promise.allSettled([api('/v1/reviews'),api('/v1/events?limit=100')]);
         if (g !== generation) return;
         const [r,j] = results;
         reviews = r.status === 'fulfilled' ? r.value.reviews : []; reviewError = r.status === 'rejected' ? 'Review history could not be loaded. Refresh to retry.' : '';
         journal = j.status === 'fulfilled' ? j.value.events : []; journalError = j.status === 'rejected' ? 'The event journal could not be loaded. Refresh to retry.' : '';
       }
-      if (currentRoute.view === 'overview') { renderOverview(); renderMemberProgress(); }
-      if (['activity','signals'].includes(currentRoute.view)) renderExplorer();
-      if (currentRoute.view === 'signals' && currentRoute.params.get('signal')) {
+      if (currentRoute.view === 'overview') { renderOverview(); renderMemberProgress();
+        try {const sdk=await api('/v1/sdk/activity?limit=3');if(g!==generation)return;
+          $('overview-sdk').innerHTML='<h2>SDK operations</h2>'+ (sdk.available ? `<p>${fmt(sdk.matched_activities)} published operations. ${fmt(sdk.coverage.pending_captures)} captures have updates waiting; ${fmt(sdk.coverage.error_captures)} need attention.</p><p class="small muted">These are SDK calls and tools, counted separately from session turns.</p><a class="button" href="#activity?kind=sdk">Explore SDK activity &rarr;</a> <a class="button" href="#signals?kind=sdk">Review SDK findings &rarr;</a>` : '<p class="muted">SDK activity indexing is available with the PostgreSQL service. Received events remain in Sources.</p>');
+        }catch(e){if(g!==generation||e.name==='AbortError')return;if(e.status===401)throw e;$('overview-sdk').innerHTML='<h2>SDK operations</h2><p>SDK monitoring could not be loaded. Refresh to retry; no zero count is assumed.</p>';}
+      }
+      if (['activity','signals'].includes(currentRoute.view) && !sdkView) renderExplorer();
+      if(sdkView){const ui=await getSdkUI();if(g!==generation)return;await ui.load(currentRoute.params,currentRoute.view);if(g!==generation)return;}
+      if (currentRoute.view === 'signals' && currentRoute.params.get('signal') && !sdkView) {
         $('signal-overview').hidden = false;
         const q = new URLSearchParams();
         for (const param of ['signal','agent','project','session','search','since','until']) if (currentRoute.params.has(param)) q.set(param,currentRoute.params.get(param));

@@ -25,10 +25,26 @@ pub struct CaptureEvent {
     pub native_status: Option<String>,
     pub tool_name: Option<String>,
     pub exit_code: Option<i32>,
+    /// Bounded structural facts, independent of private prompt/tool payloads.
+    /// Absent on older collectors; absence never implies success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<NativeFacts>,
     /// Native event usage snapshot; never summed blindly across stream events.
     pub usage: Option<crate::Usage>,
     /// Original event/body, present only with explicit content opt-in and redacted.
     pub payload: Option<Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFacts {
+    pub version: u32,
+    pub item_type: Option<String>,
+    pub event_type: Option<String>,
+    pub object_type: Option<String>,
+    pub stop_reason: Option<String>,
+    pub is_error: Option<bool>,
+    pub is_interrupt: Option<bool>,
 }
 
 impl CaptureEvent {
@@ -99,6 +115,14 @@ impl CaptureEvent {
         }
         if self.observed_at.len() > 64 {
             return Err("invalid observation timestamp");
+        }
+        if let Some(n) = &self.native
+            && (n.version != 1
+                || [&n.item_type, &n.event_type, &n.object_type, &n.stop_reason]
+                    .into_iter()
+                    .any(|v| v.as_deref().is_some_and(|s| !id(s))))
+        {
+            return Err("invalid native facts");
         }
         Ok(())
     }

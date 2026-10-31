@@ -1,7 +1,7 @@
 # RROFLOW SDK capture
 
 Status: implementation under test. This package is not yet published to npm.
-Requires the collector build from the managed SDK recovery revision. Use a collector build from the same revision (`cargo build --workspace`) and
+Requires collector and ingest readers from the SDK monitoring revision (native facts v1). Use a collector build from the same revision (`cargo build --workspace`) and
 install the SDK tarball from `npm pack ./sdk/javascript` for local integration.
 
 The JavaScript adapter is a small bridge to the Rust collector. Every observed
@@ -139,7 +139,7 @@ separately from turn totals. No sample records are inserted in production.
 
 ```text
 cargo test --workspace --locked
-cargo build --workspace --locked
+cargo build --workspace --bins --examples --locked
 node --test sdk/javascript/test.mjs
 ```
 
@@ -152,3 +152,10 @@ Protocol sources: [Codex event definitions](https://github.com/openai/codex/blob
 [Claude streaming](https://code.claude.com/docs/en/agent-sdk/streaming-output),
 [Claude hooks](https://code.claude.com/docs/en/agent-sdk/hooks),
 [xAI Responses API](https://docs.x.ai/developers/model-capabilities/text/best-practices).
+
+
+Structural SDK facts are retained without content opt-in: native item/event/object
+kinds, explicit error/interrupt flags and stop reasons. The collector still refuses
+credential-shaped metadata. See [SDK activity v1](../../docs/spec/sdk-activity-v1.md)
+for projection semantics and the reader-upgrade boundary. The projector is tested;
+account-scoped hosted activity views and review integration are still being built.

@@ -293,6 +293,7 @@ impl JsonlStore {
         ds: &str,
         agent: Option<&str>,
         capture: Option<&str>,
+        event: Option<&str>,
         limit: usize,
     ) -> anyhow::Result<Vec<rroflow_core::capture::CaptureEvent>> {
         let mut index = self.capture_index.lock().expect("capture lock");
@@ -301,7 +302,9 @@ impl JsonlStore {
         }
         let mut events = index.get(ds).expect("loaded capture").clone();
         events.retain(|e| {
-            agent.is_none_or(|a| a == e.agent) && capture.is_none_or(|c| c == e.capture_id)
+            agent.is_none_or(|a| a == e.agent)
+                && capture.is_none_or(|c| c == e.capture_id)
+                && event.is_none_or(|id| id == e.event_id)
         });
         events.sort_by(|a, b| {
             b.observed_at

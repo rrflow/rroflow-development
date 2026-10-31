@@ -17,6 +17,7 @@ pub mod allowances;
 mod analytics;
 mod brand;
 pub mod datasets;
+pub mod sdk_activity;
 pub use brand::{BrandConfig, BrandLink};
 mod web_auth;
 pub use web_auth::BrowserConfig;
@@ -101,6 +102,7 @@ pub struct Config {
     pub require_allowance_policy: bool,
     /// Operator-enabled metadata dataset collection. Training is not enabled by this.
     pub datasets: Option<datasets::DatasetConfig>,
+    pub sdk_activity: sdk_activity::ActivityConfig,
 }
 
 /// How the ingest checks Nomen tokens (RFC 7662 introspection, private-key JWT).
@@ -131,6 +133,7 @@ impl Default for Config {
             brand: BrandConfig::default(),
             require_allowance_policy: false,
             datasets: None,
+            sdk_activity: sdk_activity::ActivityConfig::default(),
         }
     }
 }
@@ -145,6 +148,7 @@ impl Config {
     }
     /// Open the store this config names.
     pub async fn open_store(&self) -> anyhow::Result<Store> {
+        self.sdk_activity.validate()?;
         if let Some(cfg) = &self.datasets {
             cfg.validate()?;
             anyhow::ensure!(
@@ -231,6 +235,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(cfg: &Config, store: Arc<Store>) -> anyhow::Result<Self> {
+        cfg.sdk_activity.validate()?;
         if let Some(datasets) = &cfg.datasets {
             datasets.validate()?;
             anyhow::ensure!(
@@ -774,6 +779,11 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
         .route("/v1/allowances", get(allowances::status))
+        .route("/v1/sdk/activity", get(sdk_activity::list))
+        .route(
+            "/v1/sdk/reviews",
+            get(sdk_activity::reviews).post(sdk_activity::save_review),
+        )
         .route("/v1/datasets", get(datasets::status))
         .route("/v1/datasets/policy", axum::routing::put(datasets::save))
         .route("/v1/datasets/jobs/{id}/artifact", get(datasets::artifact))
@@ -786,6 +796,18 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
                         ("x-content-type-options", "nosniff"),
                     ],
                     include_str!("dashboard-datasets.js"),
+                )
+            }),
+        )
+        .route(
+            "/assets/dashboard-sdk.js",
+            get(|| async {
+                (
+                    [
+                        ("content-type", "text/javascript; charset=utf-8"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                    include_str!("dashboard-sdk.js"),
                 )
             }),
         )
