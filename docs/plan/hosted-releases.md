@@ -120,8 +120,10 @@ backup/restore and rollout rehearsal remains an acceptance requirement.
 
 ## Mainline publication gate
 
-Implemented release pipeline; actual v0.4.0 publication remains unverified until the
-mainline integration and its checks complete. The existing v0.3.0 release is unchanged.
+Implemented release pipeline. Version v0.4.0 was published from the qualified main
+commit on 2026-10-31; its downloaded hosted assets were verified byte-for-byte against
+the CI artifact. See the [release verification record](../releases/v0.4.0.md) for the
+commit, workflow runs and digests. Texas activation remains unverified.
 
 `release-on-version.yml` responds to a completed successful `ci` main-push run, or an
 explicit retry on main. It checks out that exact commit. `scripts/release-gate.mjs`
@@ -149,9 +151,10 @@ failure prevents the permanent release; publication is separate from Texas activ
 
 The generated dist workflow has intentional repository gates; `dist generate` changes
 must preserve them. CI checks the wiring and exercises refusal/idempotency/identity cases,
-artifact mutation and unsafe archive members. The promotion verifier also ran against
-an actual qualified PR36 CI archive without publishing it. This is pipeline verification,
-not proof of a mainline release, deployment, production backup or real member sign-in.
+artifact mutation and unsafe archive members. The promotion verifier first ran against
+a PR36 CI archive without publishing it. The later v0.4.0 record proves mainline
+publication and exact-asset promotion. Neither result proves deployment, production
+backup or real member sign-in.
 
 Primary references: [GitHub workflow-run triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
 [workflow dispatch references](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event),

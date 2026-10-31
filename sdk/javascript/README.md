@@ -1,8 +1,10 @@
 # RROFLOW SDK capture
 
-Status: implementation under test. This package is not yet published to npm.
-Requires collector and ingest readers from the SDK monitoring revision (native facts v1). Use a collector build from the same revision (`cargo build --workspace`) and
-install the SDK tarball from `npm pack ./sdk/javascript` for local integration.
+Status: tested implementation; this package is not yet published to npm.
+Use the [v0.4.0 collector release](https://github.com/rrflow/rroflow-development/releases/tag/v0.4.0)
+and a compatible deployed ingest with native facts v1 support. For this release, check out
+`v0.4.0` and install the SDK tarball from `npm pack ./sdk/javascript`. A source build from
+that same revision also works. The release does not establish a live hosted account service.
 
 The JavaScript adapter is a small bridge to the Rust collector. Every observed
 event waits for a local durable acknowledgement before the adapter yields it.
