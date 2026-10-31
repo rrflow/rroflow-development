@@ -20,10 +20,37 @@ pub struct SourceReport {
     /// None until this process has attempted delivery; never inferred from queue size.
     pub delivery_ok: Option<bool>,
     pub signal_settings_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_capture: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<SdkReport>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SdkReport {
+    pub linked_queues: u32,
+    pub pending_events: u64,
+    pub pending_bytes: u64,
+    pub retained_bytes: u64,
+    pub retrying_queues: u32,
+    pub queue_errors: u32,
 }
 
 impl SourceReport {
     pub fn validate(&self) -> Result<(), &'static str> {
+        if let Some(sdk) = &self.sdk
+            && (sdk.linked_queues > 16
+                || sdk.retrying_queues > sdk.linked_queues
+                || sdk.queue_errors > 16
+                || sdk.pending_bytes > sdk.retained_bytes
+                || (sdk.pending_events == 0 && sdk.pending_bytes != 0)
+                || [sdk.pending_events, sdk.pending_bytes, sdk.retained_bytes]
+                    .iter()
+                    .any(|n| *n > MAX_SEQUENCE))
+        {
+            return Err("invalid SDK queue report");
+        }
         let id = self.source_id.as_bytes();
         if self.schema != SCHEMA
             || id.len() != 36

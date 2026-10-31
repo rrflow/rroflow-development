@@ -15,6 +15,7 @@ use std::{
 };
 
 const BATCH_LIMIT: usize = 4 * 1024 * 1024;
+mod sdk;
 pub(crate) mod service;
 
 #[derive(Subcommand)]
@@ -31,6 +32,13 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: service::Action,
     },
+    /// Link SDK queues for background delivery by this collector.
+    Sdk {
+        #[arg(long)]
+        store: Option<PathBuf>,
+        #[command(subcommand)]
+        command: sdk::Action,
+    },
     /// Bind session roots to the signed-in devspace. Existing bindings are immutable.
     Link {
         /// Local journal directory, separate from the SDK event spool.
@@ -45,6 +53,9 @@ pub(crate) enum Command {
         /// Store and upload scrubbed prompt, response and tool text. Default is metrics only.
         #[arg(long)]
         content: bool,
+        /// Link a collector for SDK queues without scanning session directories.
+        #[arg(long)]
+        sdk_only: bool,
     },
     /// Watch all linked roots and retry queued uploads. Keep this process running.
     Run {
@@ -86,6 +97,8 @@ struct Binding {
     claude_root: PathBuf,
     codex_root: PathBuf,
     content: bool,
+    #[serde(default)]
+    sdk_only: bool,
     signals: SignalConfig,
 }
 
@@ -292,6 +305,9 @@ impl Journal {
                 codex::collect_rollout as crate::Parse,
             ),
         ] {
+            if self.binding.sdk_only {
+                break;
+            }
             let mut paths = vec![];
             discover(&root, &mut paths, &mut failures);
             paths.sort();
@@ -365,7 +381,7 @@ impl Journal {
         Ok(
             json!({"source_id":self.binding.source_id,"devspace":self.binding.devspace,
             "endpoint":self.binding.endpoint,"claude_root":self.binding.claude_root,
-            "codex_root":self.binding.codex_root,"content":self.binding.content,
+            "codex_root":self.binding.codex_root,"content":self.binding.content,"session_capture":!self.binding.sdk_only,"sdk":sdk::inspect(self),
             "pending_revisions":pending,"journal_bytes":bytes,"distinct_turns":self.latest.len(),"retry":retry::read(&self.store)?,
             "pending_bytes":pending_bytes,"oldest_pending_at":oldest.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()),
             "note":"disk state only; not proof of source liveness. Acknowledged revisions are retained."}),
@@ -413,6 +429,8 @@ impl Journal {
             capture_errors,
             delivery_ok,
             signal_settings_revision: self.binding.signals.revision,
+            session_capture: self.binding.sdk_only.then_some(false),
+            sdk: sdk::inspect(self),
         };
         report.validate().map_err(anyhow::Error::msg)?;
         let tmp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
@@ -577,6 +595,7 @@ pub(crate) fn run(command: Command) -> Result<()> {
         Command::Link { store, .. }
         | Command::Run { store, .. }
         | Command::Service { store, .. }
+        | Command::Sdk { store, .. }
         | Command::Status { store }
         | Command::Flush { store } => store.clone(),
         Command::Worker { .. } => unreachable!(),
@@ -586,10 +605,12 @@ pub(crate) fn run(command: Command) -> Result<()> {
     match command {
         Command::Worker { .. } => unreachable!(),
         Command::Service { command, .. } => return service::run(&dir, command),
+        Command::Sdk { command, .. } => return sdk::run(&Journal::open(&dir)?, command),
         Command::Link {
             claude_root,
             codex_root,
             content,
+            sdk_only,
             ..
         } => {
             let _lock = lock(&dir)?;
@@ -631,6 +652,7 @@ pub(crate) fn run(command: Command) -> Result<()> {
                 claude_root,
                 codex_root,
                 content,
+                sdk_only,
                 signals,
             };
             capture::private_dir(&dir.join("turns"))?;
@@ -719,6 +741,16 @@ pub(crate) fn run(command: Command) -> Result<()> {
                     retry_at = std::time::Instant::now() + Duration::from_secs(interval_secs);
                     last_delivery_ok = Some(upload_ok);
                 }
+                let mut sdk_ok = true;
+                if !offline {
+                    match sdk::cycle(&journal, cycle, sender) {
+                        Ok(n) => report["acknowledged_sdk_events"] = n.into(),
+                        Err(e) => {
+                            sdk_ok = false;
+                            report["sdk_delivery_error"] = format!("{e:#}").into();
+                        }
+                    }
+                }
                 if !offline && std::time::Instant::now() >= health_at {
                     let result = retry::attempt(&dir, || -> Result<()> {
                         let errors = report["errors"].as_array().map_or(0, Vec::len);
@@ -744,15 +776,20 @@ pub(crate) fn run(command: Command) -> Result<()> {
                 report["state"] = journal.status()?;
                 if !quiet {
                     println!("{report}");
-                } else if cycle.is_multiple_of(12) || !capture_ok || !upload_ok || !health_ok {
+                } else if cycle.is_multiple_of(12)
+                    || !capture_ok
+                    || !upload_ok
+                    || !health_ok
+                    || !sdk_ok
+                {
                     println!(
                         "{}",
-                        json!({"source_id":journal.binding.source_id,"capture_errors":report["errors"].as_array().map_or(0,Vec::len),"pending_revisions":report["state"]["pending_revisions"],"delivery_ok":last_delivery_ok,"health_ok":health_ok,"retry":report["state"]["retry"]})
+                        json!({"source_id":journal.binding.source_id,"capture_errors":report["errors"].as_array().map_or(0,Vec::len),"pending_revisions":report["state"]["pending_revisions"],"delivery_ok":last_delivery_ok,"health_ok":health_ok,"retry":report["state"]["retry"],"sdk":report["state"]["sdk"]})
                     );
                 }
                 if once {
                     ensure!(
-                        capture_ok && upload_ok && health_ok,
+                        capture_ok && upload_ok && health_ok && sdk_ok,
                         "capture, delivery or source reporting incomplete; inspect reported errors; queued data retained"
                     );
                     return Ok(());
@@ -817,6 +854,7 @@ mod tests {
             claude_root: root.join("claude"),
             codex_root: root.join("codex"),
             content: false,
+            sdk_only: false,
             signals: SignalConfig::default(),
         };
         for dir in [

@@ -1,7 +1,7 @@
 # RROFLOW SDK capture
 
 Status: implementation under test. This package is not yet published to npm.
-Requires the new collector 0.3.0 build from this revision. Use a collector build from the same revision (`cargo build --workspace`) and
+Requires the collector build from the managed SDK recovery revision. Use a collector build from the same revision (`cargo build --workspace`) and
 install the SDK tarball from `npm pack ./sdk/javascript` for local integration.
 
 The JavaScript adapter is a small bridge to the Rust collector. Every observed
@@ -99,13 +99,16 @@ Started/completed/failed boundaries are distinct. Ending iteration early records
 `stream.cancelled`. Exhausting a stream records `stream.completed`; it does not
 mean the model succeeded. Inspect native failure/refusal/incomplete events for
 that outcome. Process termination may leave an unmatched start, which must never
-be inferred to have completed. Automatic restart, native CLI hook installation,
-OTLP intake and background queue scheduling are not implemented by this package.
+be inferred to have completed. The managed collector can now retry explicitly linked queues after this application
+exits. Native provider hooks and OTLP intake remain separate work.
 
 ## Delivery and privacy
 
 `close()` flushes by default. When offline it reports a delivery error and retains
-the queue. Use `close({ flush: false })` to finish local capture only, then replay:
+the queue. Link it once for automatic background delivery (see
+[setup and recovery](../../docs/ux/sdk-background-delivery.md)). Use
+`close({ flush: false })` to finish local capture only, then let the managed collector
+send it or replay manually:
 
 ```text
 rroflow capture status --spool <private-queue>
