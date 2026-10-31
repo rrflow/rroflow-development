@@ -28,12 +28,12 @@ readiness, unauthenticated rejection, account mapping, ingest/readback, dashboar
 assets, authenticated research and graceful SIGTERM. Postgres behavior is tested
 in the prerequisite validation job, not by this JSONL artifact smoke.
 
-The artifact is retained by GitHub Actions for 30 days and is a review artifact.
-An operator must select the reviewed commit and obtain its expected digest from
-the corresponding trusted workflow result. This increment does not attach a
-production server to a permanent GitHub Release or provide cryptographic build
-attestation. Do not mistake an arbitrary checksum beside an untrusted download
-for provenance. Promotion requires all applicable checks on the intended revision.
+The CI artifact is retained for 30 days. The publication path below also promotes
+its exact verified bytes to the permanent GitHub Release, with the inner archive
+checksum and a source/CI receipt. The receipt is provenance metadata, not a signature
+or a server attestation. Select the reviewed commit and obtain its expected digest
+from the trusted workflow/release result; an adjacent untrusted checksum alone does
+not establish provenance. Promotion requires all applicable checks on that revision.
 
 ## Readiness versus liveness
 
@@ -116,3 +116,44 @@ readiness/authentication-triggered rollback and refusal of checksum, migration,
 locking, pending-receipt, unit, key-permission and immutable-release violations.
 Systemd, HTTP and machine identity in that suite are fixtures. A real Texas
 backup/restore and rollout rehearsal remains an acceptance requirement.
+
+
+## Mainline publication gate
+
+Implemented release pipeline; actual v0.4.0 publication remains unverified until the
+mainline integration and its checks complete. The existing v0.3.0 release is unchanged.
+
+`release-on-version.yml` responds to a completed successful `ci` main-push run, or an
+explicit retry on main. It checks out that exact commit. `scripts/release-gate.mjs`
+requires the latest matching main-push CI run from this repository, successful jobs
+listed in `.github/release-policy.json`, and its unexpired hosted artifact with a
+GitHub-provided digest. A PR/fork run, skipped required job, failed/pending run, missing
+artifact or API error cannot authorize publication. Existing released versions are a
+no-op; an unreleased version reserves a lightweight tag at the qualified commit. Tags
+are never moved. A conflicting tag fails before dispatch.
+
+The release workflow is dispatched from that version tag, never the moving main branch.
+Its publishing path rechecks tag/commit/package version and exact CI qualification before
+installing dist or creating artifacts. Direct publishing dispatch from a branch is refused;
+PR and dry-run builds remain available. Server builds receive the exact source stamp.
+Concurrent runs of one tag serialize. A failed attempt can be retried against the unchanged
+tag once its external failure is resolved; a published release is never overwritten.
+
+Before creating the permanent release, the host job downloads the qualified CI artifact
+by ID. It checks the metadata and zip digest, archive checksum, bounded zip/tar membership,
+member checksums, embedded commit/target/migration identity, and refuses existing output
+files. Signed storage redirects receive no GitHub token. It copies the original tar.gz
+and checksum bytes, plus a public CI/source receipt, into the release assets alongside the
+normal dist packages. There is no second server build in this promotion step. Validation
+failure prevents the permanent release; publication is separate from Texas activation.
+
+The generated dist workflow has intentional repository gates; `dist generate` changes
+must preserve them. CI checks the wiring and exercises refusal/idempotency/identity cases,
+artifact mutation and unsafe archive members. The promotion verifier also ran against
+an actual qualified PR36 CI archive without publishing it. This is pipeline verification,
+not proof of a mainline release, deployment, production backup or real member sign-in.
+
+Primary references: [GitHub workflow-run triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
+[workflow dispatch references](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event),
+and [dist dispatch configuration](https://axodotdev.github.io/cargo-dist/book/reference/config.html),
+observed 2026-10-31.

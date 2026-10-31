@@ -14,8 +14,12 @@
 # title/body based on your changelogs.
 
 name: Release
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
 permissions:
   "contents": "write"
+  "actions": "read"
 
 # This task will run whenever you workflow_dispatch with a tag that looks like a version
 # like "1.0.0", "v0.1.0-prerelease.1", "my-app/0.1.0", "releases/v1.0.0", etc.
@@ -57,6 +61,9 @@ jobs:
       tag: ${{ (inputs.tag != 'dry-run' && inputs.tag) || '' }}
       tag-flag: ${{ inputs.tag && inputs.tag != 'dry-run' && format('--tag={0}', inputs.tag) || '' }}
       publishing: ${{ inputs.tag && inputs.tag != 'dry-run' }}
+      qualified-ci: ${{ steps.qualification.outputs.ci_run_id }}
+      hosted-artifact-id: ${{ steps.qualification.outputs.hosted_artifact_id }}
+      hosted-artifact-digest: ${{ steps.qualification.outputs.hosted_artifact_digest }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -64,6 +71,14 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Verify publication is pinned to qualified main CI
+        if: ${{ inputs.tag && inputs.tag != 'dry-run' }}
+        id: qualification
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_SOURCE_REF: ${{ github.ref }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/release-gate.mjs verify
       - name: Install dist
         # we specify bash to get pipefail; it guards against the `curl` command
         # failing. otherwise `sh` won't catch that `curl` returned non-0
@@ -115,6 +130,7 @@ jobs:
     container: ${{ matrix.container && matrix.container.image || null }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RROFLOW_BUILD_REVISION: ${{ github.sha }}
       BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
     permissions:
       "attestations": "write"
@@ -189,6 +205,7 @@ jobs:
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RROFLOW_BUILD_REVISION: ${{ github.sha }}
       BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
     steps:
       - uses: actions/checkout@v6
@@ -282,6 +299,13 @@ jobs:
         run: |
           # Remove the granular manifests
           rm -f artifacts/*-dist-manifest.json
+      - name: Promote the exact qualified hosted server archive
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          QUALIFIED_CI_RUN: ${{ needs.plan.outputs.qualified-ci }}
+          HOSTED_ARTIFACT_ID: ${{ needs.plan.outputs.hosted-artifact-id }}
+          HOSTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.hosted-artifact-digest }}
+        run: node scripts/promote-hosted-artifact.mjs artifacts
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
