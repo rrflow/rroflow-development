@@ -1,12 +1,13 @@
 [package]
 name = "rroflow-ingest"
-version = "0.3.0"
+version = "0.4.0"
 description = "rroflow.ai ingest: receives rroflow.turn/v1 records and files them into the sender's devspace"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
+base64 = "0.22"
 anyhow = "1.0.104"
 axum = "0.8.9"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -26,10 +27,12 @@ toml = "1.1.8"
 
 [dev-dependencies]
 aws-lc-rs = "1"
-base64 = "0.22"
 tempfile = "3"
 http-body-util = "0.1.5"
 tower = { version = "0.5.3", features = ["util"] }
+
+[build-dependencies]
+sha2 = "0.11.1"
 
 # Released for the Linux servers that run rroflow.ai; they pull and verify it (docs/deploy/README.md).
 # Not a user download, so no installers. Its version moves with the `rroflow` CLI's: one tag

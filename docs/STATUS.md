@@ -17,7 +17,7 @@ Updated 2026-10-27. This page says where everything stands. The plan is [plan/rr
   - `rroflow` for Windows x64 and ARM64, and Linux x64 and ARM64.
   - Shell and PowerShell installers, SHA-256 sums and GitHub build attestations.
 - **v0.3.0** (on merge of the ingest release PR): the same CLI, plus `rroflow-ingest` for Linux x64 and ARM64 with checksums and attestations, for servers to pull. From here the CLI and the ingest share one version, checked in CI.
-- **Publishing** is automatic: change the version in `crates/rroflow-cli/Cargo.toml` and merge. `release-on-version` then starts the release, which creates the tag.
+- **Publishing** is automatic: change the version in `crates/rroflow-cli/Cargo.toml` and merge. after exact main-push CI passes, `release-on-version` reserves the verified version tag and starts the guarded release from it.
 - **CI** runs on every pull request, all on GitHub Actions at no cost because the repository is public:
   - Linux x64: fmt, clippy and tests on Postgres.
   - Linux ARM64, Windows x64 and Windows ARM64: tests on native runners.

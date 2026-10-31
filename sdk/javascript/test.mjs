@@ -1,0 +1,204 @@
+// Real Rust recorder -> durable files -> real HTTP ingest. Provider streams are
+// contract fixtures: this suite deliberately makes no paid provider requests.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, writeFile, readFile, readdir, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:net';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { Capture, codexStream, claudeStream, grokStream } from './index.mjs';
+
+const exec = promisify(execFile);
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const suffix = process.platform === 'win32' ? '.exe' : '';
+const binDir = process.env.RROFLOW_TEST_BIN_DIR || resolve(root, 'target/debug');
+const binary = resolve(binDir, 'rroflow' + suffix);
+const ingest = resolve(binDir, 'rroflow-ingest' + suffix);
+const projector = resolve(binDir, 'examples', 'project-capture' + suffix);
+async function* events(items) { yield* items; }
+async function consume(stream) { const out=[]; for await (const e of stream) out.push(e); return out; }
+
+test('capture refuses absent or unsafe destinations before spawning a collector', () => {
+  const options = { agent: 'codex', sessionId: 'fixture', devspace: 'owner', spool: 'unused', executable: 'must-not-spawn' };
+  for (const endpoint of [undefined, '', 'http://api.example.test', 'http://127.0.0.1.evil.test', 'https://user:secret@example.test', 'https://api.example.test/path', 'https://api.example.test/?secret', 'https://api.example.test/#secret', ' https://api.example.test']) {
+    assert.throws(() => new Capture({ ...options, endpoint }), /endpoint|Endpoint/);
+  }
+});
+
+test('an early recorder refusal survives a broken stdin pipe', { timeout: 15000 }, async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'rroflow-sdk-refusal-'));
+  const options = { agent: 'codex', sessionId: 'fixture', spool, executable: binary,
+    endpoint: 'http://127.0.0.1:1', devspace: 'owner', content: true };
+  const owner = new Capture(options);
+  await owner.record('call.started');
+  await owner.close({ flush: false });
+  // Larger than an OS pipe buffer: the recorder refuses before consuming input.
+  // Both record and close must retain the useful destination refusal.
+  const other = new Capture({ ...options, devspace: 'other' });
+  await assert.rejects(other.record('call.started', { payload: { text: 'x'.repeat(1024 * 1024) } }), /another endpoint or account/);
+  await assert.rejects(other.close({ flush: false }), /another endpoint or account/);
+  const status = JSON.parse((await exec(binary, ['capture', 'status', '--spool', spool])).stdout);
+  assert.equal(status.pending, 1);
+});
+
+test('three SDKs record, replay, isolate, redact and retain failures through the real collector', { timeout: 60000 }, async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'rroflow-sdk-proof-'));
+  const listener = createServer(); await new Promise(r => listener.listen(0, '127.0.0.1', r));
+  const port = listener.address().port; await new Promise(r => listener.close(r));
+  const endpoint = `http://127.0.0.1:${port}`;
+  const hash = s => createHash('sha256').update(s).digest('hex');
+  const config = join(dir, 'ingest.toml');
+  await writeFile(config, `listen = "127.0.0.1:${port}"\ndata_dir = ${JSON.stringify(join(dir,'server').replaceAll('\\','/'))}\n[[devspace]]\nid = "owner"\nkey_sha256 = ["${hash('fixture-owner')}"]\n[[devspace]]\nid = "other"\nkey_sha256 = ["${hash('fixture-other')}"]\n`);
+  const original = { ...process.env };
+  process.env.RROFLOW_CONFIG_DIR = join(dir, 'account');
+  process.env.RROFLOW_INGEST_URL = endpoint;
+  process.env.RROFLOW_INGEST_KEY = 'fixture-owner';
+  delete process.env.RROFLOW_DATABASE_URL;
+  let server;
+  t.after(() => {
+    server?.kill();
+    for (const k of Object.keys(process.env)) if (!(k in original)) delete process.env[k];
+    Object.assign(process.env, original);
+  });
+  const start = async () => {
+    server = spawn(ingest, ['serve','--config',config], { stdio: 'ignore', windowsHide: true });
+    for (let i=0;i<100;i++) {
+      try { if ((await fetch(endpoint+'/healthz')).ok) return; } catch {}
+      await new Promise(r => setTimeout(r,50));
+    }
+    throw Error('Test ingest did not start');
+  };
+  const api = async (path, key='fixture-owner', init={}) => fetch(endpoint+path, { ...init, headers: { authorization:'Bearer '+key, 'content-type':'application/json' } });
+  const make = (agent, content=false) => new Capture({ agent, sessionId:'fixture-session', devspace:'owner', spool:join(dir,agent), endpoint, executable:binary, content });
+  const waitForRetry = async spool => {
+    const state=JSON.parse((await exec(binary,['capture','status','--spool',spool])).stdout).retry;
+    const delay=Math.max(0,state.next_attempt_unix*1000-Date.now())+100;
+    assert(delay<12000,'fixture retry wait must be bounded');
+    await new Promise(r=>setTimeout(r,delay));
+  };
+  // Record successfully while the ingest is completely offline.
+  const codex=make('codex');
+  const native=[{type:'thread.started',thread_id:'thread-1'},{type:'item.started',item:{id:'tool-1',type:'command_execution'}},{type:'item.completed',item:{id:'tool-1',type:'command_execution',exit_code:1}},{type:'future.event',detail:'new event retained'},{type:'turn.completed',usage:{input_tokens:25,cached_input_tokens:5,output_tokens:0}}];
+  assert.deepEqual(await consume(codexStream(codex,{runStreamed:async()=>({events:events(native)})},'private prompt')),native);
+  await codex.close({flush:false});
+  await assert.rejects(exec(binary,['capture','flush','--spool',join(dir,'codex')]));
+  const pending=JSON.parse((await exec(binary,['capture','status','--spool',join(dir,'codex')])).stdout);
+  assert.equal(pending.pending,native.length+2);
+  await start();
+  await waitForRetry(join(dir,'codex'));
+  await exec(binary,['capture','flush','--spool',join(dir,'codex')]);
+  assert.equal(JSON.parse((await exec(binary,['capture','flush','--spool',join(dir,'codex')])).stdout).acknowledged,0);
+
+  const claude=make('claude',true); let receivedOptions;
+  await consume(claudeStream(claude, args => { receivedOptions=args.options;return events([{type:'stream_event',event:{type:'message_start',message:{model:'claude-fixture',usage:{input_tokens:2}}}},{type:'assistant',message:{content:[{type:'tool_use',id:'tool-c',name:'Read'}]}},{type:'result',subtype:'success',is_error:false,stop_reason:'end_turn',usage:{input_tokens:2,output_tokens:3},api_key:'never-store-me',text:'sk-ABCDEFGHIJKLMNOPQRSTUV'}]); }, {prompt:'fixture',options:{permissionMode:'default'}}));
+  assert.equal(receivedOptions.includePartialMessages,true);
+  assert.equal(receivedOptions.permissionMode,'default');
+  assert.deepEqual(await receivedOptions.hooks.PostToolUse[0].hooks[0]({hook_event_name:'PostToolUse',tool_name:'Read',tool_response:'fixture result'},'tool-c'),{});
+  await assert.rejects(claude.tool('test-tool',async()=>{throw Error('fixture failure')},{input:{token:'hidden'}}),/fixture failure/);
+  await claude.close();
+
+  const grok=make('grok'); let request;
+  await consume(grokStream(grok,{responses:{create:async r=>{request=r;return events([{type:'response.created',response:{id:'resp-g'}},{type:'response.output_item.done',item:{type:'function_call',call_id:'call-g',name:'lookup'}},{type:'response.completed',response:{object:'response',id:'resp-g',status:'completed',error:null,model:'grok-fixture',usage:{input_tokens:9,output_tokens:1}}}]);}}},{model:'grok-fixture',input:'fixture'}));
+  assert.equal(request.stream,true);
+  await grok.call(async()=>({model:'grok-fixture',usage:{input_tokens:1,output_tokens:0}}));
+  const opaque={};opaque.self=opaque;await grok.call(async()=>opaque);
+  for await (const _ of grok.stream(()=>events([{type:'first'},{type:'never-consumed'}]))) break;
+  await assert.rejects(consume(grok.stream(async()=>{throw Error('provider unavailable')})),/provider unavailable/);
+  await grok.close();
+
+  const response=await api('/v1/events?limit=1000');assert.equal(response.status,200);
+  const rows=(await response.json()).events;
+  assert.deepEqual([...new Set(rows.map(e=>e.agent))].sort(),['claude','codex','grok']);
+  const codexRows=rows.filter(e=>e.agent==='codex');assert.equal(codexRows.length,native.length+2);
+  assert(codexRows.every(e=>e.payload===null));
+  assert.equal(codexRows.find(e=>e.native_type==='turn.completed').usage.output_tokens,0);
+  assert.equal(codexRows.find(e=>e.native_type==='thread.started').usage,null);
+  assert(rows.some(e=>e.native_type==='future.event'));
+  assert.equal(codexRows.find(e=>e.native_type==='item.completed').exit_code,1);
+  assert.equal(codexRows.find(e=>e.native_type==='item.completed').native_id,'tool-1');
+  assert.equal(codexRows.find(e=>e.native_type==='item.completed').native.item_type,'command_execution');
+  const terminal=rows.find(e=>e.native_type==='response.completed');
+  assert.equal(terminal.native.object_type,'response');assert.equal(terminal.native.is_error,false);assert.equal(terminal.native_status,'completed');
+  const claudeResult=rows.find(e=>e.native_type==='result');
+  assert.equal(claudeResult.native.is_error,false);assert.equal(claudeResult.native.stop_reason,'end_turn');
+  assert(rows.some(e=>e.kind==='stream.cancelled'));
+  assert(rows.some(e=>e.kind==='tool.failed'));
+  assert(rows.some(e=>e.kind==='call.failed'));
+  const project = input => new Promise((resolve,reject) => {
+    const child=spawn(projector,[],{stdio:['pipe','pipe','pipe'],windowsHide:true});let out='',err='';
+    child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);child.on('error',reject);child.stdin.on('error',reject);
+    child.on('close',code=>{if(code!==0)return reject(Error(err));try{resolve(JSON.parse(out));}catch(e){reject(e);}});
+    child.stdin.end(JSON.stringify(input));
+  });
+  const activities=await project(rows),reversed=await project([...rows].reverse().concat(rows[0]));
+  assert.deepEqual(activities,reversed,'actual received events converge after replay and reorder');
+  const codexCall=activities.find(a=>a.agent==='codex');
+  assert.equal(codexCall.outcome,'completed');assert.equal(codexCall.tools[0].outcome,'failed');
+  assert.equal(codexCall.findings[0].signal,'sdk_tool_failed');assert.equal(codexCall.usage.output_tokens,0);
+  assert.equal(codexCall.unsupported_event_ids.length,1);
+  assert(activities.some(a=>a.agent==='claude'&&a.provider_outcome==='completed'));
+  assert(activities.some(a=>a.agent==='grok'&&a.provider_outcome==='completed'));
+  assert(activities.some(a=>a.outcome==='cancelled'));assert(activities.some(a=>a.outcome==='failed'));
+  const eventIds=new Set(rows.map(e=>e.event_id));
+  assert(activities.every(a=>a.events.every(e=>eventIds.has(e.event_id))&&a.findings.every(f=>f.event_ids.every(id=>eventIds.has(id)))));
+  assert(!JSON.stringify(activities).includes('private prompt'));
+  assert(!JSON.stringify(rows).includes('never-store-me'));
+  assert(!JSON.stringify(rows).includes('ABCDEFGHIJKLMNOP'));
+  assert.equal((await (await api('/v1/events','fixture-other')).json()).events.length,0);
+  const first=rows[0];
+  assert.equal((await api('/v1/events','fixture-owner',{method:'POST',body:JSON.stringify({events:[first]})})).status,200);
+  assert.equal((await api('/v1/events','fixture-owner',{method:'POST',body:JSON.stringify({events:[{...first,kind:'tool.failed'}]})})).status,409);
+
+  // New pending data is never silently delivered under a different login.
+  const next=make('codex');await next.record('call.started');await next.close({flush:false});
+  await assert.rejects(exec(binary,['capture','flush','--spool',join(dir,'codex')],{env:{...process.env,RROFLOW_INGEST_KEY:'fixture-other'}}));
+  assert.equal(JSON.parse((await exec(binary,['capture','status','--spool',join(dir,'codex')])).stdout).pending,1);
+  await waitForRetry(join(dir,'codex'));
+  await exec(binary,['capture','flush','--spool',join(dir,'codex')]);
+  const before=(await (await api('/v1/events?limit=1000')).json()).events.length;
+  const stopped=new Promise(r=>server.once('close',r));server.kill();await stopped;await start();
+  assert.equal((await (await api('/v1/events?limit=1000')).json()).events.length,before);
+  // Session-source health travels through the actual CLI and actual ingest too.
+  const sourceStore=join(dir,'session-source'), claudeRoot=join(dir,'session-claude'), codexRoot=join(dir,'session-codex');
+  await mkdir(claudeRoot);await mkdir(codexRoot);
+  await writeFile(join(claudeRoot,'fixture.jsonl'),JSON.stringify({type:'user',promptId:'p-source',sessionId:'s-source',timestamp:'2026-10-27T00:00:00Z',cwd:'/fixture/project',message:{content:'private source prompt'}})+'\n');
+  await exec(binary,['sources','link','--store',sourceStore,'--claude-root',claudeRoot,'--codex-root',codexRoot]);
+  await exec(binary,['sources','run','--store',sourceStore,'--once','--offline']);
+  assert.equal((await (await api('/v1/sources/health')).json()).sources.length,0);
+  await exec(binary,['sources','run','--store',sourceStore,'--once']);
+  let health=(await (await api('/v1/sources/health')).json()).sources;
+  assert.equal(health.length,1);assert.equal(health[0].report.pending_revisions,0);assert.equal(health[0].report.delivery_ok,true);assert.equal(health[0].report.sequence,1);
+  assert(!JSON.stringify(health).includes(sourceStore));assert(!JSON.stringify(health).includes('private source prompt'));
+  await writeFile(join(claudeRoot,'broken.jsonl'),'invalid JSON\n');
+  await assert.rejects(exec(binary,['sources','run','--store',sourceStore,'--once']));
+  health=(await (await api('/v1/sources/health')).json()).sources;
+  assert.equal(health[0].report.sequence,2);assert.equal(health[0].report.capture_errors,1);assert.equal(health[0].report.pending_revisions,0);
+  assert.equal((await (await api('/v1/sources/health','fixture-other')).json()).sources.length,0);
+  const sourceStopped=new Promise(r=>server.once('close',r));server.kill();await sourceStopped;await start();
+  assert.deepEqual((await (await api('/v1/sources/health')).json()).sources,health);
+  // Local journal files carry the same redaction guarantee as uploaded records.
+  for(const name of await readdir(join(dir,'claude'))) if(name.endsWith('.json')) {
+    const data=await readFile(join(dir,'claude',name),'utf8');assert(!data.includes('never-store-me'));
+  }
+});
+
+test('native outcome facts survive with content disabled for each adapter', { timeout: 20000 }, async () => {
+  const dir=await mkdtemp(join(tmpdir(),'rroflow-sdk-facts-'));
+  for(const agent of ['codex','claude','grok']) {
+    const spool=join(dir,agent),c=new Capture({agent,sessionId:'facts',devspace:'owner',spool,endpoint:'http://127.0.0.1:1',executable:binary});
+    const payload=agent==='codex' ? {type:'item.completed',item:{id:'mcp-1',type:'mcp_tool_call',tool:'lookup',status:'failed',arguments:{private:'never-upload'},error:{message:'private-error'}}}
+      : agent==='claude' ? {type:'result',subtype:'success',is_error:true,stop_reason:'end_turn',result:'never-upload'}
+      : {type:'response.completed',response:{id:'response-1',object:'response',status:'incomplete',error:null,output:'never-upload',usage:{input_tokens:0,output_tokens:0}}};
+    await c.record('stream.event',{nativeType:payload.type,payload});await c.close({flush:false});
+    const files=(await readdir(spool)).filter(f=>f.endsWith('.json'));assert.equal(files.length,1);
+    const {event}=JSON.parse(await readFile(join(spool,files[0]),'utf8'));
+    assert.equal(event.payload,null);assert(!JSON.stringify(event).includes('never-upload'));assert(!JSON.stringify(event).includes('private-error'));
+    if(agent==='codex'){assert.equal(event.native.item_type,'mcp_tool_call');assert.equal(event.tool_name,'lookup');}
+    if(agent==='claude')assert.equal(event.native.is_error,true);
+    if(agent==='grok'){assert.equal(event.native_status,'incomplete');assert.equal(event.native.object_type,'response');assert.equal(event.usage.output_tokens,0);}
+  }
+});

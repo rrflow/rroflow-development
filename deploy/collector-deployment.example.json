@@ -1,0 +1,6 @@
+{
+  "issuer": "https://identity.example.com",
+  "client_id": "replace-with-your-public-cli-client-id",
+  "project_id": "replace-with-your-project-audience",
+  "ingest_url": "https://ingest.example.com"
+}

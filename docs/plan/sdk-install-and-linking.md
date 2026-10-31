@@ -4,6 +4,11 @@ Date: 2026-10-26. Status: plan. Goal (Jesse, 2026-10-26): install the rroflow SD
 
 ## The path (Jesse, 2026-10-26)
 
+Implementation update (2026-10-27): the SDK capture branch now contains
+[continuous source collection](source-collection.md), with account binding and a
+durable retry journal across Claude/Codex project directories. It still needs
+startup installation and the guided setup experience; it is not a hosted release.
+
 rroflow.ai is built in the open: the repository is public, so every build, test and release runs on GitHub Actions at no cost, and the repository is the record.
 
 1. rroflow.ai running: ingest, Nomen sign-in, public TLS (identity-and-devspaces.md).
@@ -27,8 +32,9 @@ Rules that bind detection:
 
 ## Increments (one PR each)
 
-1. **Release binaries and installers (decided first, 2026-10-26: Windows, Linux, ARM). Built.** `dist` 0.33.0, configured as Devagotchi's: `rroflow` for Windows and Linux on x86_64 and ARM64 (native ARM runners), shell and PowerShell installers, SHA-256 sums and GitHub attestations, built on every pull request. Publishing is automatic: when `main` carries a `rroflow` version without a release, `release-on-version` starts the release and it creates the tag. CI tests every target natively. macOS follows. Later the installers are also served from rroflow.ai.
+1. **Release binaries and installers (decided first, 2026-10-26: Windows, Linux, ARM). Built.** `dist` 0.33.0, configured as Devagotchi's: `rroflow` for Windows and Linux on x86_64 and ARM64 (native ARM runners), shell and PowerShell installers, SHA-256 sums and GitHub attestations, built on every pull request. Publishing is automatic: after exact main-push CI passes for an unreleased version, `release-on-version` reserves its immutable tag and dispatches the guarded release from that tag. CI tests every target natively. macOS follows. Later the installers are also served from rroflow.ai.
 2. **`rroflow setup`: detect, then offer.** Prints each agent found: version, signed-in mode, plan when known, how many past sessions exist. Then, per agent: link it? backfill past sessions? capture every turn from now on? Runs `rroflow login` when not signed in. Re-running is safe and shows what is linked.
+   *Built (2026-10-29, first cut):* `rroflow setup [--content] [--yes] [--no-service]` detects the Claude Code and Codex session folders and counts past sessions, runs `rroflow login` when not signed in, asks once, then runs `rroflow sources link` (backfill and ongoing, metrics only unless `--content`) and `rroflow sources service install` (Task Scheduler / systemd user / launchd), so capture survives restarts with no manual config. Re-running skips finished steps and shows service status. Per-agent questions, agent version and plan detection, and `--remove` are not built yet; `rroflow sources service remove` undoes the service.
 3. **Per-turn capture.** `rroflow capture --agent claude|codex` reads the hook payload, sends only the turns not yet sent (a local cursor per session; ids are deterministic, so a repeat replaces). `setup` installs it as the Claude Code `Stop` hook and the Codex hook, and `rroflow setup --remove` takes it out. This also fixes compaction loss: turns are captured before the transcript is rewritten.
 4. **Linked agents in the devspace.** Ingest gains `PUT /v1/agents/{agent}` (agent, version, sign-in mode, plan, account hash, last seen) and the dashboard an "Agents and subscriptions" panel: plan, rate-limit windows and usage-limit hits per agent.
 5. **Plan windows as data.** Codex `rate_limits` snapshots (used %, window, resets at, plan) stored per turn, so limits and wasted spend are charted, not guessed. Claude Code's rate-limit events the same way when present.

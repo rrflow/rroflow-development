@@ -91,7 +91,7 @@ This keeps the earlier rule "deploy from GitHub only, no hand-built copies". Bui
   - Devagotchi already does this with `json-schema-to-typescript`.
   - CI fails if the generated types drift from the Rust ones.
 - **Serving:** CI builds the bundle, and `rroflow-ingest` embeds it and serves it at `/`. The API stays under `/v1`. There is one release and one process.
-- **Sign-in:** through the Rust service, as PR #14 builds it: Nomen authorization code + S256 PKCE with the `rroflow-dashboard` app (`396821568908492804`, redirect `https://app.rroflow.ai/auth/callback`). The access token stays in server memory, and the browser holds only an opaque `__Host-` HttpOnly session cookie, so the React app never handles a token.
+- **Sign-in:** through the Rust service, as PR #14 builds it: Nomen authorization code + S256 PKCE with the `rroflow-dashboard` app (`397185155288072195`, redirect `https://app.rroflow.ai/auth/callback`). The access token stays in server memory, and the browser holds only an opaque `__Host-` HttpOnly session cookie, so the React app never handles a token.
 - **First screen:** parity with today's `dashboard.html`, with Claude Code and Codex side by side, signals by category, and settings. After that come evidence cards, spend and limits, and linked agents.
 - **The public site stays as decided (D-3):** Astro static with islands. Its islands can reuse the dashboard's React components.
 

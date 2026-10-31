@@ -21,11 +21,16 @@
 
 mod account;
 mod api;
+mod capture;
 mod codex;
+mod deployment;
 mod doctor;
 mod otlp;
 mod record;
 mod redact;
+mod retry;
+mod setup;
+mod sources;
 mod transcript;
 
 use anyhow::{Context, Result, bail};
@@ -42,7 +47,7 @@ use transcript::{collect, parse_transcript, ts_nanos};
 #[command(
     name = "rroflow",
     version,
-    about = "rroflow.ai collector: Sentry for your AI agents (Claude Code, Codex)"
+    about = "rroflow.ai: capture and inspect your AI activity"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -98,6 +103,20 @@ enum Agent {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Set this machine up once: sign in (if needed), link the Claude Code and Codex
+    /// session folders found here to your devspace, and keep capture running at login.
+    /// Safe to re-run: finished steps are skipped and the current state is shown.
+    Setup(setup::Args),
+    /// Link and continuously collect Claude/Codex sessions across projects.
+    Sources {
+        #[command(subcommand)]
+        command: sources::Command,
+    },
+    /// Durably record SDK events and deliver acknowledged events to your devspace.
+    Capture {
+        #[command(subcommand)]
+        command: capture::Command,
+    },
     /// Ingest Claude Code transcripts (~/.claude/projects, .jsonl files or directories).
     IngestClaude(IngestArgs),
     /// Ingest Codex CLI rollouts (~/.codex/sessions, .jsonl or .jsonl.zst, files or directories).
@@ -115,20 +134,10 @@ enum Cmd {
         #[arg(long)]
         since: Option<String>,
     },
-    /// Sign in with your Shippin account (Nomen): shows a code and a URL to open on any device.
+    /// Sign in to your configured deployment using a code on any device.
     Login {
-        /// Nomen issuer.
-        #[arg(long, env = "RROFLOW_ISSUER", default_value = account::DEFAULT_ISSUER)]
-        issuer: String,
-        /// The rroflow CLI's application in Nomen.
-        #[arg(long, env = "RROFLOW_CLIENT_ID", default_value = account::DEFAULT_CLIENT_ID)]
-        client_id: String,
-        /// The rroflow project id in Nomen, asked for in the token's audience.
-        #[arg(long, env = "RROFLOW_NOMEN_PROJECT", default_value = account::DEFAULT_PROJECT_ID)]
-        project_id: String,
-        /// The rroflow.ai ingest this account sends to.
-        #[arg(long, env = "RROFLOW_INGEST_URL", default_value = account::DEFAULT_INGEST_URL)]
-        ingest_url: String,
+        #[command(flatten)]
+        deployment: deployment::Args,
     },
     /// Revoke this machine's tokens and forget the account.
     Logout,
@@ -420,12 +429,18 @@ fn report_signals(
 
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
-        Cmd::Login {
-            issuer,
-            client_id,
-            project_id,
-            ingest_url,
-        } => account::login(&issuer, &client_id, Some(&project_id), &ingest_url)?,
+        Cmd::Setup(args) => setup::run(args)?,
+        Cmd::Sources { command } => sources::run(command)?,
+        Cmd::Capture { command } => capture::run(command)?,
+        Cmd::Login { deployment } => {
+            let selected = deployment.resolve(None)?;
+            account::login(
+                &selected.issuer,
+                &selected.client_id,
+                Some(&selected.project_id),
+                &selected.ingest_url,
+            )?;
+        }
         Cmd::Logout => account::logout()?,
         Cmd::Whoami { json } => account::whoami(json)?,
         Cmd::IngestClaude(args) => ingest(args, "claude-code", parse_transcript)?,

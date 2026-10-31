@@ -103,25 +103,29 @@ fn text_of(content: &Value) -> Option<String> {
 }
 
 pub(crate) fn parse_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
-    let raw = read_text(path)?;
+    parse(path, false)
+}
+
+pub(crate) fn collect_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
+    parse(path, true)
+}
+
+fn parse(path: &std::path::Path, bounded_text: bool) -> Result<Vec<Turn>> {
     let mut turns: Vec<Turn> = Vec::new();
     let mut open: HashMap<String, (usize, usize)> = HashMap::new();
     // promptId -> prompt text, so a compaction summary can point back at the prompt it continues.
     let mut prompts: HashMap<String, String> = HashMap::new();
     // Claude Code writes `last-prompt` records; they survive compaction when the prompt itself
     // does not, and they may be written after the summary, so collect them first.
-    let last_prompts: Vec<(usize, String)> = raw
-        .lines()
-        .enumerate()
-        .filter_map(|(i, l)| {
-            let d = serde_json::from_str::<Value>(l).ok()?;
-            (d["type"] == "last-prompt")
-                .then(|| d["lastPrompt"].as_str().map(str::to_string))
-                .flatten()
-                .filter(|p| !p.trim().is_empty())
-                .map(|p| (i, p))
-        })
-        .collect();
+    let mut last_prompts = Vec::new();
+    for entry in read_records(path, bounded_text)? {
+        let (i, d) = entry?;
+        if d["type"] == "last-prompt"
+            && let Some(prompt) = d["lastPrompt"].as_str().filter(|p| !p.trim().is_empty())
+        {
+            last_prompts.push((i, prompt.to_string()));
+        }
+    }
     let last_prompt_near = |line: usize| -> Option<String> {
         last_prompts
             .iter()
@@ -130,10 +134,8 @@ pub(crate) fn parse_transcript(path: &std::path::Path) -> Result<Vec<Turn>> {
             .or_else(|| last_prompts.iter().find(|(i, _)| *i > line))
             .map(|(_, p)| p.clone())
     };
-    for (line_no, line) in raw.lines().enumerate() {
-        let Ok(d) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for entry in read_records(path, bounded_text)? {
+        let (line_no, d) = entry?;
         let ty = d["type"].as_str().unwrap_or("");
         let ts = d["timestamp"].as_str().unwrap_or("").to_string();
         let msg = &d["message"];
@@ -261,22 +263,86 @@ fn is_transcript(p: &std::path::Path) -> bool {
     name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")
 }
 
-/// Read a transcript as text, decompressing `.zst` files.
-pub(crate) fn read_text(path: &std::path::Path) -> Result<String> {
-    use std::io::Read;
+/// Stream records, including compressed rollouts. The bound is per JSON record,
+/// never per session file. Large tool strings are bounded only for source collection;
+/// the existing one-shot/Raindrop parser keeps its original text semantics.
+pub(crate) fn read_records(
+    path: &std::path::Path,
+    bounded_text: bool,
+) -> Result<impl Iterator<Item = Result<(usize, Value)>>> {
+    use std::io::{BufRead, Read};
+    const LINE_LIMIT: u64 = 64 * 1024 * 1024;
     let file = std::fs::File::open(path).with_context(|| format!("read {}", path.display()))?;
-    let mut text = String::new();
-    if path.extension().is_some_and(|e| e == "zst") {
-        let mut dec = ruzstd::decoding::StreamingDecoder::new(std::io::BufReader::new(file))
+    let mut reader: Box<dyn BufRead> = if path.extension().is_some_and(|e| e == "zst") {
+        let dec = ruzstd::decoding::StreamingDecoder::new(std::io::BufReader::new(file))
             .map_err(|e| anyhow::anyhow!("decompress {}: {e}", path.display()))?;
-        dec.read_to_string(&mut text)
-            .with_context(|| format!("decompress {}", path.display()))?;
+        Box::new(std::io::BufReader::new(dec))
     } else {
-        std::io::BufReader::new(file)
-            .read_to_string(&mut text)
-            .with_context(|| format!("read {}", path.display()))?;
+        Box::new(std::io::BufReader::new(file))
+    };
+    let mut number = 0;
+    let mut done = false;
+    Ok(std::iter::from_fn(move || {
+        while !done {
+            let result = (|| -> Result<Option<(usize, Value)>> {
+                let mut bytes = Vec::new();
+                if reader
+                    .as_mut()
+                    .take(LINE_LIMIT + 1)
+                    .read_until(b'\n', &mut bytes)?
+                    == 0
+                {
+                    done = true;
+                    return Ok(None);
+                }
+                anyhow::ensure!(
+                    bytes.len() as u64 <= LINE_LIMIT,
+                    "JSON record exceeds 64 MiB; coverage incomplete"
+                );
+                let line = std::str::from_utf8(&bytes).context("session is not UTF-8")?;
+                let value = parse_line(line, number, !line.ends_with('\n'))?;
+                let index = number;
+                number += 1;
+                Ok(value.map(|mut v| {
+                    if bounded_text {
+                        bound_strings(&mut v);
+                    }
+                    (index, v)
+                }))
+            })();
+            match result {
+                Ok(Some(value)) => return Some(Ok(value)),
+                Ok(None) => {}
+                Err(error) => {
+                    done = true;
+                    return Some(Err(error));
+                }
+            }
+        }
+        None
+    }))
+}
+
+fn bound_strings(value: &mut Value) {
+    match value {
+        Value::String(s) if s.len() > 20_000 => *s = crate::redact::truncate(s, 20_000),
+        Value::Array(values) => values.iter_mut().for_each(bound_strings),
+        Value::Object(fields) => fields.values_mut().for_each(bound_strings),
+        _ => {}
     }
-    Ok(text)
+}
+
+/// A writer may be halfway through the final JSON line. Corruption anywhere else
+/// is an error, not permission to report a silently incomplete session.
+pub(crate) fn parse_line(line: &str, line_no: usize, partial_tail: bool) -> Result<Option<Value>> {
+    if line.trim().is_empty() {
+        return Ok(None);
+    }
+    match serde_json::from_str(line) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if partial_tail && error.is_eof() => Ok(None),
+        Err(_) => anyhow::bail!("invalid JSON at session line {}", line_no + 1),
+    }
 }
 
 /// Expand files and directories into the `.jsonl` transcripts they contain, sorted.

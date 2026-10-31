@@ -1,0 +1,21 @@
+# Merge this section into your ingest service configuration, then restart.
+# Presentation only. Do not put credentials or private links here.
+[brand]
+name = "Orbit AI"
+wordmark = "orbit."
+mark = "o"
+tagline = "Clarity for every conversation"
+intro_title = "Good work deserves"
+intro_emphasis = "a clearer view."
+intro_description = "Understand your agents, follow the evidence, and keep useful corrections."
+documentation_url = "https://docs.example.com/connect"
+accent = "#124b70"
+highlight = "#b7e7ff"
+
+[[brand.links]]
+label = "Help & documentation"
+url = "https://docs.example.com"
+
+[[brand.links]]
+label = "Source"
+url = "https://code.example.com/your-project"

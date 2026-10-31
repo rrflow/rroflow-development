@@ -20,7 +20,7 @@ Nomen account (issuer, sub)  ──owns──▶  devspace  ──holds──▶
 | Who | Today (built) | Next (Nomen) |
 |---|---|---|
 | Collector (`rroflow ingest-claude`, `ingest-codex`) | ingest key; server stores only its SHA-256 | `rroflow login` via the OAuth device flow, like `devagotchi-cli@shippin`; refresh token kept in the OS keychain |
-| Dashboard | ingest key pasted into the tab (session storage only) | sign in with Nomen: authorization code + PKCE |
+| Dashboard | Nomen authorization code + PKCE when configured; ingest key fallback | account-owned devspace, server-held token and HttpOnly session cookie |
 | Server check | key hash lookup, then Nomen (built) | opaque token introspection (RFC 7662) with private-key JWT client auth, answers cached 60 s; Nomen unreachable → 503 `issuer_unavailable`. Same pattern as the Devagotchi hub (`crates/hub/src/nomen.rs`). Required: issuer, `aud` = the rroflow project, `client_id` in the allowed list, `exp`, `sub` |
 
 Keys stay supported after sign-in exists, for headless machines and CI, but are minted by a signed-in user for their own devspace.
@@ -35,26 +35,26 @@ Keys stay supported after sign-in exists, for headless machines and CI, but are 
 | `GET /v1/signals` | public | catalogue `rroflow.signals/v1`: categories (Failure, Friction, Cost, Context), signals, options with defaults and ranges |
 | `GET`/`PUT /v1/signals/settings` | devspace | which signals run and their thresholds; collectors read this before evaluating |
 | `GET /v1/whoami` | devspace | which devspace the credential opens, and how (`key` or `nomen`, account ID, org) |
-| `GET /healthz`, `GET /` | public | health; dashboard page |
+| `GET /healthz`, `GET /`, `GET /app` | public shell | health; public product page; member dashboard shell (data requires authentication) |
 
 ## Build steps
 
 1. **Built:** Postgres store with migrations, signal catalogue grouped with options, per-devspace settings, dashboard with Claude Code and Codex side by side, deploy script with Postgres for tx-infra-prod.
 2. **Built:** Nomen token introspection on the ingest (ported from the Devagotchi hub, same checks and caching); first sign-in creates the devspace for that `sub`; `rroflow-ingest claim` gives an existing key devspace to an account; Nomen down → 503 `issuer_unavailable`, keys keep working.
 3. **Built:** `rroflow login` / `logout` / `whoami` (device flow ported from the Devagotchi CLI, refresh within 5 min of expiry, 7-day offline grace, tokens in `account.json` 0600). The collector sends as the signed-in account; `RROFLOW_INGEST_KEY` still wins for headless machines.
-4. Dashboard sign-in (authorization code + PKCE); key management in the page.
+4. **Implemented, deployment unverified:** Dashboard sign-in (authorization code + PKCE), opaque browser session, account-owned Claude Code/Codex views. See [browser-sign-in.md](browser-sign-in.md). Key management in the page remains future work.
 5. Public: `api.rroflow.ai` (API) and `app.rroflow.ai` (dashboard), both A records to 23.156.136.173, TLS at Caddy in front of `127.0.0.1:8787`. Both hosts reach the same service, so the dashboard's API calls are same-origin.
 6. Attach a devspace to a Shippin tenant (`shippin_tenant_id`), started from the Shippin console.
 
-## Nomen setup (created 2026-10-26, project `rroflow` in the Shippin Platform org)
+## Nomen setup (recreated 2026-10-28, project `rroflow` in the Hades org on id.shippin.cloud)
 
 | What | Value |
 |---|---|
 | Issuer | `https://id.shippin.cloud` (endpoints under `/oauth/v2/`) |
-| Project id (the `aud`) | `396821566727389188` |
-| `rroflow-ingest` API app, private-key JWT (introspection) | client id `396821567230771204`; key in Gold's `platform-core.sops.yaml` as `rroflow_ingest_jwt_key_b64` |
-| `rroflow-cli` native app, device flow + refresh, no secret | client id `396821568421953540` |
-| `rroflow-dashboard` web app, authorization code + PKCE + refresh, no secret | client id `396821568908492804`; redirect `https://app.rroflow.ai/auth/callback` |
+| Project id (the `aud`) | `397185153912274947` |
+| `rroflow-ingest` API app, private-key JWT (introspection) | client id `397185154214264835`; key in Gold's `platform-core.sops.yaml` as `rroflow_ingest_jwt_key_b64` |
+| `rroflow-cli` native app, device flow + refresh, no secret | client id `397185154935750659` |
+| `rroflow-dashboard` web app, authorization code + PKCE + refresh, no secret | client id `397185155288072195`; redirect `https://app.rroflow.ai/auth/callback` |
 
 DNS: `rroflow.ai` → 23.156.136.173 (Cloudflare proxy off). `api.rroflow.ai` and `app.rroflow.ai` to be added the same way.
 
@@ -66,8 +66,8 @@ DNS: `rroflow.ai` → 23.156.136.173 (Cloudflare proxy off). `api.rroflow.ai` an
    ```toml
    [nomen]
    issuer = "https://id.shippin.cloud"
-   audiences = ["396821566727389188"]
-   clients = ["396821568421953540", "396821568908492804"]
+   audiences = ["397185153912274947"]
+   clients = ["397185154935750659", "397185155288072195"]
    key_file = "/etc/rroflow/nomen-key.json"
    ```
 3. Re-run the deploy; it prints `nomen sign-in: on`.

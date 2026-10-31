@@ -21,13 +21,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub(crate) const DEFAULT_ISSUER: &str = "https://id.shippin.cloud";
-/// `rroflow-cli`, the native application in Nomen's `rroflow` project (device
-/// authorization and refresh tokens, no secret).
-pub(crate) const DEFAULT_CLIENT_ID: &str = "396821568421953540";
-/// The `rroflow` project in Nomen (Shippin Platform org): the audience the ingest accepts.
-pub(crate) const DEFAULT_PROJECT_ID: &str = "396821566727389188";
-pub(crate) const DEFAULT_INGEST_URL: &str = "https://api.rroflow.ai";
 pub(crate) const FILE_NAME: &str = "account.json";
 const SCOPE: &str = "openid profile email offline_access urn:zitadel:iam:user:resourceowner";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
@@ -269,10 +262,8 @@ pub(crate) struct Issuer {
 
 impl Issuer {
     pub fn new(issuer: &str, client_id: &str, project_id: Option<&str>) -> Result<Self, String> {
-        let issuer = issuer.trim_end_matches('/');
-        if !(issuer.starts_with("https://") || issuer.starts_with("http://127.0.0.1")) {
-            return Err("issuer must be an https:// URL".into());
-        }
+        let issuer = crate::capture::endpoint(issuer)
+            .map_err(|_| "issuer must be an HTTPS origin (loopback HTTP allowed)".to_string())?;
         if client_id.trim().is_empty() {
             return Err("client id must not be empty".into());
         }
@@ -548,20 +539,25 @@ pub(crate) struct Sender {
 /// The sender for this run; `None` when there is neither a key nor an account on file.
 pub(crate) fn sender() -> anyhow::Result<Option<Sender>> {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-    let account = current(&account_path()?).map_err(anyhow::Error::msg)?;
-    let base = env("RROFLOW_INGEST_URL")
-        .or_else(|| account.as_ref().map(|a| a.ingest_url.clone()))
-        .unwrap_or_else(|| DEFAULT_INGEST_URL.to_string());
+    let profile = crate::deployment::environment_profile()?;
     if let Some(key) = env("RROFLOW_INGEST_KEY") {
+        let base = env("RROFLOW_INGEST_URL").or(profile.ingest_url)
+            .ok_or_else(|| anyhow::anyhow!("RROFLOW_INGEST_KEY requires an explicit ingest_url in deployment.json or RROFLOW_INGEST_URL"))?;
         return Ok(Some(Sender {
-            base,
+            base: crate::capture::endpoint(&base)?,
             token: key,
             via: "key".into(),
         }));
     }
-    let Some(account) = account else {
+    let path = account_path()?;
+    let Some(stored) = read(&path).map_err(anyhow::Error::msg)? else {
         return Ok(None);
     };
+    crate::deployment::check_saved(&stored, profile, env)?;
+    let Some(account) = current(&path).map_err(anyhow::Error::msg)? else {
+        return Ok(None);
+    };
+    let base = crate::capture::endpoint(&account.ingest_url)?;
     if account.standing(unix_now()) == Standing::Expired {
         anyhow::bail!(
             "the sign-in for {} has expired: run `rroflow login`",
@@ -575,6 +571,22 @@ pub(crate) fn sender() -> anyhow::Result<Option<Sender>> {
     }))
 }
 
+/// Background collectors use only the referenced saved sign-in, never ambient keys.
+pub(crate) fn saved_sender(path: &Path) -> anyhow::Result<Option<Sender>> {
+    let Some(account) = current(path).map_err(anyhow::Error::msg)? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        account.standing(unix_now()) != Standing::Expired,
+        "saved sign-in expired; run rroflow login"
+    );
+    Ok(Some(Sender {
+        base: account.ingest_url.clone(),
+        token: account.access_token().to_owned(),
+        via: "saved account".into(),
+    }))
+}
+
 /// `rroflow login`: device sign-in, the account written owner-only, then the devspace
 /// the ingest opens for it.
 pub(crate) fn login(
@@ -583,6 +595,7 @@ pub(crate) fn login(
     project_id: Option<&str>,
     ingest_url: &str,
 ) -> anyhow::Result<()> {
+    crate::capture::endpoint(ingest_url)?;
     let nomen = Issuer::new(issuer, client_id, project_id).map_err(anyhow::Error::msg)?;
     let account = nomen.login(ingest_url, &mut std::io::stdout())?;
     let path = account_path()?;

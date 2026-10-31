@@ -1670,18 +1670,20 @@ dependencies = [
 
 [[package]]
 name = "rroflow"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
  "chrono",
  "clap",
+ "httpdate",
  "rand 0.9.5",
  "regex",
  "rroflow-core",
  "ruzstd",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "ureq",
@@ -1695,11 +1697,12 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
 name = "rroflow-ingest"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "aws-lc-rs",

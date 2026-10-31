@@ -1,0 +1,11 @@
+{
+  "name": "rroflow-public-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "export": "astro build && node ../scripts/export-public-site.mjs",
+    "verify": "astro build && node ../scripts/export-public-site.mjs --check"
+  },
+  "dependencies": { "astro": "7.4.2" }
+}

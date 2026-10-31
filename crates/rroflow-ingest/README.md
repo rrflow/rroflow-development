@@ -27,8 +27,11 @@ key_sha256 = ["<hash printed by keygen>"]
 | `POST /v1/turns` `{"turns":[…]}` | upsert records into the key's devspace → `{devspace, accepted, new, replaced}` |
 | `GET /v1/turns?limit=&signal=` | newest records in the devspace, optionally filtered by signal |
 | `GET /v1/summary` | turns by agent and project, signal counts, tool calls and errors, tokens (unreported usage counted, never priced as zero), and the signal catalogue |
+| `GET /v1/signals/stats?signal=` | full-cohort signal counts and bounded UTC-day/agent/project breakdowns; same filters as the evidence list, including exclusive `until` |
 | `GET /healthz` | liveness |
-| `GET /` | devspace dashboard: one self-contained page (no external scripts, strict CSP). It asks for the ingest key, keeps it only in the tab, and shows turns, signals with evidence, tool errors and tokens |
+| `GET /` | public product page, with configured member entry and explicit feature status |
+| `GET /app` | member dashboard; account sign-in when configured, advanced devspace key fallback; private APIs still require authorization |
+| `GET /auth/config` | public sign-in availability and canonical member origin |
 
 **Store.** Append-only JSONL per devspace, indexed in memory, behind the `TurnStore` trait. This is interim until decision D-4 (Parquet + DataFusion, Turso, or RRFlow) picks the durable store.
 
@@ -39,3 +42,11 @@ key_sha256 = ["<hash printed by keygen>"]
 - No prompt text or key reached the server without `--content`.
 
 **Not yet:** deployment on Shippin.cloud with devspace ids from the Shippin IdP, TLS, and per-devspace rate limits.
+
+## Account allowances
+
+Hosted Postgres deployments can enforce operator-configured monthly turn and SDK-event allowances, with expiring account grants and replay-safe quota accounting. See [account allowances v1](../../docs/spec/account-allowances-v1.md) for configuration, migration and remaining billing boundaries. Settings displays the authenticated account status.
+
+## Consented datasets
+
+Optional `[datasets]` configuration enables private metadata/review collection for verified members. Run `dataset-worker` from the same release artifact. See [metadata datasets v1](../../docs/spec/metadata-datasets-v1.md) for consent, lease/recovery, export, retention and the remaining training/qualification gates.

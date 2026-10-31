@@ -12,7 +12,62 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 pub struct PgStore {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
+    pub(crate) require_allowance_policy: bool,
+}
+
+impl PgStore {
+    pub(crate) async fn capture_insert(
+        &self,
+        ds: &str,
+        events: &[rroflow_core::capture::CaptureEvent],
+    ) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT id FROM devspaces WHERE id = $1 FOR UPDATE")
+            .bind(ds)
+            .fetch_one(&mut *tx)
+            .await?;
+        let ids: Vec<_> = events.iter().map(|e| e.event_id.clone()).collect();
+        crate::allowances::reserve(&mut tx, ds, "events", &ids, self.require_allowance_policy)
+            .await?;
+        let mut changed = std::collections::BTreeSet::new();
+        for e in events {
+            let inserted = sqlx::query("INSERT INTO capture_events (devspace_id,event_id,capture_id,sequence,agent,observed_at,record) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING")
+                .bind(ds).bind(&e.event_id).bind(&e.capture_id).bind(e.sequence as i64).bind(&e.agent)
+                .bind(timestamp(&e.observed_at)).bind(Json(e)).execute(&mut *tx).await?;
+            let stored: Option<Json<rroflow_core::capture::CaptureEvent>> = sqlx::query_scalar(
+                "SELECT record FROM capture_events WHERE devspace_id=$1 AND event_id=$2",
+            )
+            .bind(ds)
+            .bind(&e.event_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if stored.as_ref().map(|s| &s.0) != Some(e) {
+                return Err(crate::capture::Conflict.into());
+            }
+            if inserted.rows_affected() > 0 {
+                changed.insert(e.capture_id.clone());
+            }
+        }
+        for capture in changed {
+            sqlx::query("INSERT INTO sdk_activity_work(devspace_id,capture_id) VALUES($1,$2) ON CONFLICT(devspace_id,capture_id) DO UPDATE SET source_revision=sdk_activity_work.source_revision+1,status=CASE WHEN sdk_activity_work.status='running' THEN 'running' ELSE 'queued' END,attempts=0,last_error=NULL,next_attempt_at=clock_timestamp(),changed_at=clock_timestamp()")
+                .bind(ds).bind(capture).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+    pub(crate) async fn capture_list(
+        &self,
+        ds: &str,
+        agent: Option<&str>,
+        capture: Option<&str>,
+        event: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<rroflow_core::capture::CaptureEvent>> {
+        let rows: Vec<Json<rroflow_core::capture::CaptureEvent>> = sqlx::query_scalar("SELECT record FROM capture_events WHERE devspace_id=$1 AND ($2::text IS NULL OR agent=$2) AND ($3::text IS NULL OR capture_id=$3) AND ($4::text IS NULL OR event_id=$4) ORDER BY observed_at DESC, capture_id, sequence DESC LIMIT $5")
+            .bind(ds).bind(agent).bind(capture).bind(event).bind(limit as i64).fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
 }
 
 /// Parse an RFC 3339 timestamp; empty or unparseable is `None` (the handler rejects
@@ -52,7 +107,10 @@ impl PgStore {
             .connect(url)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            require_allowance_policy: false,
+        })
     }
 
     pub async fn ensure_devspaces(&self, ids: &[String]) -> anyhow::Result<()> {
@@ -156,7 +214,7 @@ impl PgStore {
             // A devspace made by signing in before claiming is empty: it gives way. One
             // that holds turns does not; merging data is not done here.
             let turns: i64 =
-                sqlx::query_scalar("SELECT count(*) FROM turns WHERE devspace_id = $1")
+                sqlx::query_scalar("SELECT (SELECT count(*) FROM turns WHERE devspace_id = $1) + (SELECT count(*) FROM capture_events WHERE devspace_id = $1) + (SELECT count(*) FROM signal_reviews WHERE devspace_id = $1)")
                     .bind(&other)
                     .fetch_one(&mut *tx)
                     .await?;
@@ -257,6 +315,18 @@ impl PgStore {
             .bind(devspace)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("SELECT id FROM devspaces WHERE id=$1 FOR UPDATE")
+            .bind(devspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        crate::allowances::reserve(
+            &mut tx,
+            devspace,
+            "turns",
+            &event_id,
+            self.require_allowance_policy,
+        )
+        .await?;
         let inserted: Vec<bool> = sqlx::query_scalar(
             r#"
             INSERT INTO turns (
@@ -347,11 +417,20 @@ impl PgStore {
             SELECT t.record FROM turns t
             WHERE t.devspace_id = $1
               AND ($4::text IS NULL OR t.agent = $4)
+              AND ($5::text IS NULL OR coalesce(nullif(t.project, ''), nullif(t.record->>'cwd', ''), '(none)') = $5)
+              AND ($6::text IS NULL OR t.record->>'session_id' = $6)
+              AND ($7::text IS NULL OR position(lower($7) in lower(concat_ws(E'\n', t.record->>'session_id', t.record->>'model', t.record#>>'{content,input}', t.record#>>'{content,output}'))) > 0)
+              AND ($8::timestamptz IS NULL OR t.started_at >= $8)
+              AND (NOT $9::boolean OR
+                   ($10::timestamptz IS NOT NULL AND (t.started_at < $10 OR t.started_at IS NULL)) OR
+                   (t.started_at IS NOT DISTINCT FROM $10 AND t.event_id COLLATE "C" > $11))
+              AND ($12::text IS NULL OR t.event_id = $12)
+              AND ($13::timestamptz IS NULL OR t.started_at < $13)
               AND ($2::text IS NULL OR EXISTS (
                     SELECT 1 FROM signal_hits h
                     WHERE h.devspace_id = t.devspace_id AND h.event_id = t.event_id
                       AND h.signal = $2))
-            ORDER BY t.started_at DESC NULLS LAST, t.event_id
+            ORDER BY t.started_at DESC NULLS LAST, t.event_id COLLATE "C"
             LIMIT $3
             "#,
         )
@@ -359,6 +438,15 @@ impl PgStore {
         .bind(f.signal)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .bind(f.agent)
+        .bind(f.project)
+        .bind(f.session)
+        .bind(f.search)
+        .bind(f.since)
+        .bind(f.before.is_some())
+        .bind(f.before.and_then(|(at, _)| at))
+        .bind(f.before.map(|(_, id)| id))
+        .bind(f.event)
+        .bind(f.until)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.into_iter().map(|j| j.0).collect())
@@ -404,7 +492,7 @@ impl PgStore {
         let (by_agent, by_project, signals) = tokio::try_join!(
             grouped("SELECT agent, count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"),
             grouped(
-                "SELECT coalesce(project, '(none)'), count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"
+                "SELECT coalesce(nullif(project, ''), nullif(record->>'cwd', ''), '(none)'), count(*) FROM turns WHERE devspace_id = $1 GROUP BY 1"
             ),
             grouped("SELECT signal, count(*) FROM signal_hits WHERE devspace_id = $1 GROUP BY 1"),
         )?;
@@ -454,12 +542,26 @@ impl PgStore {
         &self,
         devspace: &str,
         cfg: &SignalConfig,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("INSERT INTO devspaces (id) VALUES ($1) ON CONFLICT DO NOTHING")
             .bind(devspace)
             .execute(&mut *tx)
             .await?;
+        sqlx::query("SELECT id FROM devspaces WHERE id=$1 FOR UPDATE")
+            .bind(devspace)
+            .fetch_one(&mut *tx)
+            .await?;
+        let old: Option<Json<SignalConfig>> =
+            sqlx::query_scalar("SELECT config FROM signal_settings WHERE devspace_id=$1")
+                .bind(devspace)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if old.map(|j| j.0.revision).unwrap_or(0) != cfg.revision {
+            return Ok(false);
+        }
+        let mut saved = cfg.clone();
+        saved.revision += 1;
         sqlx::query(
             r#"
             INSERT INTO signal_settings (devspace_id, config) VALUES ($1, $2)
@@ -467,10 +569,10 @@ impl PgStore {
             "#,
         )
         .bind(devspace)
-        .bind(Json(cfg))
+        .bind(Json(&saved))
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
 }

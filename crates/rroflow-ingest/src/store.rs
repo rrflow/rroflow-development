@@ -43,6 +43,50 @@ pub struct TurnFilter<'a> {
     pub agent: Option<&'a str>,
     /// Only turns where this signal fired.
     pub signal: Option<&'a str>,
+    pub project: Option<&'a str>,
+    pub session: Option<&'a str>,
+    pub search: Option<&'a str>,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
+    pub before: Option<(Option<chrono::DateTime<chrono::Utc>>, &'a str)>,
+    pub event: Option<&'a str>,
+}
+
+pub(crate) fn project(r: &TurnRecord) -> &str {
+    r.project
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| (!r.cwd.is_empty()).then_some(r.cwd.as_str()))
+        .unwrap_or("(none)")
+}
+
+pub(crate) fn matches_filter(r: &TurnRecord, f: &TurnFilter<'_>) -> bool {
+    f.agent.is_none_or(|a| r.agent == a)
+        && f.project.is_none_or(|p| project(r) == p)
+        && f.session.is_none_or(|s| r.session_id == s)
+        && f.event.is_none_or(|id| r.event_id == id)
+        && f.since
+            .is_none_or(|since| crate::pg::timestamp(&r.started_at).is_some_and(|at| at >= since))
+        && f.until
+            .is_none_or(|until| crate::pg::timestamp(&r.started_at).is_some_and(|at| at < until))
+        && f.before.is_none_or(|(at, id)| {
+            let time = crate::pg::timestamp(&r.started_at);
+            time < at || (time == at && r.event_id.as_str() > id)
+        })
+        && f.search.is_none_or(|query| {
+            let content = r.content.as_ref();
+            [
+                r.session_id.as_str(),
+                r.model.as_deref().unwrap_or(""),
+                content.map_or("", |c| c.input.as_str()),
+                content.map_or("", |c| c.output.as_str()),
+            ]
+            .join("\n")
+            .to_lowercase()
+            .contains(&query.to_lowercase())
+        })
+        && f.signal
+            .is_none_or(|signal| r.signals.iter().any(|h| h.signal == signal))
 }
 
 /// The configured backend.
@@ -52,6 +96,28 @@ pub enum Store {
 }
 
 impl Store {
+    /// Connectivity/readability only; does not claim free disk, backup health or write success.
+    pub async fn ready(&self) -> anyhow::Result<()> {
+        match self {
+            Store::Jsonl(store) => anyhow::ensure!(
+                std::fs::metadata(&store.root)?.is_dir(),
+                "store directory unavailable"
+            ),
+            Store::Postgres(store) => {
+                if store.require_allowance_policy {
+                    let exists: bool =
+                        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM allowance_policy)")
+                            .fetch_one(&store.pool)
+                            .await?;
+                    anyhow::ensure!(exists, "required allowance policy unavailable");
+                }
+                sqlx::query("SELECT event_id FROM turns LIMIT 0")
+                    .execute(&store.pool)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
     /// Make sure each devspace exists (devspaces registered by key in the config).
     pub async fn ensure_devspaces(&self, ids: &[String]) -> anyhow::Result<()> {
         match self {
@@ -115,7 +181,7 @@ impl Store {
         &self,
         devspace: &str,
         cfg: &SignalConfig,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         match self {
             Store::Jsonl(s) => s.set_signal_config(devspace, cfg),
             Store::Postgres(p) => p.set_signal_config(devspace, cfg).await,
@@ -143,11 +209,113 @@ pub(crate) fn last_per_event(recs: &[TurnRecord]) -> Vec<&TurnRecord> {
 /// The last line for an `event_id` wins, so a re-send replaces the earlier record. Signal
 /// settings live beside it in `signal_settings.json`.
 pub struct JsonlStore {
-    root: PathBuf,
-    index: Mutex<HashMap<String, HashMap<String, TurnRecord>>>,
+    pub(crate) health_lock: Mutex<()>,
+    settings_lock: Mutex<()>,
+    pub(crate) root: PathBuf,
+    pub(crate) index: Mutex<HashMap<String, HashMap<String, TurnRecord>>>,
+    capture_index: Mutex<HashMap<String, Vec<rroflow_core::capture::CaptureEvent>>>,
 }
 
 const SETTINGS_FILE: &str = "signal_settings.json";
+
+impl JsonlStore {
+    pub(crate) fn review_turn(&self, ds: &str, id: &str) -> Option<TurnRecord> {
+        self.index
+            .lock()
+            .expect("store lock")
+            .get(ds)?
+            .get(id)
+            .cloned()
+    }
+
+    fn capture_read(&self, ds: &str) -> anyhow::Result<Vec<rroflow_core::capture::CaptureEvent>> {
+        let dir = self.root.join(ds).join("capture");
+        if !dir.exists() {
+            return Ok(vec![]);
+        }
+        let mut out = vec![];
+        for file in std::fs::read_dir(dir)? {
+            let path = file?.path();
+            if path.extension().is_some_and(|e| e == "json") {
+                out.push(serde_json::from_slice(&std::fs::read(path)?)?);
+            }
+        }
+        Ok(out)
+    }
+    pub(crate) fn capture_insert(
+        &self,
+        ds: &str,
+        events: &[rroflow_core::capture::CaptureEvent],
+    ) -> anyhow::Result<()> {
+        let mut index = self.capture_index.lock().expect("capture lock");
+        if !index.contains_key(ds) {
+            index.insert(ds.into(), self.capture_read(ds)?);
+        }
+        let known = index.get_mut(ds).expect("loaded capture");
+        let mut fresh: Vec<&rroflow_core::capture::CaptureEvent> = vec![];
+        for e in events {
+            if let Some(old) = known.iter().chain(fresh.iter().copied()).find(|old| {
+                old.event_id == e.event_id
+                    || (old.capture_id == e.capture_id && old.sequence == e.sequence)
+            }) {
+                if old != e {
+                    return Err(crate::capture::Conflict.into());
+                }
+            } else {
+                fresh.push(e);
+            }
+        }
+        let dir = self.root.join(ds).join("capture");
+        std::fs::create_dir_all(&dir)?;
+        for e in fresh {
+            let path = dir.join(format!("{}.json", e.event_id));
+            let tmp = dir.join(format!("{}.{}.tmp", e.event_id, rand::random::<u64>()));
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            file.write_all(&serde_json::to_vec(e)?)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::hard_link(&tmp, &path)?;
+            std::fs::remove_file(tmp)?;
+            known.push(e.clone());
+        }
+        // On Unix persist directory entries before acknowledging durable ingestion.
+        #[cfg(unix)]
+        for directory in [&dir, &self.root.join(ds), &self.root] {
+            std::fs::File::open(directory)?.sync_all()?;
+        }
+        Ok(())
+    }
+    pub(crate) fn capture_list(
+        &self,
+        ds: &str,
+        agent: Option<&str>,
+        capture: Option<&str>,
+        event: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<rroflow_core::capture::CaptureEvent>> {
+        let mut index = self.capture_index.lock().expect("capture lock");
+        if !index.contains_key(ds) {
+            index.insert(ds.into(), self.capture_read(ds)?);
+        }
+        let mut events = index.get(ds).expect("loaded capture").clone();
+        events.retain(|e| {
+            agent.is_none_or(|a| a == e.agent)
+                && capture.is_none_or(|c| c == e.capture_id)
+                && event.is_none_or(|id| id == e.event_id)
+        });
+        events.sort_by(|a, b| {
+            b.observed_at
+                .cmp(&a.observed_at)
+                .then(a.capture_id.cmp(&b.capture_id))
+                .then(b.sequence.cmp(&a.sequence))
+        });
+        events.truncate(limit);
+        Ok(events)
+    }
+}
 
 impl JsonlStore {
     /// Open the store and load every devspace's records.
@@ -169,8 +337,11 @@ impl JsonlStore {
             }
         }
         Ok(Self {
+            health_lock: Mutex::new(()),
+            settings_lock: Mutex::new(()),
             root,
             index: Mutex::new(index),
+            capture_index: Mutex::new(HashMap::new()),
         })
     }
 
@@ -202,16 +373,16 @@ impl JsonlStore {
             .get(devspace)
             .map(|m| {
                 m.values()
-                    .filter(|r| f.agent.is_none_or(|a| r.agent == a))
-                    .filter(|r| {
-                        f.signal
-                            .is_none_or(|s| r.signals.iter().any(|h| h.signal == s))
-                    })
+                    .filter(|r| matches_filter(r, f))
                     .cloned()
                     .collect()
             })
             .unwrap_or_default();
-        v.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        v.sort_by(|a, b| {
+            crate::pg::timestamp(&b.started_at)
+                .cmp(&crate::pg::timestamp(&a.started_at))
+                .then_with(|| a.event_id.cmp(&b.event_id))
+        });
         v.truncate(limit);
         v
     }
@@ -222,9 +393,7 @@ impl JsonlStore {
         for r in index.get(devspace).into_iter().flat_map(|m| m.values()) {
             s.turns += 1;
             *s.by_agent.entry(r.agent.clone()).or_default() += 1;
-            *s.by_project
-                .entry(r.project.clone().unwrap_or_else(|| "(none)".into()))
-                .or_default() += 1;
+            *s.by_project.entry(project(r).into()).or_default() += 1;
             for h in &r.signals {
                 *s.signals.entry(h.signal.clone()).or_default() += 1;
                 *s.signals_by_agent
@@ -260,12 +429,23 @@ impl JsonlStore {
         }
     }
 
-    fn set_signal_config(&self, devspace: &str, cfg: &SignalConfig) -> anyhow::Result<()> {
+    fn set_signal_config(&self, devspace: &str, cfg: &SignalConfig) -> anyhow::Result<bool> {
+        let _guard = self.settings_lock.lock().expect("settings lock");
+        if self.signal_config(devspace)?.revision != cfg.revision {
+            return Ok(false);
+        }
+        let mut saved = cfg.clone();
+        saved.revision += 1;
         let dir = self.root.join(devspace);
         std::fs::create_dir_all(&dir)?;
         let tmp = dir.join(format!("{SETTINGS_FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(cfg)?)?;
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(&serde_json::to_vec_pretty(&saved)?)?;
+        file.sync_all()?;
+        drop(file);
         std::fs::rename(tmp, dir.join(SETTINGS_FILE))?;
-        Ok(())
+        #[cfg(unix)]
+        std::fs::File::open(&dir)?.sync_all()?;
+        Ok(true)
     }
 }

@@ -1,0 +1,6 @@
+{
+  "branch": "main",
+  "ci_workflow": "ci.yml",
+  "release_workflow": "release.yml",
+  "required_jobs": ["rust", "release-versions", "test (windows-x64)", "test (windows-arm64)", "test (linux-arm64)", "hosted-artifact"]
+}

@@ -26,14 +26,104 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Toolchain
         run: rustup show active-toolchain || rustup toolchain install
+      - name: Deployment guards (no host changes)
+        run: bash deploy/tx-infra-prod/test-preflight.sh
+      - name: Managed release activation and rollback (isolated fixtures)
+        run: sudo env "PATH=$PATH" bash deploy/tx-infra-prod/test-release.sh
+      - name: Node for the public site build
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Verify public site embedded assets
+        working-directory: site
+        run: npm ci --ignore-scripts && npm run verify
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Dashboard navigation, evidence and authentication states
+        run: node --test scripts/test-dashboard.mjs
+      - name: Release publication refuses unqualified or mutable sources
+        run: node --test scripts/test-release-gate.mjs
+      - name: Hosted promotion verifies exact bytes and archive membership
+        run: python3 scripts/test-hosted-promotion.py
+      - name: Operator access tool refuses unsafe credentials and trust shortcuts
+        run: node --test scripts/test-project-access.mjs
+      - name: Research source inventory is current
+        run: node scripts/index-research.mjs --check
       - name: Test
         run: cargo test --workspace --locked
+      - name: Build collector and ingest for SDK proof
+        run: cargo build --workspace --bins --examples --locked
+      - name: SDK capture end to end (fixture providers)
+        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs scripts/test-managed-sdk.mjs
+      - name: Account quotas and durable collector recovery (disposable database)
+        env:
+          RROFLOW_ALLOWANCE_TEST_DATABASE_URL: ${{ env.RROFLOW_TEST_DATABASE_URL }}
+        run: node --test scripts/test-account-allowances.mjs
+      - name: Native user collector lifecycle (disposable runner only)
+        env:
+          RROFLOW_SERVICE_TEST: '1'
+        run: node --test scripts/test-source-service.mjs
       - name: Parse a fixture transcript (no network)
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
+
+  hosted-artifact:
+    # Build on glibc 2.35; the host must be a compatible x86_64 Linux application VM.
+    # No deploy credentials or host access. PR artifacts are review artifacts only.
+    needs: rust
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rroflow
+          POSTGRES_PASSWORD: rroflow-ui-fixture
+          POSTGRES_DB: rroflow_ui_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      RROFLOW_DATASET_UI_DATABASE_URL: postgres://rroflow:rroflow-ui-fixture@localhost:5432/rroflow_ui_test
+      RROFLOW_BUILD_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Build hosted service from the pinned revision
+        run: cargo build --release --locked -p rroflow-ingest -p rroflow
+      - name: Package server and embedded identity
+        run: node scripts/package-ingest.mjs target/release/rroflow-ingest target/hosted "$RROFLOW_BUILD_REVISION" x86_64-unknown-linux-gnu
+      - name: Verify the exact packaged server with disposable fixture data
+        run: node scripts/test-ingest-artifact.mjs "target/hosted/rroflow-ingest-$RROFLOW_BUILD_REVISION-x86_64-unknown-linux-gnu.tar.gz" "$RROFLOW_BUILD_REVISION"
+      - name: Install pinned UI test tooling
+        working-directory: scripts/dashboard-ui
+        run: npm ci --ignore-scripts && npx --no-install playwright install --with-deps chromium
+      - name: Verify desktop and phone dashboard flows
+        working-directory: scripts/dashboard-ui
+        env:
+          RROFLOW_UI_BINARY: ${{ github.workspace }}/target/release/rroflow-ingest
+        run: npm test
+      - name: Retain UI screenshots and failure traces (fixture data only)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dashboard-ui-${{ env.RROFLOW_BUILD_REVISION }}
+          path: |
+            scripts/dashboard-ui/playwright-report/
+            scripts/dashboard-ui/test-results/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Retain immutable review artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: rroflow-ingest-${{ env.RROFLOW_BUILD_REVISION }}-x86_64-linux
+          path: target/hosted/*
+          if-no-files-found: error
+          retention-days: 30
 
   # Every platform the SDK ships on runs the whole test suite natively (the Postgres store
   # tests skip themselves without RROFLOW_TEST_DATABASE_URL; the Linux job above runs them).
@@ -54,6 +144,14 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - name: Test
         run: cargo test --workspace --locked
+      - name: Build collector and ingest for SDK proof
+        run: cargo build --workspace --bins --examples --locked
+      - name: SDK capture end to end (fixture providers)
+        run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs scripts/test-managed-sdk.mjs
+      - name: Native user collector lifecycle (disposable runner only)
+        env:
+          RROFLOW_SERVICE_TEST: '1'
+        run: node --test scripts/test-source-service.mjs
       - name: Parse a fixture transcript (no network)
         shell: bash
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures

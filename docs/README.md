@@ -7,7 +7,7 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 | File | What it is | Project name |
 |---|---|---|
 | [plan/rroflow-ai-plan.md](plan/rroflow-ai-plan.md) | The plan: product split (RRFlow engine vs rroflow.ai), learning vision, decisions D-1…D-6, build order | `claude/rroflow-ai-plan.md` |
-| [plan/capability-map.md](plan/capability-map.md) | Raindrop + Sentry capabilities mapped to rroflow, with status | `claude/rroflow-capability-map.md` |
+| [plan/capability-map.md](plan/capability-map.md) | Raindrop + Sentry + PostHog AI capability baseline, implementation status and acceptance gaps | `claude/rroflow-capability-map.md` |
 | [plan/identity-and-devspaces.md](plan/identity-and-devspaces.md) | Nomen identity, devspaces, Shippin tenant attach, API, Nomen app ids, sign-in setup on tx-infra-prod | `claude/rroflow-identity-and-devspaces.md` |
 | [plan/sdk-install-and-linking.md](plan/sdk-install-and-linking.md) | Installing the rroflow SDK, detecting installed agents and subscriptions, linking them to rroflow.ai, releases | `claude/rroflow-sdk-install-and-linking.md` |
 | [deploy/README.md](deploy/README.md) | Where rroflow.ai runs (Texas), the VM-behind-the-edge layout, pull deploys, the dashboard stack, owner steps | `claude/rroflow-deploy.md` |
@@ -15,6 +15,13 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 | [plan/canon-alignment-notes.md](plan/canon-alignment-notes.md) | Vocabulary and canon constraints the mechanism spec must follow | `claude/rroflow-canon-alignment-notes.md` |
 | [spec/mechanism-spec-v0.md](spec/mechanism-spec-v0.md) | RROFLOW mechanism spec v0 (behaviour signals, findings, experiments, the learning loops) | `claude/rroflow-mechanism-spec-v0.md` |
 | [ux/vibe-coder-onboarding.md](ux/vibe-coder-onboarding.md) | Onboarding plan for vibe coders | `claude/rroflow-vibe-coder-onboarding.md` |
+
+## Texas readiness and learning continuation
+
+- [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
+- [Project access tooling](plan/project-access-tooling.md): private credential references, Cloudflare/Nomen verification and strict read-only SSH inventory.
+- [Subscription support](plan/subscription-support.md): capture, sign-in, history and inference capability status per surface.
+- [Automatic datasets v0](spec/automatic-datasets-v0.md): policy-authorized snapshots, labels, immutable splits and training boundaries.
 
 ## Research
 
@@ -49,6 +56,13 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 |---|---|---|
 | [platform/compute-and-data-workload-classification.md](platform/compute-and-data-workload-classification.md) | Eight workload classes, endpoint bindings, hardware facts | `claude/compute-and-data-workload-classification.md` |
 | [platform/skills-and-routines-inventory.md](platform/skills-and-routines-inventory.md) | Build-workflow skills and routines | `claude/skills-and-routines-inventory.md` |
+
+## Deployment configuration
+
+[Collector deployment configuration and license status](plan/deployment-configuration.md) records public profiles, endpoint/account binding and remaining customization work.
+
+[Public/member brand configuration](ux/brand-configuration.md) defines validated
+operator settings for names, introductory copy, links and vector accent colors.
 
 ## Rule
 

@@ -1,0 +1,352 @@
+import {test as base,expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import {startFixture} from './service.mjs';
+import {startDatasetFixture} from './dataset-service.mjs';
+import {seedSdk} from './sdk-fixture.mjs';
+import {randomUUID} from 'node:crypto';
+const test=base.extend({service:[async({},use)=>{const service=await startFixture();try{await use(service);}finally{await service.close();}},{scope:'worker'}]});
+async function signIn(page,service) {
+  await page.goto(service.base+'/app');
+  await page.getByText('Advanced: use a devspace key',{exact:true}).click();
+  await page.getByLabel('Devspace ingest key',{exact:true}).fill(service.key);
+  await page.getByRole('button',{name:'Open devspace',exact:true}).click();
+  await expect(page.locator('#app')).toBeVisible();await settled(page);
+  expect(await page.evaluate(()=>window.scrollY)).toBe(0);
+}
+async function settled(page){await expect(page.locator('#loading')).toBeHidden();await expect(page.locator('#app-error')).toBeHidden();}
+async function navigate(page,route){await page.evaluate(route=>{location.hash='#'+route;},route);await expect(page.locator(`[data-nav="${route}"]`)).toHaveAttribute('aria-current','page');await settled(page);}
+async function reflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);}
+async function accessible(page){const results=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa']).analyze();expect(results.violations.map(v=>({id:v.id,impact:v.impact,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))}))).toEqual([]);}
+async function screenshot(page,info,name){
+  // Contrast inspection can temporarily hide artwork. Let restored styles paint
+  // before collecting visual evidence; DOM visibility alone misses this frame.
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  const path=info.outputPath(`${name}-test-fixture.png`);await page.screenshot({path,fullPage:false});await info.attach(`${name} - disposable test records`,{path,contentType:'image/png'});
+}
+test.beforeEach(async({page,service})=>{await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());});
+
+test('configured branding renders before scripts and stays readable through member navigation',async({page,service},info)=>{
+  const brand={name:'Orbit AI',wordmark:'orbit.',mark:'o',tagline:'Clarity for every conversation',intro_title:'Good work deserves',intro_emphasis:'a clearer view.',intro_description:'Understand your agents, follow the evidence, and keep useful corrections.',documentation_url:'https://docs.example.test/connect',accent:'#124b70',highlight:'#b7e7ff',links:[{label:'Help & documentation',url:'https://docs.example.test'}]};
+  const custom=await startFixture({brand});
+  try {
+    await page.unroute('**/*');
+    await page.route('**/*',route=>new URL(route.request().url()).origin===custom.base?route.continue():route.abort());
+    const raw=await (await fetch(custom.base)).text();
+    expect(raw).toContain('Good work deserves');expect(raw).toContain('Orbit AI');expect(raw).not.toContain('https://shippin.cloud');
+    await page.goto(custom.base);
+    await expect(page).toHaveTitle('Orbit AI · A clearer picture of your AI');
+    await expect(page.locator('#hero-title')).toContainText('a clearer view.');
+    await expect(page.locator('.public-footer [data-brand-links] a')).toHaveCount(1);
+    await expect(page.locator('.public-footer [data-brand-links] a')).toHaveAttribute('href','https://docs.example.test');
+    await expect(page.locator('.public-illustration [fill^="var(--lime"]').first()).toHaveCSS('fill','rgb(183, 231, 255)');
+    await reflow(page);await accessible(page);await screenshot(page,info,'custom-brand-public');
+    await signIn(page,custom);
+    await expect(page).toHaveTitle('Orbit AI · Overview');
+    await expect(page.locator('.sidebar [data-brand="wordmark"]')).toHaveText('orbit.');
+    await expect(page.locator('.hero-art [fill^="var(--lime"]').first()).toHaveCSS('fill','rgb(183, 231, 255)');
+    await expect(page.locator('[data-brand-docs]')).toHaveAttribute('href',brand.documentation_url);
+    expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#124b70');
+    await reflow(page);await accessible(page);await screenshot(page,info,'custom-brand-overview');
+    await navigate(page,'activity');await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
+    await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
+    expect(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#b7e7ff');
+    await reflow(page);await accessible(page);await screenshot(page,info,'custom-brand-dark');
+    expect((await fetch(custom.base+'/v1/summary')).status).toBe(401);
+    const original=await (await fetch(service.base)).text();expect(original).toContain('RROFLOW');expect(original).not.toContain('Orbit AI');
+  } finally {await custom.close();}
+});
+
+test('bounded brand text wraps at this viewport and markup remains literal',async({page})=>{
+  const custom=await startFixture({brand:{name:'Orbit <img src=x onerror=window.brandInjected=1>',wordmark:'W'.repeat(24),mark:'OA',tagline:'T'.repeat(160),intro_title:'A'.repeat(120),intro_emphasis:'B'.repeat(120),intro_description:'C'.repeat(500),links:[{label:'D'.repeat(60),url:'https://docs.example.test'}]}});
+  try {
+    await page.unroute('**/*');
+    await page.route('**/*',route=>new URL(route.request().url()).origin===custom.base?route.continue():route.abort());
+    await page.goto(custom.base);await reflow(page);
+    await page.locator('.public-footer').scrollIntoViewIfNeeded();await reflow(page);
+    await page.goto(custom.base+'/app');await reflow(page);
+    await expect(page.locator('#brand-name')).toHaveText('Orbit <img src=x onerror=window.brandInjected=1>');
+    await expect(page.locator('#brand-name img')).toHaveCount(0);
+    expect(await page.evaluate(()=>window.brandInjected)).toBeUndefined();
+  } finally {await custom.close();}
+});
+
+test('public entry explains coverage and opens the separate workspace',async({page,service},info)=>{
+  const privateRequests=[];page.on('request',r=>{if(new URL(r.url()).pathname.startsWith('/v1/'))privateRequests.push(r.url());});
+  await page.goto(service.base);await expect(page.locator('#member-status')).toContainText('not activated');
+  await expect(page.getByRole('heading',{level:1})).toContainText('See the whole story');
+  await expect(page.locator('#membership')).toContainText('billing are not active');
+  expect(privateRequests).toEqual([]);
+  await reflow(page);await accessible(page);await screenshot(page,info,'public-entry');
+  await page.locator('#coverage').scrollIntoViewIfNeeded();await screenshot(page,info,'public-connections');
+  await page.locator('#membership').scrollIntoViewIfNeeded();await screenshot(page,info,'public-membership');
+  await page.locator('.public-header [data-member-link]').click();await expect(page).toHaveURL(service.base+'/app');
+  await expect(page.locator('#login')).toBeVisible();await expect(page.locator('#app')).toBeHidden();
+  expect((await fetch(service.base+'/v1/summary')).status).toBe(401);
+});
+
+test('public member links follow the server-configured canonical origin',async({page,service})=>{
+  // Configuration fixture, not a claim of live identity-provider availability.
+  await page.route('**/auth/config',r=>r.fulfill({json:{enabled:true,member_origin:'https://members.example.test'}}));
+  await page.goto(service.base);await expect(page.locator('#member-status')).toContainText('identity is verified');
+  await expect(page.locator('.public-header [data-member-link]')).toHaveAttribute('href','https://members.example.test/app');
+  await expect(page.locator('#coverage [data-member-link]')).toHaveAttribute('href','https://members.example.test/app#sources');
+  await page.goto(service.base+'/app');await expect(page.locator('#signin')).toHaveAttribute('href','https://members.example.test/auth/login');
+});
+
+test('legacy activity bookmarks keep their evidence filters',async({page,service})=>{
+  await page.goto(service.base+'/#activity?event=fixture-000');
+  await expect(page).toHaveURL(service.base+'/app#activity?event=fixture-000');
+  await expect(page.locator('#login')).toBeVisible();
+});
+
+test('sign-in and overview are readable at this viewport',async({page,service},info)=>{
+  await page.goto(service.base+'/app');await expect(page.locator('#signin-status')).not.toContainText('Checking');await reflow(page);await accessible(page);await screenshot(page,info,'sign-in');
+  await page.locator('#skip-link').focus();await page.keyboard.press('Enter');await expect(page.locator('#login')).toBeFocused();
+  await signIn(page,service);await expect(page.locator('#overview-stats')).toContainText('105');await expect(page.locator('#workspace-name')).toHaveText('ui_fixture');
+  await expect(page.locator('#member-context')).toHaveText('Devspace key access');await expect(page.locator('#member-progress')).toHaveText('2 of 3 steps');
+  await expect(page.locator('#overview-sources')).toContainText('Claude Code');await expect(page.locator('#overview-sources')).toContainText('Codex');
+  await reflow(page);await accessible(page);await screenshot(page,info,'overview');
+});
+test('activity supports search, older pages, browser history and session drill-down',async({page,service},info)=>{
+  await signIn(page,service);await navigate(page,'activity');await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
+  const activityUrl=page.url();await page.locator('#skip-link').focus();await page.keyboard.press('Enter');await expect(page.locator('#main-content')).toBeFocused();expect(page.url()).toBe(activityUrl);
+  await page.getByRole('button',{name:'Next \u2192',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(5);await expect(page.locator('#activity-results [data-event="fixture-104"]')).toContainText('Time not reported');
+  await page.getByRole('button',{name:'\u2190 Previous',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
+  await page.getByLabel('Search activity',{exact:true}).fill('unique search phrase');await page.getByRole('button',{name:'Apply',exact:true}).click();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(1);
+  await expect(page).toHaveURL(/search=unique\+search\+phrase/);await page.goBack();await settled(page);await expect(page.locator('#activity-results .activity-row')).toHaveCount(100);
+  await page.locator('#activity-results [data-event="fixture-000"]').click();await expect(page.locator('#inspector')).toBeVisible();await page.getByRole('button',{name:'View session \u2192',exact:true}).click();await settled(page);
+  await expect(page.locator('#session-scope')).toContainText('fixture-session-review');await expect(page.locator('#agent-filter')).toHaveValue('codex');await expect(page.locator('#activity-results .activity-row')).toHaveCount(2);await expect(page.locator('#activity-results [data-event="fixture-001"]')).toHaveCount(0);
+  await reflow(page);await accessible(page);await screenshot(page,info,'activity-session');
+});
+
+test('signal dashboard drills from full history through project and UTC day into evidence',async({page,service},info)=>{
+  await signIn(page,service);await navigate(page,'library');
+  const card=page.locator('.library-card').filter({has:page.getByRole('heading',{name:'Blocked handoff',exact:true})});
+  await card.getByRole('link',{name:'Open signal dashboard',exact:true}).click();await settled(page);
+  await expect(page.locator('#signal-overview .signal-metrics')).toContainText('105');
+  await expect(page.locator('#signal-overview .signal-metrics')).toContainText('15');
+  await expect(page.locator('#signal-overview')).toContainText('not classifier accuracy');
+  await reflow(page);await accessible(page);await screenshot(page,info,'signal-dashboard');
+  await page.locator('.signal-breakdowns').scrollIntoViewIfNeeded();await screenshot(page,info,'signal-breakdowns');
+  const projects=page.locator('.signal-breakdown').filter({has:page.getByRole('heading',{name:'By project',exact:true})});
+  await projects.getByRole('link',{name:/Fixture \/ release-service/}).click();await settled(page);
+  await expect(page.locator('#project-filter')).toHaveValue('Fixture / release-service');
+  await expect(page.locator('#signal-results [data-event]')).toHaveCount(8);
+  await page.locator('.signal-day').last().click();await settled(page);
+  await expect(page.locator('#time-filter')).toHaveValue('custom');await expect(page).toHaveURL(/until=/);
+  await expect(page.locator('#signal-results [data-event]')).toHaveCount(1);
+  await reflow(page);await accessible(page);await screenshot(page,info,'signal-day-drilldown');
+  await page.locator('#signal-results [data-event="fixture-000"]').click();await expect(page.locator('#inspector')).toBeVisible();
+  await expect(page.locator('#pane-conversation')).toContainText('permission was denied');
+});
+test('turn evidence is safe, keyboard-accessible and supports persisted verdicts',async({page,service},info)=>{
+  await signIn(page,service);await navigate(page,'activity');await page.locator('#activity-results [data-event="fixture-000"]').click();
+  await expect(page.locator('#pane-conversation')).toContainText('<img src=x onerror="window.injected=true">');expect(await page.evaluate(()=>window.injected)).toBeUndefined();await expect(page.locator('#pane-conversation img')).toHaveCount(0);
+  await reflow(page);await accessible(page);await screenshot(page,info,'turn-conversation');
+  await page.getByRole('tab',{name:'Conversation',exact:true}).focus();await page.keyboard.press('ArrowRight');await expect(page.getByRole('tab',{name:'Tools',exact:true})).toBeFocused();
+  await expect(page.locator('#pane-tools .tool-item')).toHaveCount(50);await page.getByRole('button',{name:'Show 50 more tools'}).click();await expect(page.locator('#pane-tools .tool-item')).toHaveCount(100);
+  await page.getByRole('tab',{name:'Signals',exact:true}).click();await page.getByRole('button',{name:'Yes, this matches',exact:true}).click();await expect(page.locator('#review-status')).toContainText('Decision saved');
+  await expect(page.locator('#pane-signals')).toContainText('Saved: Matches');await accessible(page);await screenshot(page,info,'signal-verdict');
+  await page.keyboard.press('Escape');await expect(page.locator('#inspector')).toBeHidden();await expect(page.locator('#activity-results [data-event="fixture-000"]')).toBeFocused();
+  const reviews=await (await fetch(service.base+'/v1/reviews',{headers:service.headers})).json();expect(reviews.reviews.some(r=>r.request.event_id==='fixture-000'&&r.request.verdict==='match'&&r.request.turn_digest.length===64)).toBe(true);
+  await navigate(page,'learning');await expect(page.locator('#learning-reviews')).toContainText('Matches');
+});
+test('all workspace destinations reflow without automatic accessibility violations',async({page,service},info)=>{
+  await signIn(page,service);
+  for(const route of ['signals','sources','projects','library','datasets','learning','settings','research']){await navigate(page,route);await reflow(page);await accessible(page);await screenshot(page,info,route);}
+});
+test('settings persist, dark appearance reflows and research opens without leaving the app',async({page,service},info)=>{
+  await signIn(page,service);await navigate(page,'settings');
+  await page.locator('[data-toggle="blocked_handoff"]').uncheck();await page.getByRole('button',{name:'Save settings',exact:true}).click();await expect(page.locator('#settings-status')).toContainText('Saved.');
+  await page.reload();await settled(page);await expect(page.locator('[data-toggle="blocked_handoff"]')).not.toBeChecked();
+  await page.getByLabel('Theme',{exact:true}).selectOption('dark');await navigate(page,'overview');await expect(page.locator('html')).toHaveAttribute('data-theme','dark');await reflow(page);await accessible(page);await screenshot(page,info,'overview-dark');
+  await navigate(page,'research');await page.getByRole('button',{name:'Raindrop',exact:true}).click();await expect(page.locator('#research-count')).toContainText('8 of');
+  await page.locator('[data-note="docs/research/raindrop/ux-settings.md"]').click();await expect(page.locator('#research-dialog')).toBeVisible();await expect(page.locator('#research-text')).toContainText('Custom Event Links');await reflow(page);await accessible(page);await screenshot(page,info,'research-note');
+});
+test('phone navigation is removed from focus while closed and sign-out clears the workspace',async({page,service,isMobile})=>{
+  await signIn(page,service);
+  if(isMobile){await expect(page.locator('#sidebar')).toHaveJSProperty('inert',true);await page.getByRole('button',{name:'Toggle navigation'}).click();await expect(page.locator('#sidebar')).toHaveJSProperty('inert',false);await page.locator('[data-nav="activity"]').click();await settled(page);await expect(page.locator('#sidebar')).toHaveJSProperty('inert',true);await page.getByRole('button',{name:'Toggle navigation'}).click();}
+  await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.locator('#app')).toBeHidden();await expect(page.locator('#login')).toBeVisible();
+  expect(await page.evaluate(()=>sessionStorage.getItem('rroflow.key'))).toBeNull();await expect(page.locator('#overview-stats')).toBeEmpty();
+});
+
+
+
+test('a person creates, tests, uses and pauses an organized custom signal',async({page,service},info)=>{
+  await signIn(page,service);await navigate(page,'library');
+  await expect(page.getByRole('heading',{name:'Blocked handoff',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Create a signal',exact:true}).click();
+  await page.getByLabel('Signal name',{exact:true}).fill('Deployment warning');await page.locator('#custom-group').fill('Release checks');
+  await page.locator('#custom-kind').selectOption('response_contains');await page.locator('#custom-text').fill('permission');
+  await page.getByText('Optional: choose agents or projects',{exact:true}).click();await page.locator('#custom-agent').selectOption('codex');await page.locator('#custom-project').selectOption('Fixture / release-service');
+  await expect(page.getByRole('button',{name:'Save and turn on',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'Try on recent activity',exact:true}).click();
+  await expect(page.locator('#builder-status')).toContainText('1 match');await expect(page.locator('#builder-status')).toContainText('1 could not be checked');
+  await reflow(page);await accessible(page);await screenshot(page,info,'custom-signal-preview');
+  await page.getByRole('button',{name:'Save and turn on',exact:true}).click();await expect(page.locator('#signal-builder')).toBeHidden();await settled(page);
+  const card=page.locator('.library-card').filter({has:page.getByRole('heading',{name:'Deployment warning',exact:true})});
+  await expect(card).toContainText('0 recorded matches');
+  const config=await (await fetch(service.base+'/v1/signals/settings',{headers:service.headers})).json();const rule=config.settings.custom.find(s=>s.name==='Deployment warning');expect(rule).toBeTruthy();
+  const turn={...structuredClone(service.turns[0]),event_id:'fixture-custom-arrival'};
+  expect((await fetch(service.base+'/v1/turns',{method:'POST',headers:service.headers,body:JSON.stringify({turns:[turn]})})).ok).toBe(true);
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);await expect(card).toContainText('1 recorded match');
+  await screenshot(page,info,'signal-library');await card.getByRole('link',{name:'Open signal dashboard',exact:true}).click();await settled(page);
+  await page.locator('#signal-results').getByRole('button',{name:'Inspect evidence',exact:false}).click();
+  const finding=page.locator('#pane-signals .signal-card').filter({has:page.getByRole('heading',{name:'Deployment warning',exact:true})});
+  await expect(finding).toContainText('permission');await finding.getByRole('button',{name:'Yes, this matches',exact:true}).click();await expect(page.locator('#review-status')).toContainText('Decision saved');
+  await screenshot(page,info,'custom-signal-evidence');await page.getByRole('button',{name:'Close turn',exact:true}).click();
+  await navigate(page,'library');await card.getByRole('button',{name:'Pause Deployment warning',exact:true}).click();await expect(card).toContainText('Paused');
+  turn.event_id='fixture-custom-paused';expect((await fetch(service.base+'/v1/turns',{method:'POST',headers:service.headers,body:JSON.stringify({turns:[turn]})})).ok).toBe(true);
+  const history=await (await fetch(service.base+'/v1/turns?signal='+rule.id,{headers:service.headers})).json();expect(history.turns).toHaveLength(1);
+  await page.reload();await expect(page.locator('#app')).toBeVisible();await settled(page);await expect(card).toContainText('Paused');
+  await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('Turn reviews');await expect(page.locator('#dataset-readiness')).toContainText('Unavailable');
+});
+
+
+test('source reports show queue problems, age without fresh reports and clear safely',async({page,service},info)=>{
+  await page.clock.install();
+  await signIn(page,service);await navigate(page,'sources');
+  await expect(page.locator('#source-health')).toContainText('No collector reports yet');
+  const report={schema:'rroflow.source-health/v1',source_id:'00000000-0000-4000-8000-000000000001',sequence:1,observed_at:new Date().toISOString(),collector_version:'0.3.0',pending_revisions:7,pending_bytes:4096,journal_bytes:8192,oldest_pending_at:new Date(Date.now()-3600000).toISOString(),capture_errors:2,delivery_ok:false,signal_settings_revision:1,session_capture:false,sdk:{linked_queues:2,pending_events:9,pending_bytes:2048,retained_bytes:4096,retrying_queues:1,queue_errors:0}};
+  const send=async()=>{const response=await fetch(service.base+'/v1/sources/health',{method:'POST',headers:service.headers,body:JSON.stringify(report)});expect(response.ok).toBe(true);return response.json();};
+  const first=await send();await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);
+  await expect(page.locator('#source-health')).toContainText('Reporting with a problem');await expect(page.locator('#source-health')).toContainText('Last delivery check failed');
+  await expect(page.locator('#source-health')).toContainText('9 events waiting across 2 linked queues');await expect(page.locator('#source-health')).toContainText('SDK delivery collector; session scanning is off');
+  await page.locator('[aria-label="SDK delivery"]').scrollIntoViewIfNeeded();
+  await page.screenshot({path:info.outputPath('sdk-queue-recovery-test-fixture.png')});
+  await page.getByText('Queue and collector details',{exact:true}).click();await expect(page.locator('#source-health')).toContainText('Retained journal: 8.0 KB');
+  await reflow(page);await accessible(page);await screenshot(page,info,'source-queue-problem');
+  expect((await send()).observation.received_at).toBe(first.observation.received_at);
+  report.sequence=2;report.capture_errors=0;report.pending_revisions=0;report.pending_bytes=0;report.oldest_pending_at=null;report.delivery_ok=true;report.sdk.pending_events=0;report.sdk.pending_bytes=0;report.sdk.retrying_queues=0;
+  await send();await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);
+  await expect(page.locator('#source-health')).toContainText('Reporting recently');
+  await page.clock.fastForward(121000);await expect(page.locator('#source-health')).toContainText('No recent report');
+  await reflow(page);await accessible(page);await screenshot(page,info,'source-report-stale');
+  await page.route('**/v1/sources/health',route=>route.fulfill({status:503,contentType:'application/json',body:'{"error":"fixture unavailable"}'}));
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();await settled(page);
+  await expect(page.locator('#source-health')).toContainText('Source reporting unavailable');await expect(page.locator('#source-cards')).toContainText('Claude Code');
+  if (await page.locator('#menu-toggle').isVisible()) await page.locator('#menu-toggle').click();
+  await page.locator('#logout').click();await expect(page.locator('#login')).toBeVisible();await expect(page.locator('#source-health')).toBeEmpty();
+});
+
+test('guided next steps open evidence, accessible help and the right connection choice',async({page,service},info)=>{
+  await signIn(page,service);
+  const next=page.locator('#overview-focus').getByRole('button',{name:'Take a closer look',exact:false});
+  await expect(next).toBeVisible();await next.click();await expect(page.locator('#inspector')).toBeVisible();
+  await expect(page.getByRole('tab',{name:'Signals',exact:true})).toHaveAttribute('aria-selected','true');
+  await page.keyboard.press('Escape');await expect(next).toBeFocused();
+  const help=page.getByRole('button',{name:'What do these numbers mean?',exact:true});await help.focus();
+  await expect(page.locator('#coverage-tip')).toBeVisible();await page.keyboard.press('Escape');await expect(page.locator('#coverage-tip')).toBeHidden();
+  await page.locator('#page-title').dispatchEvent('pointerover');await expect(page.locator('#coverage-tip')).toBeHidden();
+  await page.mouse.move(0,0);await page.locator('#refresh').focus();await help.focus();await expect(page.locator('#coverage-tip')).toBeVisible();await page.keyboard.press('Enter');
+  await expect(page.locator('#guide-dialog')).toBeVisible();await expect(page.locator('#guide-body')).toContainText('received records');
+  await accessible(page);await reflow(page);await screenshot(page,info,'contextual-guide');
+  await page.keyboard.press('Escape');await expect(help).toBeFocused();
+  await page.getByRole('button',{name:'Show me around',exact:false}).click();
+  await page.getByRole('button',{name:'Connect my AI',exact:false}).click();await page.getByRole('button',{name:'Open connection guide',exact:true}).click();
+  await expect(page.locator('#setup-dialog')).toBeVisible();await expect(page.locator('.setup-technical')).not.toHaveAttribute('open','');
+  await reflow(page);await accessible(page);await screenshot(page,info,'guided-connection');
+  await page.getByRole('button',{name:'Inside my app',exact:false}).click();await expect(page.locator('#setup-sdk')).toBeVisible();await expect(page.locator('#setup-computer')).toBeHidden();
+  await expect(page.locator('#setup-sdk')).toContainText('cannot read your subscription app history');
+  await page.getByRole('button',{name:'Check my sources',exact:false}).click();await settled(page);await expect(page.locator('[data-nav="sources"]')).toHaveAttribute('aria-current','page');
+});
+
+test('account allowance explains capacity, expiry and unavailable states',async({page,service,isMobile},info)=>{
+  await signIn(page,service);await navigate(page,'settings');
+  await expect(page.locator('#account-allowance')).toContainText('local workspace has no cloud allowance');
+  // Controlled response fixture; hosted database enforcement is tested separately.
+  const allowance={mode:'enforced',allowance:{plan:'fixture',label:'Plus test allowance',turns_per_month:100,events_per_month:500},used:{turns:100,events:125},resets_at:'2026-11-01T00:00:00Z',as_of:'2026-10-30T12:00:00Z',grant_active:true,grant_expires_at:'2026-11-10T00:00:00Z',billing_connected:false};
+  await page.route('**/v1/allowances',route=>route.fulfill({json:allowance}));
+  await navigate(page,'overview');await navigate(page,'settings');
+  await expect(page.locator('#account-allowance')).toContainText('Monthly allowance reached');
+  await expect(page.locator('#account-allowance')).toContainText('375 remaining this month');
+  await expect(page.locator('#account-allowance')).toContainText('then returns to the service default');
+  await page.locator('#account-allowance summary').click();
+  await expect(page.locator('#account-allowance')).toContainText('Billing and plan changes are not connected');
+  await page.locator('#account-allowance summary').click();
+  await page.locator('#allowance-title').evaluate(el=>el.scrollIntoView({block:'start'}));
+  await page.evaluate(()=>window.scrollBy(0,-90));
+  await reflow(page);await accessible(page);await screenshot(page,info,'account-allowance');
+  await page.unroute('**/v1/allowances');await page.route('**/v1/allowances',route=>route.fulfill({status:503,json:{error:'fixture'}}));
+  await navigate(page,'overview');await navigate(page,'settings');
+  await expect(page.locator('#account-allowance')).toContainText('no remaining allowance is assumed');
+  await expect(page.locator('#account-allowance progress')).toHaveCount(0);
+  if(isMobile) await page.getByRole('button',{name:'Toggle navigation'}).click();
+  await page.locator('#logout').click();await expect(page.locator('#account-allowance')).toBeEmpty();
+});
+
+test('member consents to automatic datasets, inspects immutable evidence and withdraws permission',async({page,isMobile},info)=>{
+  test.skip(!process.env.RROFLOW_DATASET_UI_DATABASE_URL,'Postgres dataset UI fixture is required');
+  const service=await startDatasetFixture(process.env.RROFLOW_DATASET_UI_DATABASE_URL);
+  try {
+    await page.unroute('**/*');await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());
+    await page.setExtraHTTPHeaders({Authorization:'Bearer '+service.token});
+    const scripts=[];page.on('request',r=>{if(r.url().includes('dashboard-datasets.js'))scripts.push(r.url());});
+    await page.goto(service.base+'/app');await expect(page.locator('#app')).toBeVisible();await settled(page);expect(scripts).toHaveLength(0);
+    await navigate(page,'datasets');expect(scripts).toHaveLength(1);
+    await expect(page.locator('#dataset-consent')).not.toBeChecked();await expect(page.locator('#dataset-jobs')).toContainText('No dataset versions yet');
+    await page.locator('[data-dataset-agent="codex"]').check();await page.locator('[data-dataset-project="Fixture project"]').check();
+    await page.locator('#dataset-consent').check();await page.locator('#dataset-save').click();await settled(page);
+    await expect(page.locator('#dataset-policies')).toContainText('Enabled');await expect(page.locator('#dataset-consent')).not.toBeChecked();
+    await expect.poll(async()=>{await service.work();return (await service.api('/v1/datasets')).body.jobs.some(j=>j.status==='published');},{timeout:15000}).toBe(true);
+    await page.locator('#dataset-refresh').click();await settled(page);
+    await expect(page.locator('#dataset-jobs')).toContainText('Ready to inspect');
+    await reflow(page);await accessible(page);await page.locator('#dataset-jobs').scrollIntoViewIfNeeded();await screenshot(page,info,'member-dataset-version');
+    await page.getByRole('button',{name:'Inspect dataset',exact:true}).click();await expect(page.locator('#dataset-manifest')).toContainText('metrics-only/v1');
+    await expect(page.locator('#dataset-manifest')).toContainText('not_evaluated');await expect(page.locator('#dataset-sample')).not.toContainText('PRIVATE_DATASET');
+    await reflow(page);await accessible(page);await screenshot(page,info,'dataset-manifest');await page.getByRole('button',{name:'Close dataset evidence'}).click();
+    const status=await service.api('/v1/datasets');const job=status.body.jobs.find(j=>j.status==='published');
+    const path='/v1/datasets/jobs/'+job.id+'/artifact';const artifact=await service.api(path);expect(artifact.status).toBe(200);expect(artifact.body.artifact.manifest.row_count).toBe(1);
+    expect(JSON.stringify(artifact.body)).not.toContain('PRIVATE_DATASET');expect((await service.api(path,null,service.otherToken)).status).toBe(404);
+    const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'Download JSON',exact:true}).click();const download=await downloadPromise;expect(download.suggestedFilename()).toContain('dataset-');
+    await page.getByRole('button',{name:'Stop & remove these datasets',exact:true}).click();await settled(page);await expect(page.locator('#dataset-policies')).toContainText('Stopped');
+    expect((await service.api(path)).status).toBe(404);await expect(page.getByRole('link',{name:'Download JSON',exact:true})).toHaveCount(0);
+    if(isMobile)await page.getByRole('button',{name:'Toggle navigation'}).click();await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.locator('#dataset-manifest')).toBeEmpty();await expect(page.locator('#dataset-jobs')).toBeEmpty();
+  } finally {await service.close();}
+});
+
+
+test('SDK adapters become inspectable activity and reviewed findings in the member workspace',async({page,isMobile},info)=>{
+  test.skip(!process.env.RROFLOW_DATASET_UI_DATABASE_URL,'Postgres SDK UI fixture is required');
+  const service=await startDatasetFixture(process.env.RROFLOW_DATASET_UI_DATABASE_URL);
+  try{
+    await seedSdk(service);
+    await expect.poll(async()=>(await service.api('/v1/sdk/activity')).body.matched_activities,{timeout:15000}).toBe(3);
+    await page.unroute('**/*');await page.route('**/*',route=>new URL(route.request().url()).origin===service.base?route.continue():route.abort());
+    await page.setExtraHTTPHeaders({Authorization:'Bearer '+service.token});
+    const scripts=[];page.on('request',r=>{if(r.url().includes('dashboard-sdk.js'))scripts.push(r.url());});
+    await page.goto(service.base+'/app');await expect(page.locator('#app')).toBeVisible();await settled(page);
+    expect(scripts).toHaveLength(0);await expect(page.locator('#overview-sdk')).toContainText('3 published operations');
+    await page.getByRole('link',{name:'Explore SDK activity'}).click();await settled(page);
+    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(3);expect(scripts).toHaveLength(1);await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-activity');
+    await page.locator('#sdk-filters select[name=agent]').selectOption('codex');await page.locator('#sdk-filters').getByRole('button',{name:'Apply',exact:true}).click();await settled(page);
+    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);await page.getByRole('button',{name:'Open evidence',exact:true}).click();
+    await expect(page.locator('#sdk-inspector')).toBeVisible();await expect(page.locator('#sdk-detail')).toContainText('Tool failed');await expect(page.locator('#sdk-detail')).toContainText('Output: 0');await expect(page.locator('#sdk-detail')).toContainText('1 events have types');
+    await page.locator('[data-sdk-event]').first().click();await expect(page.locator('#sdk-raw-event')).toContainText('exit_code');await expect(page.locator('#sdk-raw-event')).not.toContainText('PRIVATE_SDK');
+    await page.getByRole('button',{name:'Matches',exact:true}).click();await expect(page.locator('#sdk-review-status')).toContainText('Review saved');
+    await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-evidence');
+    const reviews=(await service.api('/v1/sdk/reviews')).body.reviews;expect(reviews).toHaveLength(1);
+    const saved=reviews[0],original=(await service.api('/v1/events?agent=codex')).body.events;
+    const added={...original[0],event_id:randomUUID(),sequence:Math.max(...original.map(e=>e.sequence))+1,kind:'stream.event',native_type:'future.late_event',native:null,native_status:null,exit_code:null,usage:null};
+    expect((await service.api('/v1/events',{events:[added]})).status).toBe(200);
+    await expect.poll(async()=>(await service.api('/v1/sdk/activity?id='+saved.request.activity_id)).body.activities[0].revision,{timeout:15000}).not.toBe(saved.request.revision);
+    expect((await service.api('/v1/sdk/activity',null,service.otherToken)).body.matched_activities).toBe(0);
+    expect((await service.api('/v1/sdk/reviews?review_id='+saved.request.review_id,null,service.otherToken)).body.reviews).toEqual([]);
+    await page.getByRole('button',{name:'Close SDK evidence'}).click();await page.reload();await settled(page);await page.getByRole('button',{name:'Open evidence',exact:true}).click();
+    await expect(page.locator('#sdk-saved-reviews')).toContainText('Earlier evidence revision');await page.locator('[data-sdk-review]').click();await expect(page.locator('#sdk-detail')).toContainText('immutable evidence saved');
+    await expect(page.locator('#sdk-detail')).toContainText(saved.request.revision);await expect(page.locator('[data-sdk-verdict]')).toHaveCount(0);
+    await page.getByRole('button',{name:'Close SDK evidence'}).click();await page.evaluate(()=>{location.hash='#signals?kind=sdk';});await settled(page);await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);
+    await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('SDK operations');
+    await expect(page.locator('[data-dataset-sdk-agent="codex"]')).not.toBeChecked();
+    await page.locator('[data-dataset-sdk-agent="codex"]').check();await page.locator('#dataset-consent').check();await page.locator('#dataset-save').click();await settled(page);
+    const policy=(await service.api('/v1/datasets')).body.policies.find(p=>p.policy.purpose==='signal_reviews').policy;
+    expect(policy.sdk_agents).toEqual(['codex']);expect(policy.agents).toEqual([]);expect(policy.all_projects).toBe(false);
+    await expect.poll(async()=>{await service.work();return (await service.api('/v1/datasets')).body.jobs.some(j=>j.status==='published');},{timeout:15000}).toBe(true);
+    await page.locator('#dataset-refresh').click();await settled(page);await page.getByRole('button',{name:'Inspect dataset',exact:true}).click();
+    await expect(page.locator('#dataset-manifest')).toContainText('metrics-only/v2');await expect(page.locator('#dataset-sample')).toContainText('sdk_operation');await expect(page.locator('#dataset-sample')).toContainText(saved.request.revision);await expect(page.locator('#dataset-sample')).not.toContainText('PRIVATE_SDK');
+    await reflow(page);await accessible(page);await screenshot(page,info,'sdk-private-dataset');
+    await page.getByRole('button',{name:'Close dataset evidence'}).click();await page.getByRole('button',{name:'Stop & remove these datasets',exact:true}).click();await settled(page);await expect(page.locator('#dataset-policies')).toContainText('Stopped');
+
+    if(isMobile)await page.getByRole('button',{name:'Toggle navigation'}).click();await page.getByRole('button',{name:'Sign out',exact:true}).click();await expect(page.locator('#sdk-detail')).toBeEmpty();await expect(page.locator('#sdk-explorer')).toBeEmpty();
+  }finally{await service.close();}
+});
