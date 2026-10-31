@@ -6,6 +6,7 @@
 //! devspace can receive signal results and metrics without receiving prompt text.
 //! Custom cloud rules evaluate only the projection received by ingest.
 
+pub mod activity;
 pub mod capture;
 pub mod custom;
 pub mod record;

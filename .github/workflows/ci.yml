@@ -50,7 +50,7 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
       - name: Build collector and ingest for SDK proof
-        run: cargo build --workspace --locked
+        run: cargo build --workspace --bins --examples --locked
       - name: SDK capture end to end (fixture providers)
         run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs scripts/test-managed-sdk.mjs
       - name: Account quotas and durable collector recovery (disposable database)
@@ -141,7 +141,7 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
       - name: Build collector and ingest for SDK proof
-        run: cargo build --workspace --locked
+        run: cargo build --workspace --bins --examples --locked
       - name: SDK capture end to end (fixture providers)
         run: node --test sdk/javascript/test.mjs scripts/test-delivery-retry.mjs scripts/test-deployment-config.mjs scripts/test-managed-sdk.mjs
       - name: Native user collector lifecycle (disposable runner only)
