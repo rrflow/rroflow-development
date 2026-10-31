@@ -4,12 +4,15 @@ Date: 2026-10-26. Status: plan. Goal (Jesse, 2026-10-26): install the rroflow SD
 
 ## The path (Jesse, 2026-10-26)
 
-Implementation update (2026-10-27): the SDK capture branch now contains
-[continuous source collection](source-collection.md), with account binding and a
-durable retry journal across Claude/Codex project directories. It still needs
-startup installation and the guided setup experience; it is not a hosted release.
+Implementation update (2026-10-31): [v0.4.0 is published and verified](../releases/v0.4.0.md).
+It includes [continuous source collection](source-collection.md), account-bound durable
+queues, guided setup and per-user startup. Configure the operator-provided deployment
+file before linking accounts; see [deployment configuration](deployment-configuration.md).
+The downloadable release does not establish live Texas member access. The provider-plan
+detection and broader subscription surfaces below remain separate planned work.
 
-rroflow.ai is built in the open: the repository is public, so every build, test and release runs on GitHub Actions at no cost, and the repository is the record.
+The public repository records builds, tests and releases through GitHub Actions.
+Workflow receipts establish what ran; this plan does not promise hosting or CI costs.
 
 1. rroflow.ai running: ingest, Nomen sign-in, public TLS (identity-and-devspaces.md).
 2. Devagotchi enables it: it offers the rroflow.ai free tier and installs the SDK.
