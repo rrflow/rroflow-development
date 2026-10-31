@@ -317,8 +317,8 @@ test('SDK adapters become inspectable activity and reviewed findings in the memb
     const scripts=[];page.on('request',r=>{if(r.url().includes('dashboard-sdk.js'))scripts.push(r.url());});
     await page.goto(service.base+'/app');await expect(page.locator('#app')).toBeVisible();await settled(page);
     expect(scripts).toHaveLength(0);await expect(page.locator('#overview-sdk')).toContainText('3 published operations');
-    await page.getByRole('link',{name:'Explore SDK activity'}).click();await settled(page);expect(scripts).toHaveLength(1);
-    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(3);await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-activity');
+    await page.getByRole('link',{name:'Explore SDK activity'}).click();await settled(page);
+    await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(3);expect(scripts).toHaveLength(1);await reflow(page);await accessible(page);await screenshot(page,info,'sdk-member-activity');
     await page.locator('#sdk-filters select[name=agent]').selectOption('codex');await page.locator('#sdk-filters').getByRole('button',{name:'Apply',exact:true}).click();await settled(page);
     await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);await page.getByRole('button',{name:'Open evidence',exact:true}).click();
     await expect(page.locator('#sdk-inspector')).toBeVisible();await expect(page.locator('#sdk-detail')).toContainText('Tool failed');await expect(page.locator('#sdk-detail')).toContainText('Output: 0');await expect(page.locator('#sdk-detail')).toContainText('1 events have types');
