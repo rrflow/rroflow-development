@@ -8,7 +8,8 @@
 //! provider: the terminal shows a short code and a URL, the person opens it on any device,
 //! and the tokens arrive here. No browser on this machine, no local port, no secret in the
 //! binary: the CLI is a public client. The tokens rest in one owner-only file under the
-//! config directory (`account.json`, 0600, written whole and renamed into place). The
+//! config directory (`account.json`, 0600 on Unix; inherited user-directory ACLs on
+//! Windows, written whole and renamed into place under a process lock). The
 //! ingest checks the access token by introspection, so a stolen file is a stolen token and
 //! nothing more, and `logout` revokes it.
 //!
@@ -20,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+mod storage;
 
 pub(crate) const FILE_NAME: &str = "account.json";
 const SCOPE: &str = "openid profile email offline_access urn:zitadel:iam:user:resourceowner";
@@ -142,45 +145,16 @@ pub(crate) fn account_path() -> anyhow::Result<PathBuf> {
 /// Read what is on file; `None` when nothing is. A file this binary cannot read is an
 /// error naming the file, never its contents.
 pub(crate) fn read(path: &Path) -> Result<Option<Account>, String> {
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|_| {
-            format!(
-                "{} is not an account file; `rroflow logout` removes it",
-                path.display()
-            )
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("{}: {error}", path.display())),
-    }
+    storage::read(path)
 }
 
-/// Write the file whole, owner-only, and rename it into place.
-pub(crate) fn write(path: &Path, account: &Account) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(account).map_err(|e| e.to_string())? + "\n";
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("{}: {e}", tmp.display()))?;
-    }
-    file.write_all(text.as_bytes())
-        .and_then(|_| file.sync_all())
-        .map_err(|e| format!("{}: {e}", tmp.display()))?;
-    drop(file);
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+#[cfg(test)]
+fn write(path: &Path, account: &Account) -> Result<(), String> {
+    storage::LockedAccount::acquire(path)?.write(account)
 }
-
-pub(crate) fn remove(path: &Path) -> Result<bool, String> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!("{}: {error}", path.display())),
-    }
+#[cfg(test)]
+fn remove(path: &Path) -> Result<bool, String> {
+    storage::LockedAccount::acquire(path)?.remove()
 }
 
 /// Why a sign-in or refresh did not produce an account.
@@ -494,10 +468,21 @@ pub(crate) fn unix_now() -> u64 {
 /// The account on file, refreshed when due and Nomen answers; otherwise as it stands.
 /// What comes back is written to the file only when the refresh succeeded.
 pub(crate) fn current(path: &Path) -> Result<Option<Account>, String> {
-    let stored = read(path)?;
+    current_checked(path, |_| Ok(()))
+}
+
+// The deployment check and refresh use the SAME locked account snapshot. A new
+// login cannot swap the destination between validation and a credential request.
+fn current_checked(
+    path: &Path,
+    validate: impl FnOnce(&Account) -> Result<(), String>,
+) -> Result<Option<Account>, String> {
+    let locked = storage::LockedAccount::acquire(path)?;
+    let stored = locked.read()?;
     let Some(account) = &stored else {
         return Ok(None);
     };
+    validate(account)?;
     if matches!(
         account.standing(unix_now()),
         Standing::Fresh | Standing::Expired
@@ -509,7 +494,7 @@ pub(crate) fn current(path: &Path) -> Result<Option<Account>, String> {
     };
     match nomen.refresh(account) {
         Ok(refreshed) => {
-            write(path, &refreshed)?;
+            locked.write(&refreshed)?;
             Ok(Some(refreshed))
         }
         Err(_) => Ok(stored),
@@ -550,11 +535,11 @@ pub(crate) fn sender() -> anyhow::Result<Option<Sender>> {
         }));
     }
     let path = account_path()?;
-    let Some(stored) = read(&path).map_err(anyhow::Error::msg)? else {
-        return Ok(None);
-    };
-    crate::deployment::check_saved(&stored, profile, env)?;
-    let Some(account) = current(&path).map_err(anyhow::Error::msg)? else {
+    let Some(account) = current_checked(&path, |stored| {
+        crate::deployment::check_saved(stored, profile, env).map_err(|e| e.to_string())
+    })
+    .map_err(anyhow::Error::msg)?
+    else {
         return Ok(None);
     };
     let base = crate::capture::endpoint(&account.ingest_url)?;
@@ -597,11 +582,23 @@ pub(crate) fn login(
 ) -> anyhow::Result<()> {
     crate::capture::endpoint(ingest_url)?;
     let nomen = Issuer::new(issuer, client_id, project_id).map_err(anyhow::Error::msg)?;
-    let account = nomen.login(ingest_url, &mut std::io::stdout())?;
     let path = account_path()?;
-    write(&path, &account).map_err(anyhow::Error::msg)?;
+    let (before, revision) = {
+        let locked = storage::LockedAccount::acquire(&path).map_err(anyhow::Error::msg)?;
+        (
+            locked.read().map_err(anyhow::Error::msg)?,
+            locked.revision().map_err(anyhow::Error::msg)?,
+        )
+    };
+    // A human can take minutes to confirm. Do not lock out active capture while
+    // waiting; refuse to replace an account that changed meanwhile.
+    let account = nomen.login(ingest_url, &mut std::io::stdout())?;
+    if let Err(why) = commit_login(&path, &before, &revision, &account) {
+        let _ = nomen.revoke(&account);
+        return Err(anyhow::Error::msg(why));
+    }
     println!(
-        "Signed in as {} (account {}). Tokens kept in {}, readable by you alone.",
+        "Signed in as {} (account {}). Tokens kept in {}. Protect this directory with your user account permissions.",
         account.display_name(),
         account.subject,
         path.display()
@@ -620,10 +617,36 @@ pub(crate) fn login(
     Ok(())
 }
 
+fn commit_login(
+    path: &Path,
+    before: &Option<Account>,
+    revision: &[u8],
+    account: &Account,
+) -> Result<(), String> {
+    let locked = storage::LockedAccount::acquire(path)?;
+    if &locked.read()? != before || locked.revision()? != revision {
+        return Err("the saved account changed during sign-in; retry login".into());
+    }
+    locked.write(account)
+}
+
 /// `rroflow logout`: revoke the tokens at Nomen (best effort) and remove the file.
 pub(crate) fn logout() -> anyhow::Result<()> {
     let path = account_path()?;
-    match read(&path).map_err(anyhow::Error::msg)? {
+    let locked = storage::LockedAccount::acquire(&path).map_err(anyhow::Error::msg)?;
+    let stored = match locked.read() {
+        Ok(stored) => stored,
+        Err(_) => {
+            // Explicit logout can remove a corrupt regular account file, but no
+            // credential from it is trusted or sent to an issuer.
+            locked.remove().map_err(anyhow::Error::msg)?;
+            println!(
+                "Removed the unreadable account file; remote revocation could not be performed."
+            );
+            return Ok(());
+        }
+    };
+    match stored {
         Some(account) => {
             match Issuer::for_account(&account).map(|n| n.revoke(&account)) {
                 Ok(Ok(())) => println!("Tokens revoked at {}.", account.issuer),
@@ -633,10 +656,13 @@ pub(crate) fn logout() -> anyhow::Result<()> {
                 ),
                 Err(why) => println!("Not revoking: {why}"),
             }
-            remove(&path).map_err(anyhow::Error::msg)?;
+            locked.remove().map_err(anyhow::Error::msg)?;
             println!("Signed out ({} removed).", path.display());
         }
-        None => println!("Not signed in."),
+        None => {
+            locked.remove().map_err(anyhow::Error::msg)?;
+            println!("Not signed in; any pending sign-in was cancelled.");
+        }
     }
     Ok(())
 }
@@ -644,7 +670,14 @@ pub(crate) fn logout() -> anyhow::Result<()> {
 /// `rroflow whoami`: the account on file and the devspace the ingest opens for this
 /// machine's credential.
 pub(crate) fn whoami(json: bool) -> anyhow::Result<()> {
-    let account = current(&account_path()?).map_err(anyhow::Error::msg)?;
+    let profile = crate::deployment::environment_profile()?;
+    let account = current_checked(&account_path()?, |a| {
+        crate::deployment::check_saved(a, profile, |key| {
+            std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+        })
+        .map_err(|e| e.to_string())
+    })
+    .map_err(anyhow::Error::msg)?;
     let sender = sender()?;
     let devspace = sender
         .as_ref()

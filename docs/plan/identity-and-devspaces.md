@@ -1,14 +1,15 @@
 # Identity and devspaces
 
-Updated 2026-10-31. This guide describes implemented source behavior. Texas placement,
+Updated 2026-11-02. This guide describes implemented source behavior. Texas placement,
 public TLS and a real hosted member session remain unverified. It supersedes the old
 Gold-based credential instructions and source-build activation steps.
 
 ## Account ownership
 
-Nomen supplies account identity today. RROFLOW does not store a member's provider password.
-First-party accounts alongside Nomen are accepted direction (Shippin ADR 0013) and planned as
-[platform v1 slice 2](platform-v1.md#2-native-accounts-and-federation); they are not built.
+Nomen supplies federated account identity. RROFLOW does not store a member's provider password.
+[First-party browser accounts](../spec/native-accounts-v1.md) alongside Nomen are merged in
+PR50 under Shippin ADR 0013. Native CLI authorization and explicit linking remain open in
+[platform v1 slice 2](platform-v1.md#2-native-accounts-and-federation).
 
 First sign-in creates a user, a personal organization and a default project. Organizations,
 roles, project keys and invitations are specified in [tenancy v1](../spec/tenancy-v1.md). A
@@ -24,13 +25,13 @@ Identity alone grants neither a paid plan nor permission to collect datasets or 
 
 | Surface | Implemented credential path | Boundary |
 |---|---|---|
-| Member dashboard | Authorization code + S256 PKCE; access token held by the Rust service; opaque HttpOnly browser cookie | Requires configured dashboard client and verified callback; live member session still needs proof |
+| Member dashboard | Native email/password or Nomen authorization code + S256 PKCE; durable HttpOnly browser session | Native signup requires verified delivery/security review; federation requires configured client/callback; live acceptance remains open |
 | Collector | Device-flow login with protected account storage, or an explicit headless ingest key | Saved queues are bound to their account and ingest destination; changing a profile does not move history |
-| Hosted API | Key-hash lookup or Nomen token introspection using the ingest application's private-key assertion | Checks issuer, project audience, allowed client, expiry and subject; unavailable identity service is not an authenticated member |
-| Project keys | Created and revoked by an organization admin through the [tenancy API](../spec/tenancy-v1.md#project-keys); stored as a digest | Write-only: can deliver records but read nothing. No screen yet. Treat as a secret |
+| Hosted API | Key-hash lookup, native session digest lookup or Nomen token introspection | Checks issuer, project audience, allowed client, expiry and subject; unavailable identity service is not an authenticated member |
+| Project keys | Created and revoked by an organization admin through the [tenancy API](../spec/tenancy-v1.md#project-keys); stored as a digest | Write-only: can deliver records but read nothing. React project/key screen is merged in PR48. Treat as a secret |
 | Static ingest keys | Operator registration/key generation and hashed server lookup | Read and write one devspace; key access cannot authorize member-only dataset consent or tenancy changes |
 
-The collector's current protected `account.json` is separate from its public deployment
+The collector's [serialized credential file](../spec/collector-account-storage-v1.md), `account.json`, is separate from its public deployment
 configuration; this guide does not claim OS-keychain token storage. See the owning
 [deployment configuration guide](deployment-configuration.md) for precedence and account
 switching, and [browser sign-in](browser-sign-in.md) for cookie/session behavior.
