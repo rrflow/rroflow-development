@@ -294,6 +294,8 @@ test('member consents to automatic datasets, inspects immutable evidence and wit
     await reflow(page);await accessible(page);await page.locator('#dataset-jobs').scrollIntoViewIfNeeded();await screenshot(page,info,'member-dataset-version');
     await page.getByRole('button',{name:'Inspect dataset',exact:true}).click();await expect(page.locator('#dataset-manifest')).toContainText('metrics-only/v1');
     await expect(page.locator('#dataset-manifest')).toContainText('not_evaluated');await expect(page.locator('#dataset-sample')).not.toContainText('PRIVATE_DATASET');
+    await expect(page.locator('#dataset-detail-summary')).toContainText('1 example');await expect(page.locator('#dataset-evidence-summary')).toContainText('Examples from your signal reviews');await expect(page.locator('#dataset-example-preview')).toContainText('Codex');await expect(page.locator('#dataset-example-preview')).toContainText('Signal matches');
+    await expect(page.locator('#dataset-manifest')).not.toBeVisible();await page.locator('#dataset-technical summary').click();await expect(page.locator('#dataset-manifest')).toBeVisible();await page.locator('#dataset-technical summary').click();
     await reflow(page);await accessible(page);await screenshot(page,info,'dataset-manifest');await page.getByRole('button',{name:'Close dataset evidence'}).click();
     const status=await service.api('/v1/datasets');const job=status.body.jobs.find(j=>j.status==='published');
     const path='/v1/datasets/jobs/'+job.id+'/artifact';const artifact=await service.api(path);expect(artifact.status).toBe(200);expect(artifact.body.artifact.manifest.row_count).toBe(1);
@@ -362,6 +364,7 @@ test('SDK adapters become inspectable activity and reviewed findings in the memb
     await expect.poll(async()=>{await service.work();return (await service.api('/v1/datasets')).body.jobs.some(j=>j.status==='published');},{timeout:15000}).toBe(true);
     await page.locator('#dataset-refresh').click();await settled(page);await page.getByRole('button',{name:'Inspect dataset',exact:true}).click();
     await expect(page.locator('#dataset-manifest')).toContainText('metrics-only/v2');await expect(page.locator('#dataset-sample')).toContainText('sdk_operation');await expect(page.locator('#dataset-sample')).toContainText(saved.request.revision);await expect(page.locator('#dataset-sample')).not.toContainText('PRIVATE_SDK');
+    await expect(page.locator('#dataset-example-preview')).toContainText('SDK operation');await expect(page.locator('#dataset-example-preview')).toContainText('Signal matches');await expect(page.locator('#dataset-manifest')).not.toBeVisible();
     await reflow(page);await accessible(page);await screenshot(page,info,'sdk-private-dataset');
     await page.getByRole('button',{name:'Close dataset evidence'}).click();await page.getByRole('button',{name:'Stop & remove these datasets',exact:true}).click();await settled(page);await expect(page.locator('#dataset-policies')).toContainText('Stopped');
 
