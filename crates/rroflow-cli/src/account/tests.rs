@@ -297,3 +297,137 @@ fn current_refreshes_when_due_and_keeps_the_file_otherwise() {
     std::fs::write(&path, "not json").unwrap();
     assert!(read(&path).unwrap_err().contains("logout"));
 }
+
+fn stored_fixture() -> Account {
+    Account {
+        issuer: DEFAULT_ISSUER.into(),
+        client_id: CLIENT.into(),
+        project_id: Some(PROJECT.into()),
+        ingest_url: DEFAULT_INGEST_URL.into(),
+        subject: SUBJECT.into(),
+        username: None,
+        email: None,
+        access_token: "fixture-access".into(),
+        refresh_token: Some("fixture-refresh".into()),
+        expires_at: unix_now() + 7200,
+        signed_in_at: unix_now(),
+    }
+}
+
+#[test]
+fn private_atomic_replacement_preserves_old_scratch_and_bounds_reads_and_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("private").join(FILE_NAME);
+    let account = stored_fixture();
+    write(&path, &account).unwrap();
+    let scratch = path.with_extension("json.tmp");
+    std::fs::write(&scratch, b"interrupted unrelated write").unwrap();
+    let mut next = account.clone();
+    next.access_token = "fixture-replacement".into();
+    write(&path, &next).unwrap();
+    assert_eq!(read(&path).unwrap(), Some(next.clone()));
+    assert_eq!(
+        std::fs::read(&scratch).unwrap(),
+        b"interrupted unrelated write"
+    );
+    let before = std::fs::read(&path).unwrap();
+    next.access_token = "private".repeat(16000);
+    assert!(write(&path, &next).unwrap_err().contains("64 KiB"));
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "refused writes preserve committed credentials"
+    );
+    std::fs::write(&path, vec![b'x'; 65537]).unwrap();
+    assert_eq!(read(&path).unwrap_err(), "account file exceeds 64 KiB");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+}
+
+#[test]
+fn a_logout_cancels_an_inflight_first_login_even_with_no_saved_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let (before, revision) = {
+        let lock = storage::LockedAccount::acquire(&path).unwrap();
+        (lock.read().unwrap(), lock.revision().unwrap())
+    };
+    assert_eq!(before, None);
+    assert!(!remove(&path).unwrap());
+    assert_eq!(read(&path).unwrap(), None);
+    assert!(
+        commit_login(&path, &before, &revision, &stored_fixture())
+            .unwrap_err()
+            .contains("changed")
+    );
+    assert_eq!(
+        read(&path).unwrap(),
+        None,
+        "logout cannot be undone by a pending browser approval"
+    );
+    let lock = storage::LockedAccount::acquire(&path).unwrap();
+    let revision = lock.revision().unwrap();
+    drop(lock);
+    commit_login(&path, &None, &revision, &stored_fixture()).unwrap();
+    assert!(
+        read(&path).unwrap().is_some(),
+        "a new login after logout is allowed"
+    );
+}
+
+#[test]
+fn validation_and_refresh_share_the_locked_account_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let account = stored_fixture();
+    write(&path, &account).unwrap();
+    let checked = current_checked(&path, |_| {
+        assert!(
+            storage::LockedAccount::acquire(&path)
+                .err()
+                .unwrap()
+                .contains("being updated")
+        );
+        Err("deployment changed".into())
+    });
+    assert_eq!(checked.unwrap_err(), "deployment changed");
+    assert_eq!(
+        current(&path).unwrap(),
+        Some(account),
+        "the lock is released on refusal"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn account_and_lock_symlinks_are_refused_without_touching_the_target() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(FILE_NAME);
+    let target = dir.path().join("untouched");
+    std::fs::write(&target, b"other file").unwrap();
+    symlink(&target, &path).unwrap();
+    assert!(read(&path).is_err());
+    assert!(write(&path, &stored_fixture()).is_err());
+    assert!(remove(&path).is_err());
+    std::fs::remove_file(&path).unwrap();
+    let lock = path.with_extension("json.lock");
+    std::fs::remove_file(&lock).unwrap();
+    symlink(&target, &lock).unwrap();
+    assert!(storage::LockedAccount::acquire(&path).is_err());
+    assert_eq!(std::fs::read(&target).unwrap(), b"other file");
+}

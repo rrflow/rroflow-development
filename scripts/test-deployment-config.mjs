@@ -17,7 +17,7 @@ test('CLI refuses cross-deployment overrides before token refresh or ingest requ
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   t.after(async () => { await new Promise(r => server.close(r)); await rm(dir, { recursive: true, force: true }); });
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const account = { issuer: origin, ingest_url: origin, client_id: 'client-a', project_id: 'project-a', subject: 'owner-a', access_token: 'fixture-secret-access', refresh_token: 'fixture-secret-refresh', expires_at: 1, signed_in_at: 0 };
+  const account = { issuer: origin, ingest_url: origin, client_id: 'client-a', project_id: 'project-a', subject: 'owner-a', access_token: 'fixture-secret-access', refresh_token: 'fixture-secret-refresh', expires_at: Math.floor(Date.now()/1000)+60, signed_in_at: 0 };
   const accountPath = join(dir, 'account.json');
   const original = JSON.stringify(account);
   await writeFile(accountPath, original);
@@ -35,6 +35,7 @@ test('CLI refuses cross-deployment overrides before token refresh or ingest requ
   };
   for (const key of ['RROFLOW_INGEST_URL', 'RROFLOW_ISSUER', 'RROFLOW_CLIENT_ID', 'RROFLOW_NOMEN_PROJECT']) {
     await refused(['sources', 'link'], { [key]: key.endsWith('URL') || key.endsWith('ISSUER') ? 'https://other.example' : 'other' }, /another deployment/);
+    await refused(['whoami', '--json'], { [key]: key.endsWith('URL') || key.endsWith('ISSUER') ? 'https://other.example' : 'other' }, /another deployment/);
   }
   await refused(['setup', '--yes', '--no-service', '--ingest-url', 'https://other.example'], {}, /another deployment/);
   await refused(['sources', 'link'], { RROFLOW_INGEST_KEY: 'fixture-secret-key' }, /explicit ingest_url/);

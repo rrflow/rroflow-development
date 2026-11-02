@@ -25,14 +25,21 @@ reviews, consented metadata datasets and the source research library. Consult th
 [capability map](plan/capability-map.md) for partial coverage and acceptance gaps;
 there is no claim of full Raindrop/Sentry/PostHog feature parity.
 
-## Being verified
+## Native accounts and current work
 
 [Native browser accounts](spec/native-accounts-v1.md): email ownership before password
 creation, sign-in, recovery, persistent native sessions, encrypted mail outbox and
-React account screens. The development implementation has PostgreSQL and browser
-fixture evidence. Production SMTP delivery and public-signup security review are
+React account screens are merged in [PR50](https://github.com/rrflow/rroflow-development/pull/50).
+Exact head `8c29848daaa91cb6baeda40d960600f01de48ba8` passed 188 Rust tests and all
+46 packaged desktop/phone browser cases in
+[CI 41537979270](https://github.com/rrflow/rroflow-development/actions/runs/41537979270),
+plus [release-build verification](https://github.com/rrflow/rroflow-development/actions/runs/41537979222).
+The merge is `08cf874e080f25b84d39ed79d90d20c13aabf59d`. This is fixture evidence. Production SMTP delivery and public-signup security review are
 not qualified. Signup defaults off. Native CLI device authorization, explicit
 account linking and MFA/passkeys remain open.
+
+[Collector credential serialization](spec/collector-account-storage-v1.md) is under verification
+to prevent competing commands from spending the same refresh token or undoing logout.
 
 The live local review previously supplied to the owner is an older, labelled fixture
 build. It is not evidence that the newest member console is deployed or that the
@@ -42,7 +49,7 @@ owner's Claude/Codex activity is being reliably captured.
 
 Latest published release verified through GitHub: [v0.4.0](https://github.com/rrflow/rroflow-development/releases/tag/v0.4.0),
 published 2026-10-31 from `dac115de5b6077186f7511a738ca25561caaaa4d`.
-It predates PR46-49 and the native browser account work. GitHub publication remains
+It predates PR46-50. GitHub publication remains
 gated by exact main-push CI, checksums and artifact verification.
 
 **Current Texas deployment is not verified.** The October 26 report of a loopback
@@ -58,7 +65,7 @@ outside the repository. A public URL is not a testable deployment until those ch
 
 ## Next delivery gates
 
-1. Qualify and publish the native browser-account change; select and qualify email delivery.
+1. Select and qualify email delivery and complete the public-signup security review.
 2. Finish native CLI authorization, explicit linking and turnkey account/project onboarding.
 3. Complete the React monitoring console and remaining provenance/organization controls.
 4. Prove reliable project/global agent and SDK capture with real provider sessions, including replay after outages.

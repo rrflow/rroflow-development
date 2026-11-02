@@ -20,9 +20,10 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 
 - [Platform v1](plan/platform-v1.md): the slice sequence for native accounts, tenancy, the member console, turnkey onboarding, automatic capture and provenance.
 - [Tenancy v1](spec/tenancy-v1.md): organizations, projects, roles, write-only project keys, invitations, audit and pooled allowances.
-- [Native accounts v1](spec/native-accounts-v1.md): verified email registration, password recovery, durable native sessions and encrypted mail delivery; under verification.
+- [Collector account storage v1](spec/collector-account-storage-v1.md): process-safe credential updates, logout cancellation and durable capture during refresh; under verification.
+- [Native accounts v1](spec/native-accounts-v1.md): verified email registration, password recovery, durable native sessions and encrypted mail delivery; merged in PR50, not deployed.
 - [Browser sessions v1](spec/browser-sessions-v1.md): encrypted PostgreSQL sessions, configuration, rotation and remaining native-account work.
-- [Receipt provenance v1](spec/provenance-v1.md) ? server receipts, record ownership and honest unknown states (in development).
+- [Receipt provenance v1](spec/provenance-v1.md): server receipts, record ownership and honest unknown states; initial receipt ownership merged in PR47.
 - [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
 - [Project access tooling](plan/project-access-tooling.md): private credential references, Cloudflare/Nomen verification and strict read-only SSH inventory.
 - [Subscription support](plan/subscription-support.md): capture, sign-in, history and inference capability status per surface.

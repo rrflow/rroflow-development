@@ -3,7 +3,7 @@
 Date: 2026-11-02. Status: active implementation. Owner of the slice sequence below.
 Tenancy (PR46), initial receipt provenance (PR47) and initial React organization/project/key
 management (PR48) and durable browser sessions (PR49) are merged in source;
-see [session storage](../spec/browser-sessions-v1.md). Native browser signup/recovery is under verification
+see [session storage](../spec/browser-sessions-v1.md). Native browser signup/recovery is merged in PR50
 ([contract](../spec/native-accounts-v1.md)); native device flow, explicit linking and full React monitoring
 parity remain incomplete. Nothing here establishes deployment. Texas activation remains
 separately blocked (see "Dependencies").

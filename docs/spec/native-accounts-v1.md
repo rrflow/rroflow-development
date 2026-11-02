@@ -1,6 +1,6 @@
 # Native accounts v1
 
-Status: implemented on the development branch, under verification. Not deployed.
+Status: merged in PR50 with PostgreSQL and packaged browser test evidence. Not deployed.
 The owner accepted native accounts alongside Nomen in Shippin ADR 0013. This slice
 implements browser signup, sign-in and recovery. Native CLI device authorization,
 explicit account linking, MFA/passkeys and public-launch security review remain open.
