@@ -26,7 +26,8 @@ pub(crate) async fn ingest(
     headers: HeaderMap,
     Json(batch): Json<Batch>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.sender(&headers).await?.devspace;
+    let caller = st.sender(&headers).await?;
+    let ds = caller.devspace.clone();
     if batch.events.len() > st.max_batch {
         return Err(ApiError::BadRequest("capture batch exceeds limit".into()));
     }
@@ -41,14 +42,14 @@ pub(crate) async fn ingest(
         }
     }
     let saved = match st.store.as_ref() {
-        Store::Postgres(p) => p.capture_insert(&ds, &batch.events).await,
+        Store::Postgres(p) => p.capture_received(&ds, &batch.events, Some(&caller)).await,
         Store::Jsonl(s) => s.capture_insert(&ds, &batch.events),
     };
     // Conflicts have a stable error type; database/disk errors remain retryable 500s.
     match saved {
         Ok(()) => {}
         Err(e) if e.downcast_ref::<Conflict>().is_some() => return Err(ApiError::Conflict),
-        Err(e) => return Err(crate::allowances::ingest_error(e)),
+        Err(e) => return Err(crate::provenance::ingest_error(e)),
     }
     Ok(Json(
         serde_json::json!({"devspace": ds, "accepted_ids": batch.events.iter().map(|e| &e.event_id).collect::<Vec<_>>()}),

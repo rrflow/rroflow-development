@@ -24,6 +24,7 @@ pub use web_auth::BrowserConfig;
 mod capture;
 pub mod nomen;
 pub mod pg;
+mod provenance;
 mod reviews;
 mod source_health;
 pub mod store;
@@ -541,7 +542,9 @@ fn internal(e: anyhow::Error) -> ApiError {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TurnsBody {
+    #[serde(deserialize_with = "provenance::deserialize_turns")]
     pub turns: Vec<TurnRecord>,
 }
 
@@ -566,7 +569,8 @@ async fn post_turns(
     headers: HeaderMap,
     Json(mut body): Json<TurnsBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.sender(&headers).await?.devspace;
+    let caller = st.sender(&headers).await?;
+    let devspace = caller.devspace.clone();
     if body.turns.len() > st.max_batch {
         return Err(ApiError::BadRequest(format!(
             "batch of {} exceeds the limit of {}",
@@ -588,11 +592,14 @@ async fn post_turns(
             }
         }
     }
-    let up = st
-        .store
-        .upsert(&devspace, &body.turns)
-        .await
-        .map_err(allowances::ingest_error)?;
+    let up = match st.store.as_ref() {
+        Store::Postgres(pg) => {
+            pg.upsert_received(&devspace, &body.turns, Some(&caller))
+                .await
+        }
+        Store::Jsonl(_) => st.store.upsert(&devspace, &body.turns).await,
+    }
+    .map_err(provenance::ingest_error)?;
     Ok(Json(serde_json::json!({
         "devspace": devspace,
         "accepted": body.turns.len(),
@@ -913,6 +920,8 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
+        .route("/v1/provenance", get(provenance::get))
+        .route("/v1/provenance/coverage", get(provenance::coverage))
         .route("/v1/me", get(tenancy::me))
         .route("/v1/organizations", post(tenancy::create_organization))
         .route(

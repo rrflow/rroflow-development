@@ -78,14 +78,17 @@ route refuses write-only keys unless it deliberately asks for `AppState::sender`
 **Treat a key as a secret.** Do not commit one. A key held in CI or a server environment is the intended
 use. A leaked key cannot read records back, but until it is revoked it can:
 
-- replace a turn, if it knows that turn's `event_id`;
+- replace turns or source reports whose current revision that key wrote;
 - learn whether an `event_id` exists, from delivery responses, and see the organization's usage in a
   quota refusal;
 - spend the organization's pooled allowance, which stops delivery for **all** its projects until the
   next period or an operator's change.
 
-[Slice 3](../plan/platform-v1.md#3-provenance-contract) limits a key to records it wrote and adds
-per-key rate limits. Neither exists yet.
+[Receipt provenance](provenance-v1.md), in development, limits a key to revisions it wrote
+in PostgreSQL. Identical replay does not transfer ownership. Replacing an old key therefore
+does not grant permission to change that key's existing records. Per-key rate limits and
+the console provenance view remain unimplemented parts of
+[slice 3](../plan/platform-v1.md#3-provenance-contract). Do not publish project keys.
 
 Operator-registered `[[devspace]]` keys are unchanged. They still read and write, and they are still
 not people, so they cannot manage dataset consent or tenancy.
