@@ -1,5 +1,5 @@
-//! Browser login. OAuth credentials stay in memory on this server; the browser gets
-//! an opaque, host-only, HttpOnly cookie. A restart requires signing in again.
+//! Browser login. The browser gets an opaque, host-only, HttpOnly cookie.
+//! A configured key ring enables encrypted PostgreSQL sessions across restarts.
 use crate::{AppState, Config};
 use axum::Json;
 use axum::extract::{Query, Request, State};
@@ -17,7 +17,14 @@ use tokio::sync::Mutex;
 const SESSION: &str = "__Host-rroflow-session";
 const LOGIN: &str = "__Host-rroflow-login";
 const CAPACITY: usize = 4096;
+fn default_capacity() -> usize {
+    CAPACITY
+}
+fn default_session_ttl() -> u64 {
+    3600
+}
 const LOGIN_TTL: Duration = Duration::from_secs(600);
+mod sessions;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BrowserConfig {
@@ -25,6 +32,13 @@ pub struct BrowserConfig {
     pub origin: String,
     /// Public PKCE dashboard client. Must be allowed by nomen.clients.
     pub client_id: String,
+    /// Private JSON key ring. Requires PostgreSQL; absent selects legacy memory sessions.
+    #[serde(default)]
+    pub session_keys_file: Option<std::path::PathBuf>,
+    #[serde(default = "default_capacity")]
+    pub session_capacity: usize,
+    #[serde(default = "default_session_ttl")]
+    pub session_ttl_seconds: u64,
 }
 
 struct Pending {
@@ -44,6 +58,9 @@ pub(crate) struct WebAuth {
     http: reqwest::Client,
     pending: Mutex<HashMap<String, Pending>>,
     sessions: Mutex<HashMap<String, Session>>,
+    durable: Option<sessions::DurableSessions>,
+    capacity: usize,
+    session_ttl: u64,
 }
 
 fn https_origin(s: &str) -> bool {
@@ -59,7 +76,10 @@ fn https_origin(s: &str) -> bool {
 }
 
 impl WebAuth {
-    pub(crate) fn new(cfg: &Config) -> anyhow::Result<Option<Arc<Self>>> {
+    pub(crate) fn new(
+        cfg: &Config,
+        pool: Option<&sqlx::PgPool>,
+    ) -> anyhow::Result<Option<Arc<Self>>> {
         let Some(b) = &cfg.browser else {
             return Ok(None);
         };
@@ -79,6 +99,32 @@ impl WebAuth {
             n.audiences.len() == 1,
             "browser sign-in requires exactly one Nomen project audience"
         );
+        anyhow::ensure!(
+            (1..=1_000_000).contains(&b.session_capacity)
+                && (1..=86400).contains(&b.session_ttl_seconds),
+            "browser session limits are out of range"
+        );
+        let durable = b
+            .session_keys_file
+            .as_ref()
+            .map(|path| {
+                let pool = pool.ok_or_else(|| {
+                    anyhow::anyhow!("browser session_keys_file requires PostgreSQL")
+                })?;
+                sessions::DurableSessions::new(
+                    pool.clone(),
+                    path,
+                    &[
+                        "rroflow.browser-session-context/v1",
+                        b.origin.trim_end_matches('/'),
+                        n.issuer.trim_end_matches('/'),
+                        &b.client_id,
+                        &n.audiences[0],
+                    ],
+                    b.session_capacity,
+                )
+            })
+            .transpose()?;
         Ok(Some(Arc::new(Self {
             origin: b.origin.trim_end_matches('/').into(),
             issuer: n.issuer.trim_end_matches('/').into(),
@@ -90,6 +136,9 @@ impl WebAuth {
                 .build()?,
             pending: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            durable,
+            capacity: b.session_capacity,
+            session_ttl: b.session_ttl_seconds,
         })))
     }
     fn same_origin(&self, headers: &HeaderMap) -> bool {
@@ -99,11 +148,16 @@ impl WebAuth {
                 .and_then(|v| v.to_str().ok())
                 == Some("dashboard")
     }
-    async fn token(&self, headers: &HeaderMap) -> Option<String> {
-        let id = cookie(headers, SESSION)?;
+    async fn token(&self, headers: &HeaderMap) -> anyhow::Result<Option<String>> {
+        let Some(id) = cookie(headers, SESSION) else {
+            return Ok(None);
+        };
+        if let Some(durable) = &self.durable {
+            return durable.get(id).await;
+        }
         let mut sessions = self.sessions.lock().await;
         sessions.retain(|_, s| s.expires > Instant::now());
-        sessions.get(id).map(|s| s.token.clone())
+        Ok(sessions.get(id).map(|s| s.token.clone()))
     }
 }
 
@@ -142,7 +196,8 @@ fn set_cookie(r: &mut Response, name: &str, value: &str, seconds: u64) {
 
 pub(crate) async fn config(State(st): State<AppState>) -> Json<serde_json::Value> {
     Json(
-        serde_json::json!({"enabled": st.web.is_some(), "member_origin": st.web.as_ref().map(|web| &web.origin)}),
+        serde_json::json!({"enabled": st.web.is_some(), "member_origin": st.web.as_ref().map(|web| &web.origin),
+            "session_storage": st.web.as_ref().map(|web| if web.durable.is_some() { "postgres" } else { "memory" })}),
     )
 }
 
@@ -170,7 +225,7 @@ pub(crate) async fn login(State(st): State<AppState>) -> Response {
     ]);
     let mut pending = web.pending.lock().await;
     pending.retain(|_, p| p.expires > Instant::now());
-    if pending.len() >= CAPACITY {
+    if pending.len() >= web.capacity {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
     pending.insert(
@@ -268,15 +323,28 @@ async fn complete(st: &AppState, headers: &HeaderMap, q: Callback) -> Option<(St
         "authorization",
         HeaderValue::from_str(&format!("Bearer {}", token.access_token)).ok()?,
     );
-    st.caller(&auth).await.ok()?;
-    let ttl = token.expires_in.min(3600);
+    let caller = st.caller(&auth).await.ok()?;
+    let ttl = token.expires_in.min(web.session_ttl);
     if ttl == 0 {
         return None;
     }
     let id = random();
+    if let Some(durable) = &web.durable {
+        durable
+            .put(
+                &id,
+                cookie(headers, SESSION),
+                caller.user.as_deref()?,
+                &token.access_token,
+                ttl,
+            )
+            .await
+            .ok()?;
+        return Some((id, ttl));
+    }
     let mut sessions = web.sessions.lock().await;
     sessions.retain(|_, s| s.expires > Instant::now());
-    if sessions.len() >= CAPACITY {
+    if sessions.len() >= web.capacity {
         return None;
     }
     if let Some(old) = cookie(headers, SESSION) {
@@ -298,7 +366,13 @@ pub(crate) async fn logout(State(st): State<AppState>, headers: HeaderMap) -> Re
             return StatusCode::FORBIDDEN.into_response();
         }
         if let Some(id) = cookie(&headers, SESSION) {
-            web.sessions.lock().await.remove(id);
+            if let Some(durable) = &web.durable {
+                if durable.remove(id).await.is_err() {
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+            } else {
+                web.sessions.lock().await.remove(id);
+            }
         }
         if let Some(binding) = cookie(&headers, LOGIN) {
             web.pending.lock().await.retain(|_, p| p.binding != binding);
@@ -319,21 +393,33 @@ pub(crate) async fn browser_session(
     next: Next,
 ) -> Response {
     let mut denied = false;
+    let mut unavailable = false;
     if req.uri().path().starts_with("/v1/")
         && !req.headers().contains_key("authorization")
         && let Some(web) = &st.web
-        && let Some(token) = web.token(req.headers()).await
     {
-        if req.method() != Method::GET
-            && req.method() != Method::HEAD
-            && !web.same_origin(req.headers())
-        {
-            denied = true;
-        } else if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
-            req.headers_mut().insert("authorization", value);
+        match web.token(req.headers()).await {
+            Err(_) => unavailable = true,
+            Ok(None) => {}
+            Ok(Some(token)) => {
+                if req.method() != Method::GET
+                    && req.method() != Method::HEAD
+                    && !web.same_origin(req.headers())
+                {
+                    denied = true;
+                } else if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+                    req.headers_mut().insert("authorization", value);
+                }
+            }
         }
     }
-    let mut r = if denied {
+    let mut r = if unavailable {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"Session storage is unavailable. Please retry."})),
+        )
+            .into_response()
+    } else if denied {
         StatusCode::FORBIDDEN.into_response()
     } else {
         next.run(req).await

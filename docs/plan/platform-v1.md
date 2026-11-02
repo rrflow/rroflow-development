@@ -1,15 +1,21 @@
 # RROFLOW platform v1
 
-Date: 2026-11-02. Status: plan. Owner of the slice sequence below. Slice 1 is implemented in
-development source ([tenancy v1](../spec/tenancy-v1.md)); the other slices are not built, and
-nothing here is deployed. Texas activation remains separately blocked (see "Dependencies").
+Date: 2026-11-02. Status: active implementation. Owner of the slice sequence below.
+Tenancy (PR46), initial receipt provenance (PR47) and initial React organization/project/key
+management (PR48) are merged in source. Durable browser sessions are under verification;
+see [session storage](../spec/browser-sessions-v1.md). Full native accounts and React monitoring
+parity remain incomplete. Nothing here establishes deployment. Texas activation remains
+separately blocked (see "Dependencies").
 
 Goal (owner, 2026-11-02): RROFLOW should work the way Sentry or PostHog do, for AI. A person
 signs up, creates a project, installs an SDK or connects their agents, and from then on every
 time that project starts it reports, with provenance, into clearly organized signals. This
 builds on the [capability map](capability-map.md), which stays the owner of capability status.
 
-## What exists and what is missing
+## Baseline when this plan was written
+
+This table records the starting gaps, before PR46–48. The slice descriptions and linked
+contracts below record their implementation scope; it is not a current deployment inventory.
 
 | Need | Today (v0.4.0 source) | Gap |
 |---|---|---|

@@ -18,7 +18,7 @@ async fn public_config_exposes_only_canonical_member_entry() {
     let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(
         config,
-        serde_json::json!({"enabled":true,"member_origin":ORIGIN})
+        serde_json::json!({"enabled":true,"member_origin":ORIGIN,"session_storage":"memory"})
     );
 }
 
@@ -48,6 +48,9 @@ async fn app() -> (Router, Arc<WebAuth>, tempfile::TempDir) {
         http: reqwest::Client::new(),
         pending: Mutex::new(HashMap::new()),
         sessions: Mutex::new(HashMap::new()),
+        durable: None,
+        capacity: CAPACITY,
+        session_ttl: 3600,
     });
     st.web = Some(web.clone());
     (router(st, cfg.max_body_bytes), web, dir)
@@ -83,19 +86,22 @@ fn pkce_matches_rfc7636_vector_and_config_rejects_insecure_origins() {
         browser: Some(BrowserConfig {
             origin: ORIGIN.into(),
             client_id: "dashboard".into(),
+            session_keys_file: None,
+            session_capacity: CAPACITY,
+            session_ttl_seconds: 3600,
         }),
         ..Default::default()
     };
-    assert!(WebAuth::new(&cfg).is_err());
+    assert!(WebAuth::new(&cfg, None).is_err());
     cfg.nomen = Some(crate::NomenConfig {
         issuer: "https://identity.example.test".into(),
         audiences: vec!["project".into()],
         clients: vec!["cli".into()],
         key_file: "not-read-here".into(),
     });
-    assert!(WebAuth::new(&cfg).is_err());
+    assert!(WebAuth::new(&cfg, None).is_err());
     cfg.nomen.as_mut().unwrap().clients.push("dashboard".into());
-    assert!(WebAuth::new(&cfg).unwrap().is_some());
+    assert!(WebAuth::new(&cfg, None).unwrap().is_some());
 }
 
 #[tokio::test]
@@ -289,6 +295,9 @@ async fn code_exchange_is_single_use_and_never_returns_tokens_to_browser() {
         http: reqwest::Client::new(),
         pending: Mutex::new(HashMap::new()),
         sessions: Mutex::new(HashMap::new()),
+        durable: None,
+        capacity: CAPACITY,
+        session_ttl: 3600,
     });
     web.pending.lock().await.insert(
         "state".into(),

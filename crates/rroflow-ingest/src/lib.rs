@@ -328,7 +328,13 @@ impl AppState {
             datasets: cfg.datasets.clone(),
             keys: Arc::new(keys),
             brand: Arc::new(brand::RenderedBrand::new(&cfg.brand)?),
-            web: web_auth::WebAuth::new(cfg)?,
+            web: web_auth::WebAuth::new(
+                cfg,
+                match store.as_ref() {
+                    Store::Postgres(pg) => Some(&pg.pool),
+                    Store::Jsonl(_) => None,
+                },
+            )?,
             nomen,
             store,
             max_batch: cfg.max_batch,

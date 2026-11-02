@@ -672,7 +672,7 @@ async fn public_product_entry_is_separate_from_member_data() {
     assert_eq!(code, StatusCode::OK);
     assert_eq!(
         config,
-        serde_json::json!({"enabled":false,"member_origin":null})
+        serde_json::json!({"enabled":false,"member_origin":null,"session_storage":null})
     );
     let (code, _) = call(
         &app,
