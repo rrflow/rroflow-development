@@ -18,6 +18,20 @@ function node(id = '', attrs = '') {
   };
 }
 const sample = (id='one') => ({event_id:id,session_id:'session<&>',project:'project<&>',agent:'codex',started_at:'2026-10-27T10:00:00Z',model:'fixture',collector:'test',termination:'completed',usage:{},signals:[],tools:[],tools_unfinished:0});
+
+test('turn details distinguish reported zero from unknown across all usage fields',async()=>{
+  const row=sample();
+  row.usage={input_tokens:0,output_tokens:null,cache_read_tokens:10,cache_write_tokens:0};
+  const p=await page({signedIn:true,records:[row],hash:'#activity'});
+  await p.click({event:row.event_id});
+  const details=p.el.get('pane-details').innerHTML;
+  assert.match(details,/<dt>Raw input tokens<\/dt><dd>0<\/dd>/);
+  assert.match(details,/<dt>Raw output tokens<\/dt><dd>Unknown<\/dd>/);
+  assert.match(details,/<dt>Raw cache reads<\/dt><dd>10<\/dd>/);
+  assert.match(details,/<dt>Raw cache writes<\/dt><dd>0<\/dd>/);
+  assert.match(details,/it does not mean zero/);
+});
+
 async function page({brandName='RROFLOW',signedIn=false,enabled=true,turns=2,previousKey=false,records=[],hash='#overview',intercept,reviewRows=[]}={}) {
   const elements = new Map([...html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)].map(([tag,id]) => [id,node(id,tag)]));
   elements.get('app').hidden = true;
