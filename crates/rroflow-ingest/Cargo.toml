@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 base64 = "0.22"
 anyhow = "1.0.104"
+aws-lc-rs = "1"
 axum = "0.8.9"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
@@ -26,7 +27,6 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "s
 toml = "1.1.8"
 
 [dev-dependencies]
-aws-lc-rs = "1"
 tempfile = "3"
 http-body-util = "0.1.5"
 tower = { version = "0.5.3", features = ["util"] }

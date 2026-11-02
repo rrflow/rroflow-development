@@ -35,16 +35,18 @@ after placement/recovery checks, not the old source-build installer.
 
 - Login transactions expire after ten minutes and are bound to a random browser
   cookie. A callback is single-use. State and PKCE are independently random.
-- Access tokens stay in server memory. The browser receives an opaque
+- Access tokens stay server-side. With `browser.session_keys_file`, they are
+  encrypted in PostgreSQL; otherwise they stay in process memory. The browser receives an opaque
   `__Host-` cookie with Secure, HttpOnly, Path=/ and SameSite=Lax.
 - API requests still pass through Nomen introspection and the existing
   account-to-devspace mapping. Cookie writes require the exact configured Origin
   and the dashboard's custom header. Collector bearer credentials remain supported.
-- Sessions last at most the access token lifetime or one hour, whichever is
-  shorter. They are bounded in number and cleared by server restart. This version
-  does not request a refresh token; sign in again after expiry. Multiple service
-  instances require sticky routing or a separately designed shared session store.
-- Sign out invalidates the local session and pending login, and clears displayed
+- Sessions last at most the access token lifetime or configured session maximum
+  (one hour by default), whichever is shorter. Durable sessions survive a restart;
+  memory sessions do not. This version does not request refresh tokens. In-progress
+  login attempts still need instance affinity. See [session storage](../spec/browser-sessions-v1.md)
+  for required key-ring configuration, rotation and recovery limits.
+- Sign out invalidates the session and pending local login, and clears displayed
   data. It does not sign the user out of every Shippin service.
 - Responses have `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
 
