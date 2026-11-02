@@ -294,6 +294,8 @@ test('member consents to automatic datasets, inspects immutable evidence and wit
     await reflow(page);await accessible(page);await page.locator('#dataset-jobs').scrollIntoViewIfNeeded();await screenshot(page,info,'member-dataset-version');
     await page.getByRole('button',{name:'Inspect dataset',exact:true}).click();await expect(page.locator('#dataset-manifest')).toContainText('metrics-only/v1');
     await expect(page.locator('#dataset-manifest')).toContainText('not_evaluated');await expect(page.locator('#dataset-sample')).not.toContainText('PRIVATE_DATASET');
+    await expect(page.locator('#dataset-detail-summary')).toContainText('1 example');await expect(page.locator('#dataset-evidence-summary')).toContainText('Examples from your signal reviews');await expect(page.locator('#dataset-example-preview')).toContainText('Codex');await expect(page.locator('#dataset-example-preview')).toContainText('Signal matches');
+    await expect(page.locator('#dataset-manifest')).not.toBeVisible();await page.locator('#dataset-technical summary').click();await expect(page.locator('#dataset-manifest')).toBeVisible();await page.locator('#dataset-technical summary').click();
     await reflow(page);await accessible(page);await screenshot(page,info,'dataset-manifest');await page.getByRole('button',{name:'Close dataset evidence'}).click();
     const status=await service.api('/v1/datasets');const job=status.body.jobs.find(j=>j.status==='published');
     const path='/v1/datasets/jobs/'+job.id+'/artifact';const artifact=await service.api(path);expect(artifact.status).toBe(200);expect(artifact.body.artifact.manifest.row_count).toBe(1);
@@ -338,12 +340,31 @@ test('SDK adapters become inspectable activity and reviewed findings in the memb
     await page.getByRole('button',{name:'Close SDK evidence'}).click();await page.evaluate(()=>{location.hash='#signals?kind=sdk';});await settled(page);await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);
     await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('SDK operations');
     await expect(page.locator('[data-dataset-sdk-agent="codex"]')).not.toBeChecked();
-    await page.locator('[data-dataset-sdk-agent="codex"]').check();await page.locator('#dataset-consent').check();await page.locator('#dataset-save').click();await settled(page);
+    // A save does not show the global loading indicator until after its PUT.
+    // Hold delivery to exercise a slow connection, then wait for the actual
+    // permission result before reading it through a second HTTP connection.
+    let releaseSave,saveStarted;
+    const saveGate=new Promise(resolve=>{releaseSave=resolve;});
+    const savePending=new Promise(resolve=>{saveStarted=resolve;});
+    await page.route('**/v1/datasets/policy',async route=>{saveStarted();await saveGate;await route.continue();});
+    const saveResponse=page.waitForResponse(response=>response.url()===service.base+'/v1/datasets/policy' && response.request().method()==='PUT');
+    try {
+      await page.locator('[data-dataset-sdk-agent="codex"]').check();await page.locator('#dataset-consent').check();await page.locator('#dataset-save').click();
+      await savePending;
+      await expect(page.locator('#dataset-save-status')).toHaveText('Saving permission...');
+      await expect(page.locator('#dataset-save')).toBeDisabled();
+      expect((await service.api('/v1/datasets')).body.policies).toEqual([]);
+    } finally {releaseSave();}
+    expect((await saveResponse).status()).toBe(200);
+    await expect(page.locator('#dataset-policies')).toContainText('Enabled');
+    await expect(page.locator('#dataset-consent')).not.toBeChecked();
+    await settled(page);
     const policy=(await service.api('/v1/datasets')).body.policies.find(p=>p.policy.purpose==='signal_reviews').policy;
     expect(policy.sdk_agents).toEqual(['codex']);expect(policy.agents).toEqual([]);expect(policy.all_projects).toBe(false);
     await expect.poll(async()=>{await service.work();return (await service.api('/v1/datasets')).body.jobs.some(j=>j.status==='published');},{timeout:15000}).toBe(true);
     await page.locator('#dataset-refresh').click();await settled(page);await page.getByRole('button',{name:'Inspect dataset',exact:true}).click();
     await expect(page.locator('#dataset-manifest')).toContainText('metrics-only/v2');await expect(page.locator('#dataset-sample')).toContainText('sdk_operation');await expect(page.locator('#dataset-sample')).toContainText(saved.request.revision);await expect(page.locator('#dataset-sample')).not.toContainText('PRIVATE_SDK');
+    await expect(page.locator('#dataset-example-preview')).toContainText('SDK operation');await expect(page.locator('#dataset-example-preview')).toContainText('Signal matches');await expect(page.locator('#dataset-manifest')).not.toBeVisible();
     await reflow(page);await accessible(page);await screenshot(page,info,'sdk-private-dataset');
     await page.getByRole('button',{name:'Close dataset evidence'}).click();await page.getByRole('button',{name:'Stop & remove these datasets',exact:true}).click();await settled(page);await expect(page.locator('#dataset-policies')).toContainText('Stopped');
 

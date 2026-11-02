@@ -47,6 +47,8 @@ jobs:
         run: node --test scripts/test-release-gate.mjs
       - name: Hosted promotion verifies exact bytes and archive membership
         run: python3 scripts/test-hosted-promotion.py
+      - name: Migration bytes survive Git checkout policies
+        run: python3 scripts/test-migration-checkout.py
       - name: Operator access tool refuses unsafe credentials and trust shortcuts
         run: node --test scripts/test-project-access.mjs
       - name: Research source inventory is current

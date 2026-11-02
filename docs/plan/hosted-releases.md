@@ -19,6 +19,18 @@ ordered migration files at build time. `rroflow-ingest build-info` and the read-
 checkout or runtime environment. Unstamped local builds say `development` and
 cannot be packaged by the release script.
 
+Migration SQL uses the exact LF bytes stored in Git. `.gitattributes` preserves
+those bytes under Windows and Unix checkout settings, and the build refuses CR
+line endings before SQLx embeds migrations or the release fingerprint is computed.
+`scripts/test-migration-checkout.py` verifies real Git checkouts under each
+`core.autocrlf` setting, including a negative control without the attribute.
+Existing worktrees may need their migration files refreshed to the exact Git blob
+bytes; preserve any SQL edits before doing so. A database initialized by an earlier
+noncanonical Windows build may have different stored checksums. Never rewrite those
+checksums or silently accept the mismatch: use the original matching binary until
+a reviewed backup, migration and restore procedure has been qualified. Published
+Linux migration SQL is unchanged by this checkout policy.
+
 The archive contains only `rroflow-ingest`, `revision`, `target`, `migrations`,
 `build-info.json` and their `SHA256SUMS`. The adjacent `.sha256` pins the archive.
 Packaging rejects a binary whose embedded commit/target differs from the expected

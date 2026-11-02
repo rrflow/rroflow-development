@@ -49,14 +49,14 @@ pub(crate) fn to_record(t: &Turn, project: Option<&str>, r: &Redactor) -> TurnRe
         project: project
             .map(str::to_string)
             .or_else(|| (!t.cwd.is_empty()).then(|| r.apply(&t.cwd))),
-        usage: Usage {
+        usage: t.hosted_usage.clone().unwrap_or(Usage {
             input_tokens: t.usage_known[0].then_some(t.in_tokens),
             output_tokens: t.usage_known[1].then_some(t.out_tokens),
             cache_read_tokens: t.usage_known[2].then_some(t.cache_read),
             cache_write_tokens: t.usage_known[3].then_some(t.cache_write),
             // OpenAI's input_tokens include cached input; Anthropic's do not.
             input_includes_cache: t.agent == "codex",
-        },
+        }),
         termination: termination(t),
         compacted: t.compacted,
         tools: finished

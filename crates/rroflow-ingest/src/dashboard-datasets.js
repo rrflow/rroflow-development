@@ -46,13 +46,37 @@ window.RroflowDatasetUI = ({$,all,esc,fmt,name,date,empty,api,load,state}) => {
   }
   $('dataset-refresh').onclick = () => load();
   $('close-dataset').onclick = () => { inspection++; $('dataset-dialog').close(); };
+  function clearInspection() {
+    for(const id of ['dataset-detail-summary','dataset-evidence-summary','dataset-example-preview','dataset-fingerprint','dataset-manifest','dataset-sample'])$(id).replaceChildren();
+    $('dataset-technical').open=false;
+  }
+  function renderEvidence(artifact,sha256) {
+    const m=artifact.manifest || {}, rows=Array.isArray(artifact.rows)?artifact.rows:[];
+    const count=Number.isSafeInteger(m.row_count) && m.row_count>=0 ? m.row_count : null;
+    $('dataset-detail-summary').textContent=(count===null?'Example count unavailable':fmt(count)+(count===1?' example':' examples'))+(m.sharing==='private'?' · Private to this workspace':' · Sharing status unavailable');
+    const purpose=m.purpose==='signal_reviews'?'Examples from your signal reviews':m.purpose==='patterns'?'Unlabelled examples for exploring patterns':'Collection purpose unavailable';
+    const explanation=m.purpose==='signal_reviews'?'Each label records whether a person said a signal matched its evidence. It is not a rating of the whole AI response.':m.purpose==='patterns'?'These examples have no correctness labels. They can support later exploration; collection does not run clustering or training.':'Open the manifest to inspect the recorded purpose.';
+    const content=m.contains_prompt_or_tool_content===false?'Metrics and references only; no prompt or tool content':m.contains_prompt_or_tool_content===true?'Includes prompt or tool content':'Content coverage unavailable';
+    const training=m.training_authorized===false?'No training has been authorized.':m.training_authorized===true?'The manifest records training permission; it does not show that training ran.':'Training permission is unavailable.';
+    const qualification=m.qualification==='not_evaluated'?'These examples have not been evaluated for training.':'Check the manifest for qualification details.';
+    $('dataset-evidence-summary').innerHTML=`<h3>${purpose}</h3><p>${explanation}</p><dl class="detail-list"><dt>Includes</dt><dd>${content}</dd><dt>Collected</dt><dd>${m.snapshot_at?esc(date(m.snapshot_at)):'Unavailable'}</dd><dt>Available until</dt><dd>${m.expires_at?esc(date(m.expires_at)):'Unavailable'}</dd></dl><p class="notice">${qualification} ${training}</p>`;
+    $('dataset-example-preview').innerHTML='<h3>Example preview</h3><p class="small muted">'+(rows.length?'Showing '+(rows.length===1?'the only example':'the first '+Math.min(rows.length,3)+' examples')+' from this saved version.':'No example rows are available.')+'</p>'+rows.slice(0,3).map((row,i)=>{
+      const source=row.source_kind==='sdk_operation'?'SDK operation':row.source_kind==='session_turn'||(!row.source_kind && m.projection==='metrics-only/v1')?'Session turn':'Source type unavailable';
+      const label=row.label===null?'Unlabelled':row.label?.verdict==='match'?'Signal matches':row.label?.verdict==='not_match'?'Signal does not match':'Review unavailable';
+      const f=row.features || {}, calls=Number.isSafeInteger(f.tool_calls)&&f.tool_calls>=0?fmt(f.tool_calls):'Unknown',errors=Number.isSafeInteger(f.tool_errors)&&f.tool_errors>=0?fmt(f.tool_errors):'Unknown';
+      return `<article class="tool-item"><div class="panel-heading"><h3>${i+1}. ${esc(name(row.agent)||'Unknown agent')} · ${source}</h3><span class="badge neutral">${label}</span></div><p class="small">Tool calls: ${calls} · Tool errors: ${errors}</p></article>`;
+    }).join('');
+    $('dataset-fingerprint').textContent='Artifact fingerprint (SHA-256): '+(sha256 || 'Unavailable');
+    $('dataset-manifest').textContent=JSON.stringify(m,null,2);$('dataset-sample').textContent=JSON.stringify(rows.slice(0,3),null,2);
+  }
   async function openDataset(id) {
-    const g=state().generation, attempt=++inspection; $('dataset-detail-summary').textContent='Loading the immutable manifest...';$('dataset-manifest').textContent='';$('dataset-sample').textContent='';$('dataset-dialog').showModal();
-    try {const result=await api('/v1/datasets/jobs/'+encodeURIComponent(id)+'/artifact');if(g!==state().generation || attempt!==inspection)return;const artifact=result.artifact;$('dataset-detail-summary').textContent=fmt(artifact.manifest.row_count)+(artifact.manifest.row_count === 1 ? ' private example. SHA-256: ' : ' private examples. SHA-256: ')+result.sha256;$('dataset-manifest').textContent=JSON.stringify(artifact.manifest,null,2);$('dataset-sample').textContent=JSON.stringify(artifact.rows.slice(0,3),null,2);}
+    const g=state().generation, attempt=++inspection; clearInspection();$('dataset-detail-summary').textContent='Loading this saved dataset...';$('dataset-dialog').showModal();
+    try {const result=await api('/v1/datasets/jobs/'+encodeURIComponent(id)+'/artifact');if(g!==state().generation || attempt!==inspection)return;renderEvidence(result.artifact,result.sha256);}
     catch(e){if(g===state().generation && attempt===inspection)$('dataset-detail-summary').textContent='This dataset is unavailable or its permission has changed. Refresh the dataset list.';}
   }
   function clear() {
     datasetData=null;datasetSaving=false;inspection++;$('dataset-dialog').close();$('dataset-form').hidden=true;
+    clearInspection();
     for(const id of ['dataset-mode','dataset-policies','dataset-agents','dataset-sdk-agents','dataset-projects','dataset-jobs','dataset-manifest','dataset-sample','dataset-detail-summary','dataset-save-status'])$(id).replaceChildren();
     $('dataset-consent').checked=false;$('dataset-save').disabled=false;$('dataset-retention').value=7;$('dataset-purpose').value='signal_reviews';
   }
