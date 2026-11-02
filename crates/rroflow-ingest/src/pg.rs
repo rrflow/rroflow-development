@@ -17,10 +17,19 @@ pub struct PgStore {
 }
 
 impl PgStore {
+    #[cfg(test)]
     pub(crate) async fn capture_insert(
         &self,
         ds: &str,
         events: &[rroflow_core::capture::CaptureEvent],
+    ) -> anyhow::Result<()> {
+        self.capture_received(ds, events, None).await
+    }
+    pub(crate) async fn capture_received(
+        &self,
+        ds: &str,
+        events: &[rroflow_core::capture::CaptureEvent],
+        caller: Option<&crate::Caller>,
     ) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT id FROM devspaces WHERE id = $1 FOR UPDATE")
@@ -28,6 +37,21 @@ impl PgStore {
             .fetch_one(&mut *tx)
             .await?;
         let ids: Vec<_> = events.iter().map(|e| e.event_id.clone()).collect();
+        // Capture identities are immutable; different duplicates will roll back below.
+        let records: Vec<_> = events
+            .iter()
+            .map(|e| Ok((e.event_id.clone(), serde_json::to_value(e)?)))
+            .collect::<anyhow::Result<_>>()?;
+        // Identical duplicates must not target the same receipt twice in one INSERT.
+        let records: BTreeMap<_, _> = records.into_iter().collect();
+        crate::provenance::record_batch(
+            &mut tx,
+            ds,
+            "event",
+            &records.into_iter().collect::<Vec<_>>(),
+            caller,
+        )
+        .await?;
         crate::allowances::reserve(&mut tx, ds, "events", &ids, self.require_allowance_policy)
             .await?;
         let mut changed = std::collections::BTreeSet::new();
@@ -201,6 +225,14 @@ impl PgStore {
     }
 
     pub async fn upsert(&self, devspace: &str, recs: &[TurnRecord]) -> anyhow::Result<Upserted> {
+        self.upsert_received(devspace, recs, None).await
+    }
+    pub(crate) async fn upsert_received(
+        &self,
+        devspace: &str,
+        recs: &[TurnRecord],
+        caller: Option<&crate::Caller>,
+    ) -> anyhow::Result<Upserted> {
         let recs = last_per_event(recs);
         if recs.is_empty() {
             return Ok(Upserted::default());
@@ -282,6 +314,12 @@ impl PgStore {
             .bind(devspace)
             .fetch_one(&mut *tx)
             .await?;
+        let records: Vec<_> = event_id
+            .iter()
+            .cloned()
+            .zip(record.iter().cloned())
+            .collect();
+        crate::provenance::record_batch(&mut tx, devspace, "turn", &records, caller).await?;
         crate::allowances::reserve(
             &mut tx,
             devspace,

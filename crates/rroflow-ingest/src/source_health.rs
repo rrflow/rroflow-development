@@ -99,6 +99,7 @@ impl PgStore {
         &self,
         ds: &str,
         report: SourceReport,
+        caller: &crate::Caller,
     ) -> anyhow::Result<SourceObservation> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("INSERT INTO devspaces (id) VALUES ($1) ON CONFLICT DO NOTHING")
@@ -133,6 +134,17 @@ impl PgStore {
             report,
             received_at: chrono::Utc::now().to_rfc3339(),
         };
+        crate::provenance::record_batch(
+            &mut tx,
+            ds,
+            "source",
+            &[(
+                saved.report.source_id.clone(),
+                serde_json::to_value(&saved.report)?,
+            )],
+            Some(caller),
+        )
+        .await?;
         sqlx::query("INSERT INTO source_health (devspace_id,source_id,observation) VALUES ($1,$2,$3) ON CONFLICT (devspace_id,source_id) DO UPDATE SET observation=EXCLUDED.observation")
             .bind(ds).bind(&saved.report.source_id).bind(PgJson(&saved)).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -145,7 +157,8 @@ pub(crate) async fn ingest(
     headers: HeaderMap,
     Json(report): Json<SourceReport>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.sender(&headers).await?.devspace;
+    let caller = st.sender(&headers).await?;
+    let ds = caller.devspace.clone();
     report
         .validate()
         .map_err(|m| ApiError::BadRequest(m.into()))?;
@@ -161,7 +174,7 @@ pub(crate) async fn ingest(
     }
     let result = match st.store.as_ref() {
         Store::Jsonl(s) => s.health_save(&ds, report),
-        Store::Postgres(p) => p.health_save(&ds, report).await,
+        Store::Postgres(p) => p.health_save(&ds, report, &caller).await,
     };
     let saved = result.map_err(|e| {
         if e.downcast_ref::<Conflict>().is_some() {
@@ -169,7 +182,7 @@ pub(crate) async fn ingest(
         } else if e.downcast_ref::<Capacity>().is_some() {
             ApiError::BadRequest(e.to_string())
         } else {
-            internal(e)
+            crate::provenance::ingest_error(e)
         }
     })?;
     Ok(Json(json!({"devspace":ds,"observation":saved})))

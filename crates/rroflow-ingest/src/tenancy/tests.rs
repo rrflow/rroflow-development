@@ -233,6 +233,311 @@ fn turns_body(id: &str) -> Value {
     json!({"turns":[rec(id, None)]})
 }
 
+async fn receipt(fx: &Fixture, team: &Team, kind: &str, id: &str) -> Value {
+    let (code, body) = fx
+        .send(
+            "GET",
+            &team.owner,
+            &format!("/v1/provenance?kind={kind}&record_id={id}"),
+            None,
+            Some(&team.project),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    body["provenance"].clone()
+}
+
+#[tokio::test]
+async fn provenance_keys_own_replacements_replay_preserves_receipts_and_batches_roll_back() {
+    let Some(fx) = fixture(TenancyConfig::default()).await else {
+        return;
+    };
+    let team = team(&fx, "Receipt owners").await;
+    let (a, aid) = project_key(&fx, &team.owner, &team.project).await;
+    let (b, _) = project_key(&fx, &team.owner, &team.project).await;
+    let mut original = turns_body("owned");
+    assert_eq!(
+        fx.post(&a, "/v1/turns", original.clone()).await.0,
+        StatusCode::OK
+    );
+    let first = receipt(&fx, &team, "turn", "owned").await;
+    assert_eq!(first["schema"], crate::provenance::SCHEMA);
+    assert_eq!(
+        first["attested"]["credential"],
+        json!({"kind":"project_key","id":aid})
+    );
+    assert_eq!(first["attested"]["organization"], team.organization);
+    assert_eq!(first["attested"]["project"], team.project);
+    assert!(first["attested"]["received_at"].is_string());
+    assert!(first["claimed"].get("content").is_none());
+    assert!(!first.to_string().contains(&a));
+    assert!(!first.to_string().contains(&hash_key(&a)));
+    // Key rotation can replay identical queued data, but cannot take over its ownership.
+    assert_eq!(
+        fx.post(&b, "/v1/turns", original.clone()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(receipt(&fx, &team, "turn", "owned").await, first);
+    original["turns"][0]["model"] = json!("changed-model");
+    let mixed = json!({"turns":[rec("must-rollback",None),original["turns"][0]]});
+    assert_eq!(
+        fx.post(&b, "/v1/turns", mixed).await.0,
+        StatusCode::FORBIDDEN
+    );
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM turns WHERE devspace_id=$1 AND event_id='must-rollback'",
+    )
+    .bind(&team.project)
+    .fetch_one(&fx.pg().pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM record_provenance WHERE devspace_id=$1 AND record_id='must-rollback'",
+    )
+    .bind(&team.project)
+    .fetch_one(&fx.pg().pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(receipt(&fx, &team, "turn", "owned").await, first);
+    assert_eq!(
+        fx.post(&a, "/v1/turns", original.clone()).await.0,
+        StatusCode::OK
+    );
+    let second = receipt(&fx, &team, "turn", "owned").await;
+    assert_ne!(
+        second["attested"]["record_sha256"],
+        first["attested"]["record_sha256"]
+    );
+    original["turns"][0]["model"] = json!("member-correction");
+    assert_eq!(
+        fx.send(
+            "POST",
+            &team.owner,
+            "/v1/turns",
+            Some(&original),
+            Some(&team.project)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        receipt(&fx, &team, "turn", "owned").await["attested"]["credential"]["kind"],
+        "member"
+    );
+    original["turns"][0]["model"] = json!("key-overwrite");
+    assert_eq!(
+        fx.post(&a, "/v1/turns", original).await.0,
+        StatusCode::FORBIDDEN
+    );
+    for path in [
+        "/v1/provenance?kind=turn&record_id=owned",
+        "/v1/provenance/coverage",
+    ] {
+        assert_eq!(fx.get(&b, path).await.0, StatusCode::FORBIDDEN);
+    }
+    let outsider = fx.person();
+    let outside = fx
+        .send(
+            "GET",
+            &outsider,
+            "/v1/provenance?kind=turn&record_id=owned",
+            None,
+            Some(&team.project),
+        )
+        .await;
+    let missing = fx
+        .send(
+            "GET",
+            &team.owner,
+            "/v1/provenance?kind=turn&record_id=missing",
+            None,
+            Some(&team.project),
+        )
+        .await;
+    assert_eq!(outside, missing);
+    assert_eq!(outside.0, StatusCode::NOT_FOUND);
+    fx.finish().await;
+}
+
+#[tokio::test]
+async fn provenance_keeps_legacy_unknown_and_refuses_fabricated_attestation() {
+    let Some(fx) = fixture(TenancyConfig::default()).await else {
+        return;
+    };
+    let team = team(&fx, "Unknown is unknown").await;
+    let (key, _) = project_key(&fx, &team.owner, &team.project).await;
+    let old = rec("legacy", None);
+    fx.pg()
+        .upsert(&team.project, std::slice::from_ref(&old))
+        .await
+        .unwrap();
+    assert_eq!(
+        receipt(&fx, &team, "turn", "legacy").await["status"],
+        "unknown"
+    );
+    assert_eq!(
+        fx.post(&key, "/v1/turns", json!({"turns":[old]})).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        receipt(&fx, &team, "turn", "legacy").await["attested"],
+        Value::Null
+    );
+    let mut changed = turns_body("legacy");
+    changed["turns"][0]["model"] = json!("attempt");
+    assert_eq!(
+        fx.post(&key, "/v1/turns", changed).await.0,
+        StatusCode::FORBIDDEN
+    );
+    for field in ["attested", "provenance"] {
+        let mut forged = turns_body("forged");
+        forged["turns"][0][field] = json!({"credential":{"kind":"member"}});
+        assert_eq!(
+            fx.post(&key, "/v1/turns", forged).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let mut forged = turns_body("forged");
+        forged[field] = Value::Null;
+        assert_eq!(
+            fx.post(&key, "/v1/turns", forged).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    assert_eq!(
+        fx.post(&key, "/v1/turns", turns_body("new")).await.0,
+        StatusCode::OK
+    );
+    let (code, coverage) = fx
+        .send(
+            "GET",
+            &team.owner,
+            "/v1/provenance/coverage",
+            None,
+            Some(&team.project),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        coverage["records"][0],
+        json!({"kind":"turn","total":2,"recorded":1,"unknown":1})
+    );
+    // A later internal import must not leave a receipt falsely bound to changed data.
+    let mut imported = rec("new", None);
+    imported.model = Some("imported".into());
+    fx.pg().upsert(&team.project, &[imported]).await.unwrap();
+    assert_eq!(
+        receipt(&fx, &team, "turn", "new").await["status"],
+        "unknown"
+    );
+    fx.finish().await;
+}
+
+#[tokio::test]
+async fn provenance_covers_events_and_source_reports_without_refreshing_replay() {
+    let Some(fx) = fixture(TenancyConfig::default()).await else {
+        return;
+    };
+    let team = team(&fx, "All receiving paths").await;
+    let (a, _) = project_key(&fx, &team.owner, &team.project).await;
+    let (b, _) = project_key(&fx, &team.owner, &team.project).await;
+    let event = json!({"schema":"rroflow.capture/v1","event_id":"11111111-1111-4111-8111-111111111111","capture_id":"22222222-2222-4222-8222-222222222222","sequence":0,"agent":"grok","session_id":"s","operation_id":"op","parent_operation_id":null,"observed_at":"2026-10-26T00:00:00Z","kind":"stream.event","native_type":"response.created","payload":null});
+    assert_eq!(
+        fx.post(
+            &a,
+            "/v1/events",
+            json!({"events":[event.clone(),event.clone()]})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let first = receipt(&fx, &team, "event", event["event_id"].as_str().unwrap()).await;
+    assert_eq!(first["status"], "recorded");
+    assert_eq!(first["claimed"]["agent"], "grok");
+    assert_eq!(
+        fx.post(&b, "/v1/events", json!({"events":[event.clone()]}))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        receipt(&fx, &team, "event", event["event_id"].as_str().unwrap()).await,
+        first
+    );
+    let mut conflict = event.clone();
+    conflict["model"] = json!("different");
+    assert_eq!(
+        fx.post(&a, "/v1/events", json!({"events":[conflict]}))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        receipt(&fx, &team, "event", event["event_id"].as_str().unwrap()).await,
+        first
+    );
+    let report = source_health_report(1);
+    assert_eq!(
+        fx.post(&a, "/v1/sources/health", report.clone()).await.0,
+        StatusCode::OK
+    );
+    let first = receipt(&fx, &team, "source", report["source_id"].as_str().unwrap()).await;
+    assert_eq!(first["status"], "recorded");
+    assert_eq!(
+        fx.post(&b, "/v1/sources/health", report.clone()).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        receipt(&fx, &team, "source", report["source_id"].as_str().unwrap()).await,
+        first
+    );
+    assert_eq!(
+        fx.post(&b, "/v1/sources/health", source_health_report(2))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fx.post(&a, "/v1/sources/health", source_health_report(2))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    fx.finish().await;
+}
+
+#[tokio::test]
+async fn provenance_concurrent_keys_cannot_both_take_the_same_identity() {
+    let Some(fx) = fixture(TenancyConfig::default()).await else {
+        return;
+    };
+    let team = team(&fx, "Concurrent writers").await;
+    let (a, aid) = project_key(&fx, &team.owner, &team.project).await;
+    let (b, bid) = project_key(&fx, &team.owner, &team.project).await;
+    let first = turns_body("race");
+    let mut second = first.clone();
+    second["turns"][0]["model"] = json!("second");
+    let (one, two) = tokio::join!(
+        fx.post(&a, "/v1/turns", first),
+        fx.post(&b, "/v1/turns", second)
+    );
+    let (winner, loser) = if one.0 == StatusCode::OK {
+        (aid, two.0)
+    } else {
+        assert_eq!(two.0, StatusCode::OK, "{two:?}");
+        (bid, one.0)
+    };
+    assert_eq!(loser, StatusCode::FORBIDDEN);
+    assert_eq!(
+        receipt(&fx, &team, "turn", "race").await["attested"]["credential"]["id"],
+        winner
+    );
+    fx.finish().await;
+}
+
 /// Every route that delivers records or changes a project, with a body that passes its
 /// extractor, so a refusal below proves the authorization check and not a parsing failure.
 fn delivery_routes() -> Vec<(&'static str, &'static str, Value)> {

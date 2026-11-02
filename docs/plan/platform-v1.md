@@ -69,6 +69,9 @@ and a security review before public signup.
 
 ### 3. Provenance contract
 
+The receiving identity and replacement enforcement are being implemented first; see
+[receipt provenance v1](../spec/provenance-v1.md) for exact behavior and remaining work.
+
 `rroflow.provenance/v1` separates two groups on every stored record:
 
 - **Attested** (set by the server, refused from clients): organization, project, credential
