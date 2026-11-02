@@ -145,7 +145,7 @@ pub(crate) async fn ingest(
     headers: HeaderMap,
     Json(report): Json<SourceReport>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st.sender(&headers).await?.devspace;
     report
         .validate()
         .map_err(|m| ApiError::BadRequest(m.into()))?;

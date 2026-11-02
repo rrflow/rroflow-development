@@ -177,11 +177,15 @@ async fn usage(
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 ) -> anyhow::Result<i64> {
-    Ok(sqlx::query_scalar("SELECT count(*) FROM ingest_identities WHERE devspace_id=$1 AND kind=$2 AND accepted_at >= $3 AND accepted_at < $4")
+    // Pooled across the organization: creating another project never buys more allowance.
+    // A devspace outside any organization counts alone (its NULL matches no other row).
+    Ok(sqlx::query_scalar("SELECT count(*) FROM ingest_identities WHERE kind=$2 AND accepted_at >= $3 AND accepted_at < $4 AND devspace_id IN (SELECT p.id FROM devspaces d JOIN devspaces p ON p.id=d.id OR p.organization_id=d.organization_id WHERE d.id=$1)")
         .bind(ds).bind(kind).bind(start).bind(end).fetch_one(&mut **tx).await?)
 }
 
-/// Caller holds the devspace row lock. Ledger and records commit together.
+/// Caller holds the devspace row lock; the organization lock here covers its other projects,
+/// so two projects cannot both spend the last of a pooled allowance. Ledger and records
+/// commit together.
 pub(crate) async fn reserve(
     tx: &mut Transaction<'_, Postgres>,
     ds: &str,
@@ -189,6 +193,10 @@ pub(crate) async fn reserve(
     ids: &[String],
     required: bool,
 ) -> anyhow::Result<()> {
+    sqlx::query("SELECT o.id FROM organizations o JOIN devspaces d ON d.organization_id=o.id WHERE d.id=$1 FOR NO KEY UPDATE OF o")
+        .bind(ds)
+        .fetch_optional(&mut **tx)
+        .await?;
     let policy = effective(tx, ds).await?;
     if required && policy.policy.is_none() {
         return Err(PolicyUnavailable.into());
@@ -259,8 +267,13 @@ impl PgStore {
         let (start, end) = month(effective.at);
         let turns = usage(&mut tx, ds, "turns", start, end).await?;
         let events = usage(&mut tx, ds, "events", start, end).await?;
+        let organization: Option<String> =
+            sqlx::query_scalar("SELECT organization_id FROM devspaces WHERE id=$1")
+                .bind(ds)
+                .fetch_one(&mut *tx)
+                .await?;
         let result = serde_json::json!({
-            "schema": "rroflow.allowance-status/v1", "devspace": ds,
+            "schema": "rroflow.allowance-status/v1", "devspace": ds, "organization": organization,
             "mode": if effective.policy.is_some() { "enforced" } else if self.require_allowance_policy { "unavailable" } else { "unconfigured" },
             "allowance": effective.allowance(), "policy_revision": effective.policy.as_ref().map(|p|p.revision),
             "grant_revision": effective.grant.as_ref().map(|g|g.revision),

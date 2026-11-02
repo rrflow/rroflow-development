@@ -1,10 +1,10 @@
 //! rroflow-ingest: the rroflow.ai service that receives `rroflow.turn/v1` records from
 //! collectors and files them into the sender's devspace.
 //!
-//! - **Tenancy:** a devspace is one person's space on rroflow.ai, owned by their Nomen
-//!   account and attachable to their Shippin.cloud tenant. The credential decides the
-//!   devspace; a client cannot name another one. Ingest keys are stored only as SHA-256
-//!   hashes.
+//! - **Tenancy:** organizations own projects, and a project is a devspace, the partition
+//!   every monitoring table keys on. The credential decides what a request may reach: a key
+//!   opens only its own project, and a member may name a project with a header that is
+//!   checked against membership on every request. Keys are stored only as SHA-256 hashes.
 //! - **Idempotence:** records upsert by `event_id`, so re-sending replaces, never duplicates.
 //! - **Privacy:** the service never logs record content; content arrives only when the
 //!   user opted in on the collector.
@@ -27,17 +27,19 @@ pub mod pg;
 mod reviews;
 mod source_health;
 pub mod store;
+pub mod tenancy;
 #[cfg(test)]
 mod test_keys;
 
 pub use nomen::{AuthError, NomenVerifier, Subject};
 pub use pg::PgStore;
 pub use store::{JsonlStore, Store, Summary, TurnFilter, Upserted};
+pub use tenancy::{Membership, Role, TenancyConfig};
 
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use rroflow_core::signals::{CATALOGUE, Category, SignalConfig};
 use rroflow_core::{SCHEMA, TurnRecord};
@@ -103,6 +105,8 @@ pub struct Config {
     /// Operator-enabled metadata dataset collection. Training is not enabled by this.
     pub datasets: Option<datasets::DatasetConfig>,
     pub sdk_activity: sdk_activity::ActivityConfig,
+    /// Bounds on the organizations and projects one person can create.
+    pub tenancy: TenancyConfig,
 }
 
 /// How the ingest checks Nomen tokens (RFC 7662 introspection, private-key JWT).
@@ -134,6 +138,7 @@ impl Default for Config {
             require_allowance_policy: false,
             datasets: None,
             sdk_activity: sdk_activity::ActivityConfig::default(),
+            tenancy: TenancyConfig::default(),
         }
     }
 }
@@ -211,14 +216,47 @@ pub fn valid_devspace_id(id: &str) -> bool {
 pub struct Caller {
     /// The devspace every read and write of this request is confined to.
     pub devspace: String,
-    /// `key` (ingest key) or `nomen` (Nomen sign-in).
+    /// `key` (operator-registered key), `project_key` or `nomen` (Nomen sign-in).
     pub via: &'static str,
     /// Nomen account ID, for `nomen`.
     pub subject: Option<String>,
-    /// Nomen organization, when the token carried it.
+    /// Nomen organization, when the token carried it. Not an RROFLOW organization.
     pub org: Option<String>,
     /// Login name Nomen reported, for display only.
     pub name: Option<String>,
+    /// The RROFLOW account, for a signed-in member. Keys are not people.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// The organization that owns this project, when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    /// The member's role in that organization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,
+    /// The project key's id, for `project_key`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// This credential can send records but read nothing back.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub write_only: bool,
+}
+
+/// The project a request names, if any. Malformed or repeated values get the same answer as
+/// a project that does not exist.
+fn requested_project(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
+    let mut values = headers.get_all(tenancy::PROJECT_HEADER).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(ApiError::Missing);
+    }
+    value
+        .to_str()
+        .ok()
+        .filter(|id| valid_devspace_id(id))
+        .map(Some)
+        .ok_or(ApiError::Missing)
 }
 
 /// Shared state: key-hash → devspace, the Nomen verifier, the store, limits.
@@ -231,6 +269,7 @@ pub struct AppState {
     nomen: Option<Arc<NomenVerifier>>,
     store: Arc<Store>,
     max_batch: usize,
+    tenancy: TenancyConfig,
 }
 
 impl AppState {
@@ -291,12 +330,49 @@ impl AppState {
             nomen,
             store,
             max_batch: cfg.max_batch,
+            tenancy: cfg.tenancy.clone(),
         })
     }
 
-    /// Identify the caller from `Authorization: Bearer <credential>`: an ingest key first
-    /// (a hash lookup), then a Nomen access token when sign-in is configured.
+    /// Read a project's monitoring data. This is the default a new route gets, so a
+    /// write-only key is refused unless a route explicitly asks for [`Self::sender`].
     pub async fn caller(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
+        let caller = self.authenticate(headers).await?;
+        if caller.write_only {
+            return Err(ApiError::Forbidden(
+                "This project key can send records but not read them.",
+            ));
+        }
+        Ok(caller)
+    }
+
+    /// Change a project's settings or reviews: read access, and more than a viewer's role.
+    pub async fn writer(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
+        let caller = self.caller(headers).await?;
+        Self::refuse_viewer(&caller)?;
+        Ok(caller)
+    }
+
+    /// Deliver captured records: the one thing a write-only project key may do.
+    pub async fn sender(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
+        let caller = self.authenticate(headers).await?;
+        Self::refuse_viewer(&caller)?;
+        Ok(caller)
+    }
+
+    fn refuse_viewer(caller: &Caller) -> Result<(), ApiError> {
+        if caller.role.is_some_and(|role| role < Role::Member) {
+            return Err(ApiError::Forbidden(
+                "Your role can view this project but not change it.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Identify the caller from `Authorization: Bearer <credential>`: an operator-registered
+    /// key first (a hash lookup), then a project key, then a Nomen access token when sign-in
+    /// is configured. Routes use [`Self::caller`], [`Self::writer`] or [`Self::sender`].
+    pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
         let token = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
@@ -304,13 +380,48 @@ impl AppState {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .ok_or(ApiError::Unauthorized)?;
+        let requested = requested_project(headers)?;
+        // A key opens exactly one project; naming any other is refused, not ignored.
+        let refuse_other = |devspace: &str| match requested {
+            Some(project) if project != devspace => Err(ApiError::Missing),
+            _ => Ok(()),
+        };
         if let Some(devspace) = self.keys.get(&hash_key(token)) {
+            refuse_other(devspace)?;
             return Ok(Caller {
                 devspace: devspace.clone(),
                 via: "key",
                 subject: None,
                 org: None,
                 name: None,
+                user: None,
+                organization: None,
+                role: None,
+                key: None,
+                write_only: false,
+            });
+        }
+        if token.starts_with(tenancy::KEY_PREFIX) {
+            let Store::Postgres(pg) = self.store.as_ref() else {
+                return Err(ApiError::Unauthorized);
+            };
+            let key = pg
+                .project_key(&hash_key(token))
+                .await
+                .map_err(internal)?
+                .ok_or(ApiError::Unauthorized)?;
+            refuse_other(&key.devspace)?;
+            return Ok(Caller {
+                devspace: key.devspace,
+                via: "project_key",
+                subject: None,
+                org: None,
+                name: None,
+                user: None,
+                organization: Some(key.organization),
+                role: None,
+                key: Some(key.id),
+                write_only: true,
             });
         }
         let Some(nomen) = &self.nomen else {
@@ -327,17 +438,23 @@ impl AppState {
                 return Err(ApiError::IssuerUnavailable);
             }
         };
-        let devspace = self
+        let membership = self
             .store
-            .devspace_for_owner(nomen.issuer(), &subject)
+            .membership(nomen.issuer(), &subject, requested)
             .await
-            .map_err(internal)?;
+            .map_err(internal)?
+            .ok_or(ApiError::Missing)?;
         Ok(Caller {
-            devspace,
+            devspace: membership.devspace,
             via: subject.via,
             subject: Some(subject.id),
             org: subject.org,
             name: subject.name,
+            user: Some(membership.user),
+            organization: Some(membership.organization),
+            role: Some(membership.role),
+            key: None,
+            write_only: false,
         })
     }
 }
@@ -347,6 +464,11 @@ pub enum ApiError {
     DatasetPolicyConflict,
     MemberRequired,
     NotFound,
+    /// No such organization, project or invitation, or one this caller cannot see.
+    Missing,
+    Forbidden(&'static str),
+    /// Understood and allowed, but a rule or limit stops it. The message says which.
+    Refused(&'static str),
     Quota(allowances::QuotaExceeded),
     AllowanceUnavailable,
     Unauthorized,
@@ -374,8 +496,11 @@ impl IntoResponse for ApiError {
             ),
             ApiError::MemberRequired => (
                 StatusCode::FORBIDDEN,
-                "Sign in with your member account to manage dataset consent or exports.".into(),
+                "Sign in with your member account to do this.".into(),
             ),
+            ApiError::Missing => (StatusCode::NOT_FOUND, "Not found.".into()),
+            ApiError::Forbidden(message) => (StatusCode::FORBIDDEN, message.into()),
+            ApiError::Refused(message) => (StatusCode::CONFLICT, message.into()),
             ApiError::NotFound => (
                 StatusCode::NOT_FOUND,
                 "Dataset unavailable, expired or withdrawn.".into(),
@@ -441,7 +566,7 @@ async fn post_turns(
     headers: HeaderMap,
     Json(mut body): Json<TurnsBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.caller(&headers).await?.devspace;
+    let devspace = st.sender(&headers).await?.devspace;
     if body.turns.len() > st.max_batch {
         return Err(ApiError::BadRequest(format!(
             "batch of {} exceeds the limit of {}",
@@ -613,14 +738,23 @@ async fn get_signals() -> Json<serde_json::Value> {
     Json(catalogue())
 }
 
+/// Collectors read this before evaluating, including with a write-only key. Custom rules run
+/// on the server and can describe private work, so that key does not receive them.
 async fn get_signal_settings(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.caller(&headers).await?.devspace;
-    let settings = st.store.signal_config(&devspace).await.map_err(internal)?;
+    let caller = st.authenticate(&headers).await?;
+    let mut settings = st
+        .store
+        .signal_config(&caller.devspace)
+        .await
+        .map_err(internal)?;
+    if caller.write_only {
+        settings.custom.clear();
+    }
     Ok(Json(
-        serde_json::json!({ "devspace": devspace, "settings": settings }),
+        serde_json::json!({ "devspace": caller.devspace, "settings": settings }),
     ))
 }
 
@@ -629,7 +763,7 @@ async fn put_signal_settings(
     headers: HeaderMap,
     Json(mut cfg): Json<SignalConfig>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.caller(&headers).await?.devspace;
+    let devspace = st.writer(&headers).await?.devspace;
     cfg.validate().map_err(ApiError::BadRequest)?;
     let old = st.store.signal_config(&devspace).await.map_err(internal)?;
     if old.revision != cfg.revision {
@@ -762,11 +896,12 @@ async fn get_whoami(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Caller>, ApiError> {
-    Ok(Json(st.caller(&headers).await?))
+    Ok(Json(st.authenticate(&headers).await?))
 }
 
 /// The HTTP surface: `GET /` (public), `GET /app` (dashboard), `POST|GET /v1/turns`, `GET /v1/summary`,
-/// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /v1/whoami`, `GET /healthz`.
+/// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /v1/whoami`, `GET /healthz`, and the
+/// account, organization and project routes in [`tenancy`].
 pub fn router(st: AppState, max_body_bytes: usize) -> Router {
     Router::new()
         .route("/auth/config", get(web_auth::config))
@@ -778,6 +913,41 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/turns", post(post_turns).get(get_turns))
         .route("/v1/summary", get(get_summary))
         .route("/v1/whoami", get(get_whoami))
+        .route("/v1/me", get(tenancy::me))
+        .route("/v1/organizations", post(tenancy::create_organization))
+        .route(
+            "/v1/organizations/{organization}/projects",
+            post(tenancy::create_project),
+        )
+        .route(
+            "/v1/organizations/{organization}/members",
+            get(tenancy::members),
+        )
+        .route(
+            "/v1/organizations/{organization}/members/{user}",
+            put(tenancy::set_role).delete(tenancy::remove_member),
+        )
+        .route(
+            "/v1/organizations/{organization}/invitations",
+            get(tenancy::invitations).post(tenancy::invite),
+        )
+        .route(
+            "/v1/organizations/{organization}/invitations/{invitation}",
+            delete(tenancy::revoke_invitation),
+        )
+        .route(
+            "/v1/organizations/{organization}/audit",
+            get(tenancy::audit_log),
+        )
+        .route("/v1/invitations/accept", post(tenancy::accept_invitation))
+        .route(
+            "/v1/projects/{project}/keys",
+            get(tenancy::keys).post(tenancy::create_key),
+        )
+        .route(
+            "/v1/projects/{project}/keys/{key}",
+            delete(tenancy::revoke_key),
+        )
         .route("/v1/allowances", get(allowances::status))
         .route("/v1/sdk/activity", get(sdk_activity::list))
         .route(

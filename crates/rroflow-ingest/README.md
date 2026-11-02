@@ -43,6 +43,10 @@ key_sha256 = ["<hash printed by keygen>"]
 
 **Not yet:** deployment on Shippin.cloud with devspace ids from the Shippin IdP, TLS, and per-devspace rate limits.
 
+## Organizations, projects and keys
+
+With Postgres and Nomen sign-in, members create organizations and projects, invite each other with roles, and mint write-only project keys, with an audit trail. A project is a devspace; a member names one with the `X-RROFLOW-Project` header, checked against membership on every request. See [tenancy v1](../../docs/spec/tenancy-v1.md) for the routes and rules. Optional `[tenancy]` settings bound what one person can create.
+
 ## Account allowances
 
 Hosted Postgres deployments can enforce operator-configured monthly turn and SDK-event allowances, with expiring account grants and replay-safe quota accounting. See [account allowances v1](../../docs/spec/account-allowances-v1.md) for configuration, migration and remaining billing boundaries. Settings displays the authenticated account status.

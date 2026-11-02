@@ -76,7 +76,7 @@ pub(crate) async fn save(
     headers: HeaderMap,
     Json(r): Json<Request>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let caller = st.caller(&headers).await?;
+    let caller = st.writer(&headers).await?;
     let reviewer = caller.subject.unwrap_or_else(|| "devspace-key".into());
     // An acknowledged request can be retried even if newer capture has replaced the turn.
     validate_id(&r)?;

@@ -18,6 +18,8 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 
 ## Texas readiness and learning continuation
 
+- [Platform v1](plan/platform-v1.md): the slice sequence for native accounts, tenancy, the member console, turnkey onboarding, automatic capture and provenance.
+- [Tenancy v1](spec/tenancy-v1.md): organizations, projects, roles, write-only project keys, invitations, audit and pooled allowances.
 - [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
 - [Project access tooling](plan/project-access-tooling.md): private credential references, Cloudflare/Nomen verification and strict read-only SSH inventory.
 - [Subscription support](plan/subscription-support.md): capture, sign-in, history and inference capability status per surface.

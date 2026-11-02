@@ -35,6 +35,12 @@ For one existing devspace, use a file with `schema: rroflow.allowance-grant/v1`,
 rroflow-ingest allowance --config /etc/rroflow/ingest.toml --devspace ACCOUNT --file grant.json
 ```
 
+Usage pools across an organization's projects, so creating a project never buys
+more allowance; see [tenancy](tenancy-v1.md#allowances). A grant still attaches to
+one project and sets that project's limit against the organization's pooled usage,
+so grant every project of a paying organization until a subscription contract moves
+grants to the organization. A devspace outside any organization counts alone.
+
 The command requires operator database access; it does not create unknown
 accounts, change ownership, bill the user or grant dataset/training consent.
 An expired grant falls back to the current default. Revoke early by saving the
