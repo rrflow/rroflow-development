@@ -170,6 +170,7 @@ fn slot(html: &mut String, start: &str, end: &str, value: &str) -> Result<()> {
 pub(crate) struct RenderedBrand {
     pub public: String,
     pub dashboard: String,
+    pub member: String,
     pub css: String,
 }
 
@@ -178,7 +179,8 @@ impl RenderedBrand {
         config.validate()?;
         let mut public = include_str!("public.html").to_owned();
         let mut dashboard = include_str!("dashboard.html").to_owned();
-        for html in [&mut public, &mut dashboard] {
+        let mut member = include_str!("member-console/index.html").to_owned();
+        for html in [&mut public, &mut dashboard, &mut member] {
             for (key, value) in [
                 ("name", &config.name),
                 ("wordmark", &config.wordmark),
@@ -211,6 +213,12 @@ impl RenderedBrand {
             "data-brand=\"member_title\">",
             "<",
             &escape(&format!("{} · Your AI activity", config.name)),
+        )?;
+        slot(
+            &mut member,
+            "data-brand=\"member_title\">",
+            "<",
+            &escape(&format!("{} · Your organizations", config.name)),
         )?;
         slot(
             &mut public,
@@ -251,6 +259,7 @@ impl RenderedBrand {
         Ok(Self {
             public,
             dashboard,
+            member,
             css,
         })
     }
@@ -329,7 +338,7 @@ mod tests {
         };
         let rendered = RenderedBrand::new(&one).unwrap();
         let default = RenderedBrand::new(&BrandConfig::default()).unwrap();
-        for html in [&rendered.public, &rendered.dashboard] {
+        for html in [&rendered.public, &rendered.dashboard, &rendered.member] {
             assert!(html.contains("Orbit &lt;script&gt;alert(1)&lt;/script&gt; &amp; Co"));
             assert!(!html.contains("<script>alert(1)</script>"));
             assert!(html.contains("/assets/brand.css"));

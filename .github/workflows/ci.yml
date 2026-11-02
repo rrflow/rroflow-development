@@ -37,6 +37,9 @@ jobs:
       - name: Verify public site embedded assets
         working-directory: site
         run: npm ci --ignore-scripts && npm run verify
+      - name: Verify React member console embedded assets
+        working-directory: console
+        run: npm ci --ignore-scripts && npm run verify
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
