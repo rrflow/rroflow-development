@@ -16,7 +16,7 @@
     activity:['Activity','Open a turn to see the message, response and actions that were captured.'],
     signals:['Findings','See the moments your signals picked out. Open one to understand what happened.'],
     library:['Signal library','Use our built-in checks or create your own. You decide what deserves attention.'],
-    projects:['Projects','Keep work organized and jump straight to the activity you care about.'],
+    projects:['Projects','Source projects in this space. Manage spaces in Organizations & connections.'],
     datasets:['Datasets','Collect private examples from captured work and your decisions.'],
     sources:['Sources','See what has reported activity and how to connect your agents.'],
     learning:['From evidence to improvement','Corrections today. Consented datasets and evaluated learning next.'],
@@ -24,6 +24,8 @@
     research:['Research & guides','The source notes, observations and decisions behind this service.'],
   };
   let key = '', signedIn = false, generation = 0, controller, metadata;
+  const selectedWorkspace = new URLSearchParams(location.search).get('workspace');
+  const workspaceHeaders = selectedWorkspace ? {'X-Rroflow-Project':selectedWorkspace} : {};
   let records = [], revisions = {}, reviews = [], reviewError = '', journal = [], journalError = '';
   let healthData = null, healthError = '', healthLoadedAt = 0, healthTimer;
   let nextCursor = null, currentTurn = null, toolLimit = 50, research = [], researchCategory = 'All', inspection = 0;
@@ -32,12 +34,12 @@
   let builderId = '', previewSignature = '', builderAttempt = 0, savingSignals = false;
   let uiSequence = 0, guideTopic = 'start';
   const guides = {
-    start:{title:'Start with one moment.',body:'Your workspace brings captured AI work into view. Open a turn to see what happened, inspect a finding, then save whether it matches. You can go deeper whenever you need to.',next:'Explore my activity',view:'activity'},
+    start:{title:'Start with one moment.',body:'Open a turn, inspect a finding, then save whether it matches. The evidence is there when you need to go deeper.',next:'Explore my activity',view:'activity'},
     coverage:{title:'A view of what arrived.',body:'These totals come from received records. Missing activity may mean a source is disconnected or has not delivered yet. A signal match is a clue to review, not a proven failure. Cost stays unknown until it can be verified.',next:'Check my sources',view:'sources'},
     sources:{title:'Connect where the work happens.',body:'The collector belongs on the computer running your AI. It can capture Claude Code and Codex across projects and retry delivery later. Source reports show what last arrived; they do not guarantee every action was captured.',next:'Open connection guide',setup:true},
-    signals:{title:'A finding is an invitation to look.',body:'A signal looks for a pattern, such as repeated tool errors. Open its evidence, read the surrounding conversation, then decide whether it matches. Your saved decision stays attached to that exact version of the evidence.',next:'Explore findings',view:'signals'},
+    signals:{title:'A finding is an invitation to look.',body:'Signals flag patterns to review. Read the conversation and decide whether a finding matches. Your verdict stays with that version of the evidence.',next:'Explore findings',view:'signals'},
     create:{title:'Notice what matters to you.',body:'Name your signal, choose a simple rule, and try it on recent activity before saving. Group signals by the way you work. You can pause a rule later without deleting its earlier findings.',next:'Open signal library',view:'library'},
-    learning:{title:'Better examples. Better next steps.',body:'Captured work and your reviews are available now. Consented datasets, pattern discovery and evaluated improvements are being built. A review does not start training. Future improvements must be tested and reversible.',next:'See the improvement path',view:'learning'},
+    learning:{title:'Better examples. Better next steps.',body:'Review captured work and build consented datasets. Pattern discovery and evaluated improvements are being built. Reviews never start training; promoted changes must be tested and reversible.',next:'See the improvement path',view:'learning'},
   };
   const ui = window.RroflowA2UI.create(action => {
     if (action.kind === 'view.select') location.hash = '#' + action.view_id;
@@ -92,7 +94,7 @@
     toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5000);
   }
   async function api(path, init = {}, signal = controller?.signal) {
-    const response = await fetch(path, {...init, signal, credentials:'same-origin', headers:{'Content-Type':'application/json','X-Rroflow-Request':'dashboard', ...(key ? {Authorization:'Bearer ' + key} : {}), ...init.headers}});
+    const response = await fetch(path, {...init, signal, credentials:'same-origin', headers:{'Content-Type':'application/json','X-Rroflow-Request':'dashboard', ...workspaceHeaders, ...(key ? {Authorization:'Bearer ' + key} : {}), ...init.headers}});
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       const e = new Error(response.status === 401 ? 'Your session has expired. Sign in again.' : body.error || `Server answered ${response.status}. Try refreshing.`);
@@ -534,6 +536,8 @@
       const member = await api('/v1/whoami');
       if (g !== generation) return;
       $('member-context').textContent = member.via === 'nomen' ? (member.name ? 'Signed in as ' + member.name : 'Signed in with your account') : 'Devspace key access';
+      if (selectedWorkspace) $('member-context').textContent += ' · Selected project';
+      $('manage-projects').hidden = !member.user;
       signedIn = true; $('login').hidden = true; $('app').hidden = false; $('key').value = '';
       window.scrollTo(0,0); $('main-content').focus({preventScroll:true});
       $('skip-link').setAttribute('href','#main-content');
@@ -658,8 +662,7 @@
       all('.help-wrap').filter(w => w.matches(':hover') || w.contains(document.activeElement)).forEach(w => { w.dataset.dismissed = 'true'; });
     }
   });
-  // A layout/overlay change can emit pointer events without the user moving.
-  // Keep dismissal until both hover and focus have left this particular help control.
+  // Overlays can emit pointer events; dismiss until hover and focus leave this control.
   document.addEventListener('pointerout',e => {
     const wrap = e.target.closest('.help-wrap');
     if (wrap && !wrap.contains(e.relatedTarget) && !wrap.contains(document.activeElement)) delete wrap.dataset.dismissed;
@@ -687,7 +690,7 @@
       if (config.enabled && config.member_origin) $('signin').href = config.member_origin + '/auth/login';
       $('signin-status').textContent = config.enabled ? 'Open your workspace with your account.' : 'Account sign-in is not enabled on this server yet. Return to the public page to learn about this service, or use an existing devspace key below.';
       if (new URLSearchParams(location.search).has('signin')) { history.replaceState(null,'','/app' + location.hash); $('login-error').textContent = 'Sign-in could not finish. Please try again.'; return; }
-      const who = await fetch('/v1/whoami',{credentials:'same-origin'});
+      const who = await fetch('/v1/whoami',{credentials:'same-origin',headers:workspaceHeaders});
       if (g !== generation) return;
       if (who.ok) { key = ''; try { sessionStorage.removeItem('rroflow.key'); } catch (_) {} await openWorkspace(); }
       else if (who.status === 401 && key) await openWorkspace();
