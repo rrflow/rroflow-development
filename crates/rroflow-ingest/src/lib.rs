@@ -17,6 +17,7 @@ pub mod allowances;
 mod analytics;
 mod brand;
 pub mod datasets;
+mod member_console;
 pub mod sdk_activity;
 pub use brand::{BrandConfig, BrandLink};
 mod web_auth;
@@ -1013,6 +1014,12 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/", get(public_site))
         .route("/app", get(dashboard))
         .route("/app/", get(dashboard))
+        .route("/app/manage", get(member_console::page))
+        .route("/assets/member-console/app.js", get(member_console::script))
+        .route(
+            "/assets/member-console/index.css",
+            get(member_console::style),
+        )
         .route(
             "/assets/brand.css",
             get(|State(st): State<AppState>| async move {

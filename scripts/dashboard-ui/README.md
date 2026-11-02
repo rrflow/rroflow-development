@@ -44,3 +44,9 @@ Claude/Codex/Grok adapters and durable recorder, with explicit provider response
 they verify the background projection, filters, exact event lookup and historical reviews.
 These tests do not call paid providers. Without that database the member cases are skipped;
 CI always supplies it. Never point the fixture variable at a personal or production database.
+
+`member-console.spec.mjs` exercises `/app/manage` through real organization,
+project and key APIs. It verifies the handoff to project-scoped monitoring,
+immediate key revocation, viewer restrictions and discarded stale responses when
+switching organizations. Desktop/phone screenshots use disposable memberships;
+the test identity server does not prove a production account-login journey.
