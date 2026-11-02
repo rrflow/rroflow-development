@@ -76,6 +76,15 @@ fn consent_is_explicit_bounded_and_separate_from_training() {
     assert!(cfg.validate().is_err());
 }
 
+#[test]
+fn engine_observations_are_not_supported_dataset_capture_sources() {
+    for purpose in [Purpose::Patterns, Purpose::SignalReviews] {
+        let mut selected = policy(purpose);
+        selected.sdk_agents = vec!["rrflow".into()];
+        assert!(selected.validate().is_err());
+    }
+}
+
 #[tokio::test]
 async fn dataset_jobs_are_consented_private_immutable_recoverable_and_revocable() {
     let Ok(base) = std::env::var("RROFLOW_TEST_DATABASE_URL") else {

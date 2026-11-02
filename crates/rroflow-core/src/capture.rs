@@ -29,6 +29,9 @@ pub struct CaptureEvent {
     /// Absent on older collectors; absence never implies success.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeFacts>,
+    /// Reported public-engine references. Storage acknowledgement is not source attestation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<crate::engine_observation::EngineObservation>,
     /// Native event usage snapshot; never summed blindly across stream events.
     pub usage: Option<crate::Usage>,
     /// Original event/body, present only with explicit content opt-in and redacted.
@@ -71,7 +74,7 @@ impl CaptureEvent {
         if !uuid(&self.event_id) || !uuid(&self.capture_id) {
             return Err("event and capture IDs must be UUIDs");
         }
-        if !["codex", "claude", "grok"].contains(&self.agent.as_str()) {
+        if !["codex", "claude", "grok", "rrflow"].contains(&self.agent.as_str()) {
             return Err("unsupported capture agent");
         }
         if !id(&self.session_id)
@@ -91,10 +94,35 @@ impl CaptureEvent {
             "tool.completed",
             "tool.failed",
             "hook.event",
+            "engine.observed",
         ]
         .contains(&self.kind.as_str())
         {
             return Err("unknown capture kind");
+        }
+        if self.agent == "rrflow" || self.kind == "engine.observed" || self.engine.is_some() {
+            if self.agent != "rrflow" || self.kind != "engine.observed" {
+                return Err("engine metadata requires an RRFlow observation");
+            }
+            self.engine
+                .as_ref()
+                .ok_or("missing engine observation")?
+                .validate()?;
+            if self.payload.is_some()
+                || self.usage.is_some()
+                || self.model.is_some()
+                || self.native.is_some()
+                || self.native_type.is_some()
+                || self.native_id.is_some()
+                || self.parent_native_id.is_some()
+                || self.native_status.is_some()
+                || self.tool_name.is_some()
+                || self.exit_code.is_some()
+            {
+                return Err(
+                    "engine observations carry references only, not provider or content fields",
+                );
+            }
         }
         if self.native_type.as_deref().is_some_and(|s| !id(s)) {
             return Err("invalid native event type");
