@@ -57,7 +57,7 @@ async function page({brandName='RROFLOW',signedIn=false,enabled=true,turns=2,pre
     if (path === '/auth/config') data={enabled};
     else if (path === '/auth/logout') { signedIn=false;status=204; }
     else if (!signedIn) status=401;
-    else if (path === '/v1/whoami') data={devspace:'mine',via:'nomen'};
+    else if (path === '/v1/whoami') data={devspace:'mine',via:'nomen',user:'u_00000000000000000000000000000001'};
     else if (path === '/v1/summary') data=summary;
     else if (path.startsWith('/v1/turns')) { const q=new URL(path,'https://test.invalid').searchParams; data={turns:q.get('event') ? records.filter(t=>t.event_id===q.get('event')) : records,revisions:Object.fromEntries(records.map(t=>[t.event_id,'digest-'+t.event_id])),next_cursor:records.length ? 'older' : null}; }
     else if (path.startsWith('/v1/reviews')) data={reviews:reviewRows};
@@ -153,7 +153,7 @@ test('member steps reflect received activity and persisted review history, and c
 });
 
 test('unavailable reviews cannot complete onboarding; member names are text only',async()=>{
-  const p=await page({signedIn:true,intercept:async path=>path==='/v1/reviews'?{ok:false,status:503}:path==='/v1/whoami'?{ok:true,status:200,json:async()=>({devspace:'mine',via:'nomen',name:'<img src=x onerror=bad()>'})}:null});
+  const p=await page({signedIn:true,intercept:async path=>path==='/v1/reviews'?{ok:false,status:503}:path==='/v1/whoami'?{ok:true,status:200,json:async()=>({devspace:'mine',via:'nomen',user:'u_00000000000000000000000000000001',name:'<img src=x onerror=bad()>'})}:null});
   assert.equal(p.el.get('member-progress').textContent,'2 of 3 steps');
   assert.match(p.el.get('member-steps').innerHTML,/history is unavailable/);
   assert.equal(p.el.get('member-context').textContent,'Signed in as <img src=x onerror=bad()>');

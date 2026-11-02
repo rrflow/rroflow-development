@@ -20,6 +20,9 @@ pub mod datasets;
 mod member_console;
 pub mod sdk_activity;
 pub use brand::{BrandConfig, BrandLink};
+pub mod accounts;
+pub use accounts::AccountConfig;
+mod secret_box;
 mod web_auth;
 pub use web_auth::BrowserConfig;
 mod capture;
@@ -100,6 +103,7 @@ pub struct Config {
     pub nomen: Option<NomenConfig>,
     /// Optional HTTPS dashboard sign-in through Nomen.
     pub browser: Option<BrowserConfig>,
+    pub accounts: Option<AccountConfig>,
     /// Public/member presentation, validated and rendered before serving requests.
     pub brand: BrandConfig,
     /// Fail closed unless a database-owned allowance policy has been installed.
@@ -136,6 +140,7 @@ impl Default for Config {
             devspace: vec![],
             nomen: None,
             browser: None,
+            accounts: None,
             brand: BrandConfig::default(),
             require_allowance_policy: false,
             datasets: None,
@@ -148,8 +153,10 @@ impl Default for Config {
 impl Config {
     pub fn validate_authentication(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.nomen.is_some() || self.devspace.iter().any(|d| !d.key_sha256.is_empty()),
-            "configure Nomen sign-in or at least one devspace key"
+            self.nomen.is_some()
+                || self.accounts.is_some()
+                || self.devspace.iter().any(|d| !d.key_sha256.is_empty()),
+            "configure native accounts, Nomen sign-in or at least one devspace key"
         );
         Ok(())
     }
@@ -268,6 +275,7 @@ pub struct AppState {
     keys: Arc<HashMap<String, String>>,
     brand: Arc<brand::RenderedBrand>,
     web: Option<Arc<web_auth::WebAuth>>,
+    accounts: Option<Arc<accounts::Accounts>>,
     nomen: Option<Arc<NomenVerifier>>,
     store: Arc<Store>,
     max_batch: usize,
@@ -324,6 +332,22 @@ impl AppState {
                 )?))
             }
         };
+        let accounts = cfg
+            .accounts
+            .as_ref()
+            .map(|a| {
+                let Store::Postgres(pg) = store.as_ref() else {
+                    anyhow::bail!("native accounts require PostgreSQL");
+                };
+                if let Some(browser) = &cfg.browser {
+                    anyhow::ensure!(
+                        browser.origin.trim_end_matches('/') == a.origin.trim_end_matches('/'),
+                        "native and federated browser origins must match"
+                    );
+                }
+                accounts::Accounts::new(a, pg.pool.clone()).map(Arc::new)
+            })
+            .transpose()?;
         Ok(Self {
             datasets: cfg.datasets.clone(),
             keys: Arc::new(keys),
@@ -336,6 +360,7 @@ impl AppState {
                 },
             )?,
             nomen,
+            accounts,
             store,
             max_batch: cfg.max_batch,
             tenancy: cfg.tenancy.clone(),
@@ -432,6 +457,32 @@ impl AppState {
                 write_only: true,
             });
         }
+        if token.starts_with(accounts::SESSION_PREFIX) {
+            let accounts = self.accounts.as_ref().ok_or(ApiError::Unauthorized)?;
+            let subject = accounts
+                .subject(token)
+                .await
+                .map_err(|_| ApiError::AccountUnavailable)?
+                .ok_or(ApiError::Unauthorized)?;
+            let membership = self
+                .store
+                .membership(accounts::ISSUER, &subject, requested)
+                .await
+                .map_err(internal)?
+                .ok_or(ApiError::Missing)?;
+            return Ok(Caller {
+                devspace: membership.devspace,
+                via: "native",
+                subject: Some(subject.id),
+                org: None,
+                name: subject.name,
+                user: Some(membership.user),
+                organization: Some(membership.organization),
+                role: Some(membership.role),
+                key: None,
+                write_only: false,
+            });
+        }
         let Some(nomen) = &self.nomen else {
             return Err(ApiError::Unauthorized);
         };
@@ -485,6 +536,7 @@ pub enum ApiError {
     SourceConflict,
     /// Nomen could not be asked about a token; retry. Never a refusal.
     IssuerUnavailable,
+    AccountUnavailable,
     BadRequest(String),
     Internal,
 }
@@ -529,7 +581,11 @@ impl IntoResponse for ApiError {
             ),
             ApiError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
-                "missing or unknown credential: an ingest key or a Nomen sign-in".to_string(),
+                "missing or unknown credential: sign in or provide a valid ingest key".to_string(),
+            ),
+            ApiError::AccountUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Account storage is unavailable. Please retry.".into(),
             ),
             ApiError::IssuerUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -918,8 +974,17 @@ async fn get_whoami(
 /// account, organization and project routes in [`tenancy`].
 pub fn router(st: AppState, max_body_bytes: usize) -> Router {
     Router::new()
+        .merge(
+            Router::new()
+                .route("/auth/native/config", get(accounts::http::config))
+                .route("/auth/native/request", post(accounts::http::request))
+                .route("/auth/native/login", post(accounts::http::login))
+                .route("/auth/native/complete", post(accounts::http::complete))
+                .layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
         .route("/auth/config", get(web_auth::config))
         .route("/auth/login", get(web_auth::login))
+        .route("/auth/federation", get(web_auth::federation_login))
         .route("/auth/callback", get(web_auth::callback))
         .route("/auth/logout", post(web_auth::logout))
         .route("/v1/events", post(capture::ingest).get(capture::list))
@@ -1015,6 +1080,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/app", get(dashboard))
         .route("/app/", get(dashboard))
         .route("/app/manage", get(member_console::page))
+        .route("/app/account", get(member_console::page))
         .route("/assets/member-console/app.js", get(member_console::script))
         .route(
             "/assets/member-console/index.css",

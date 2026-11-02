@@ -17,6 +17,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Deliver queued account verification/recovery mail through configured SMTP.
+    AccountMailWorker {
+        #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
+        config: PathBuf,
+        #[arg(long, env = "RROFLOW_DATABASE_URL", hide_env_values = true)]
+        database_url: Option<String>,
+        #[arg(long)]
+        once: bool,
+    },
     /// Rebuild SDK monitoring projections from the immutable event journal.
     ActivityWorker {
         #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
@@ -112,6 +121,39 @@ async fn shutdown_signal() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
+        Cmd::AccountMailWorker {
+            config,
+            database_url,
+            once,
+        } => {
+            let cfg = load_config(&config, database_url)?;
+            let options = cfg
+                .accounts
+                .as_ref()
+                .context("mail worker requires [accounts]")?;
+            let Store::Postgres(pg) = cfg.open_store().await? else {
+                anyhow::bail!("account mail worker requires Postgres");
+            };
+            let worker = rroflow_ingest::accounts::MailWorker::new(&pg, options)?;
+            loop {
+                let idle = match worker.run_once().await {
+                    Ok(status) => {
+                        let idle = status.sent == 0 && status.retried == 0;
+                        println!("{}", serde_json::to_string(&status)?);
+                        idle
+                    }
+                    Err(_) if !once => {
+                        eprintln!("account mail storage unavailable; retrying");
+                        true
+                    }
+                    Err(_) => anyhow::bail!("account mail storage unavailable"),
+                };
+                if once {
+                    break;
+                }
+                tokio::select! {_=shutdown_signal()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(if idle {options.mail_poll_seconds * 1000} else {100}))=>{}}
+            }
+        }
         Cmd::ActivityWorker {
             config,
             database_url,

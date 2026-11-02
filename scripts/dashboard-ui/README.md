@@ -50,3 +50,12 @@ project and key APIs. It verifies the handoff to project-scoped monitoring,
 immediate key revocation, viewer restrictions and discarded stale responses when
 switching organizations. Desktop/phone screenshots use disposable memberships;
 the test identity server does not prove a production account-login journey.
+
+`native-account.spec.mjs` runs email registration, password sign-in and recovery into
+actual native-member project records on desktop and phone. Its isolated PostgreSQL
+schema and private encryption key let the test inspect a queued verification link;
+no production token-reading endpoint exists. HTTPS browser routing preserves secure
+cookie behavior while forwarding to the loopback Rust fixture. This is not proof of
+real TLS termination, SMTP delivery or a live member. `pg` is test-only; the deployed
+service remains Rust and static assets. The fixture always removes its own schema
+and stops only the child it started.

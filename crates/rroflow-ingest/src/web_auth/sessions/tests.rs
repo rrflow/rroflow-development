@@ -8,6 +8,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -443,10 +444,39 @@ async fn oauth_callback_issues_only_an_opaque_cookie_and_persists_verified_membe
         routing::post,
     };
     use std::collections::HashMap;
-    let Some(f) = Fixture::new().await else {
+    let Some(mut f) = Fixture::new().await else {
         return;
     };
     let key = key_file(f.dir.path(), "one", &[("one", 1)]);
+    f.cfg.accounts = Some(crate::AccountConfig {
+        origin: ORIGIN.into(),
+        encryption_keys_file: key.clone(),
+        ..Default::default()
+    });
+    let native =
+        crate::accounts::Accounts::new(f.cfg.accounts.as_ref().unwrap(), f.pool.clone()).unwrap();
+    use argon2::password_hash::PasswordHasher;
+    let phc = argon2::Argon2::default()
+        .hash_password(b"a long switching test password")
+        .unwrap()
+        .to_string();
+    sqlx::query("INSERT INTO native_credentials(user_id,email,password_phc) VALUES($1,'switch@example.test',$2)").bind(USER).bind(phc).execute(&f.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO user_identities(issuer,subject,user_id) VALUES($1,'switch-fixture',$2)",
+    )
+    .bind(crate::accounts::ISSUER)
+    .bind(USER)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let native_token = native
+        .login(
+            "switch@example.test",
+            "a long switching test password".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     let (app, _) = f.app(&key).await;
     let (token, user) = f.person(&app, "300000000000000803").await;
     drop(app);
@@ -492,9 +522,13 @@ async fn oauth_callback_issues_only_an_opaque_cookie_and_persists_verified_membe
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         "cookie",
-        format!("{}=fixture-browser", web_auth::LOGIN)
-            .parse()
-            .unwrap(),
+        format!(
+            "{}=fixture-browser; {}={native_token}",
+            web_auth::LOGIN,
+            crate::accounts::http::COOKIE
+        )
+        .parse()
+        .unwrap(),
     );
     let response = web_auth::callback(
         State(state),
@@ -507,6 +541,12 @@ async fn oauth_callback_issues_only_an_opaque_cookie_and_persists_verified_membe
     )
     .await;
     assert_eq!(response.headers()["location"], "/app");
+    assert!(native.subject(&native_token).await.unwrap().is_none());
+    assert!(response.headers().get_all("set-cookie").iter().any(|v| {
+        v.to_str().unwrap().starts_with("__Host-rroflow-native=;")
+            && v.to_str().unwrap().contains("Max-Age=0")
+    }));
+    drop(native);
     let session_cookie = response
         .headers()
         .get_all("set-cookie")

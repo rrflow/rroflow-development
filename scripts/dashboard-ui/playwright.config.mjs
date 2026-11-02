@@ -1,6 +1,6 @@
 import {defineConfig} from '@playwright/test';
 export default defineConfig({
-  testDir:'.', testMatch:['dashboard.spec.mjs','member-console.spec.mjs'], workers:1, retries:0,
+  testDir:'.', testMatch:['dashboard.spec.mjs','member-console.spec.mjs','native-account.spec.mjs'], workers:1, retries:0,
   timeout:60000, globalTimeout:600000,
   reporter:[['list'],['html',{open:'never'}]],
   use:{browserName:'chromium',trace:'retain-on-failure',screenshot:'only-on-failure',colorScheme:'light',reducedMotion:'reduce',locale:'en-US',timezoneId:'UTC'},

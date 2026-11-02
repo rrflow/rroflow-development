@@ -1,0 +1,285 @@
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { FlowArt } from "./ui";
+
+// Read once before React's development replay, then remove from the visible URL.
+let initialToken = /^#rrnv_[a-f0-9]{64}$/.test(location.hash)
+  ? location.hash.slice(1)
+  : "";
+if (initialToken) history.replaceState(null, "", location.pathname);
+type Options = {
+  enabled: boolean;
+  signup_enabled: boolean;
+  recovery_enabled: boolean;
+  federation_enabled: boolean;
+};
+type Mode = "login" | "register" | "reset" | "complete";
+
+export function AccountPage({ name }: { name: string }) {
+  const [options, setOptions] = useState<Options | null>(null);
+  const [mode, setMode] = useState<Mode>(initialToken ? "complete" : "login");
+  const [token, setToken] = useState(initialToken);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
+  const controller = useRef(new AbortController());
+  useEffect(() => {
+    function openLink() {
+      if (!/^#rrnv_[a-f0-9]{64}$/.test(location.hash)) return;
+      setToken(location.hash.slice(1));
+      setMode("complete");
+      setPassword("");
+      setError("");
+      setNotice("");
+      history.replaceState(null, "", location.pathname);
+    }
+    window.addEventListener("hashchange", openLink);
+    return () => window.removeEventListener("hashchange", openLink);
+  }, []);
+  useEffect(() => {
+    const c = new AbortController();
+    controller.current = c;
+    fetch("/auth/native/config", {
+      credentials: "same-origin",
+      signal: c.signal,
+    })
+      .then(async (r) => {
+        if (!r.ok)
+          throw new Error(
+            "Account options could not be loaded. Reload to try again.",
+          );
+        const data: unknown = await r.json();
+        if (
+          !data ||
+          typeof data !== "object" ||
+          ![
+            "enabled",
+            "signup_enabled",
+            "recovery_enabled",
+            "federation_enabled",
+          ].every(
+            (k) =>
+              k in data &&
+              typeof (data as Record<string, unknown>)[k] === "boolean",
+          )
+        )
+          throw new Error(
+            "Account options could not be read. Reload to try again.",
+          );
+        setOptions(data as Options);
+      })
+      .catch((e) => {
+        if (!c.signal.aborted)
+          setError(
+            e instanceof Error ? e.message : "Please reload and try again.",
+          );
+      });
+    return () => c.abort();
+  }, []);
+  function change(next: Mode) {
+    setMode(next);
+    setPassword("");
+    setNotice("");
+    setError("");
+  }
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const endpoint =
+      mode === "register" || mode === "reset"
+        ? "request"
+        : mode === "complete"
+          ? "complete"
+          : "login";
+    const body =
+      endpoint === "request"
+        ? { email, purpose: mode }
+        : endpoint === "complete"
+          ? { token, password }
+          : { email, password };
+    try {
+      const response = await fetch(`/auth/native/${endpoint}`, {
+        method: "POST",
+        credentials: "same-origin",
+        signal: controller.current.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Rroflow-Request": "dashboard",
+        },
+        body: JSON.stringify(body),
+      });
+      const data: unknown = await response.json().catch(() => null);
+      const message =
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+          ? data.message
+          : "Please try again.";
+      if (!response.ok) throw new Error(message);
+      if (mode === "login") {
+        location.assign("/app/manage");
+        return;
+      }
+      setNotice(message);
+      setPassword("");
+      if (mode === "complete") {
+        initialToken = "";
+        setToken("");
+        setMode("login");
+      }
+    } catch (e) {
+      if (!controller.current.signal.aborted)
+        setError(e instanceof Error ? e.message : "Please try again.");
+    } finally {
+      pending.current = false;
+      if (!controller.current.signal.aborted) setBusy(false);
+    }
+  }
+  const title =
+    mode === "register"
+      ? "Your AI work, in one place"
+      : mode === "reset"
+        ? "Let's get you back in"
+        : mode === "complete"
+          ? "Choose your password"
+          : "Welcome back";
+  return (
+    <main className="account-layout">
+      <section className="account-story" aria-label="About your account">
+        <a href="/" className="wordmark">
+          {name}
+        </a>
+        <FlowArt />
+        <h2>A clear home for your AI work.</h2>
+        <p>
+          Connect your tools, follow their activity, and open the evidence
+          behind each signal.
+        </p>
+        <p className="muted">
+          Your projects stay private to the people you invite.
+        </p>
+      </section>
+      <section className="account-form" aria-labelledby="account-title">
+        <p className="eyebrow">Your account</p>
+        <h1 id="account-title">{title}</h1>
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+        {notice && <p role="status">{notice}</p>}
+        {!options && !error && <p role="status">Loading sign-in options…</p>}
+        {options?.enabled && (
+          <>
+            <p className="muted">
+              {mode === "register"
+                ? "Start with your email. We will send a link to verify it before you choose a password."
+                : mode === "reset"
+                  ? "Enter your account email. We will send a recovery link if it is eligible."
+                  : mode === "complete"
+                    ? "Use at least 15 characters. A long phrase works well."
+                    : "Sign in to see your organizations and projects."}
+            </p>
+            <form onSubmit={submit}>
+              {mode !== "complete" && (
+                <>
+                  <label htmlFor="account-email">Email address</label>
+                  <input
+                    id="account-email"
+                    name="email"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    maxLength={254}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    disabled={busy}
+                  />
+                </>
+              )}
+              {(mode === "login" || mode === "complete") && (
+                <>
+                  <label htmlFor="account-password">Password</label>
+                  <input
+                    id="account-password"
+                    name="password"
+                    type="password"
+                    autoComplete={
+                      mode === "login" ? "current-password" : "new-password"
+                    }
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    minLength={15}
+                    maxLength={256}
+                    required
+                    disabled={busy}
+                    aria-describedby="password-help"
+                  />
+                  <p id="password-help" className="muted">
+                    15–128 characters. Spaces and password managers are welcome.
+                  </p>
+                </>
+              )}
+              <button type="submit" disabled={busy}>
+                {busy
+                  ? "Working…"
+                  : mode === "login"
+                    ? "Sign in"
+                    : mode === "complete"
+                      ? "Save password"
+                      : "Send email"}
+              </button>
+            </form>
+            <div className="account-options">
+              {mode !== "login" && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => change("login")}
+                >
+                  Back to sign in
+                </button>
+              )}
+              {mode === "login" && options.recovery_enabled && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => change("reset")}
+                >
+                  Forgot password?
+                </button>
+              )}
+              {mode === "login" && options.signup_enabled && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => change("register")}
+                >
+                  Create an account
+                </button>
+              )}
+            </div>
+          </>
+        )}
+        {options && !options.enabled && (
+          <p>Email sign-in is not available on this installation.</p>
+        )}
+        {options?.federation_enabled && (
+          <a className="button secondary" href="/auth/federation">
+            Continue with Shippin
+          </a>
+        )}
+        <p className="muted">
+          <a href="/">Back to home</a>
+        </p>
+      </section>
+    </main>
+  );
+}

@@ -255,6 +255,31 @@ type OwnedRow = (
     Option<String>,
 );
 
+/// Shared first-account transaction for federation and verified native registration.
+pub(crate) async fn create_account_project(
+    tx: &mut Transaction<'_, Postgres>,
+    issuer: &str,
+    subject: &Subject,
+) -> anyhow::Result<Membership> {
+    let name = display_name(subject);
+    let user = ensure_user(tx, issuer, &subject.id, name.as_deref()).await?;
+    let organization = create_personal_organization(tx, &user).await?;
+    let devspace = crate::pg::owner_devspace_id(issuer, &subject.id);
+    let created: Option<String> = sqlx::query_scalar("INSERT INTO devspaces (id,owner_issuer,owner_subject,owner_org,organization_id,slug,name) VALUES ($1,$2,$3,$4,$5,'default','Default project') ON CONFLICT DO NOTHING RETURNING id")
+        .bind(&devspace).bind(issuer).bind(&subject.id).bind(&subject.org).bind(&organization)
+        .fetch_optional(&mut **tx).await?;
+    anyhow::ensure!(
+        created.is_some(),
+        "devspace id already exists without this owner; explicit operator claim required"
+    );
+    Ok(Membership {
+        user,
+        organization,
+        role: Role::Owner,
+        devspace,
+    })
+}
+
 impl PgStore {
     /// The default project of a signed-in account, created with its user and personal
     /// organization on first sign-in. Its id stays the account ID, as it always has been.
@@ -311,23 +336,9 @@ impl PgStore {
                 devspace,
             });
         }
-        let user = ensure_user(&mut tx, issuer, &subject.id, name.as_deref()).await?;
-        let organization = create_personal_organization(&mut tx, &user).await?;
-        let devspace = crate::pg::owner_devspace_id(issuer, &subject.id);
-        let created: Option<String> = sqlx::query_scalar("INSERT INTO devspaces (id,owner_issuer,owner_subject,owner_org,organization_id,slug,name) VALUES ($1,$2,$3,$4,$5,'default','Default project') ON CONFLICT DO NOTHING RETURNING id")
-            .bind(&devspace).bind(issuer).bind(&subject.id).bind(&subject.org).bind(&organization)
-            .fetch_optional(&mut *tx).await?;
-        anyhow::ensure!(
-            created.is_some(),
-            "devspace id {devspace} already exists without this owner; attach it with `rroflow-ingest claim`"
-        );
+        let membership = create_account_project(&mut tx, issuer, subject).await?;
         tx.commit().await?;
-        Ok(Membership {
-            user,
-            organization,
-            role: Role::Owner,
-            devspace,
-        })
+        Ok(membership)
     }
 
     /// `None` both for a project that does not exist and for one this account cannot see.

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-const SESSION: &str = "__Host-rroflow-session";
+pub(crate) const SESSION: &str = "__Host-rroflow-session";
 const LOGIN: &str = "__Host-rroflow-login";
 const CAPACITY: usize = 4096;
 fn default_capacity() -> usize {
@@ -63,7 +63,7 @@ pub(crate) struct WebAuth {
     session_ttl: u64,
 }
 
-fn https_origin(s: &str) -> bool {
+pub(crate) fn https_origin(s: &str) -> bool {
     reqwest::Url::parse(s).is_ok_and(|u| {
         u.scheme() == "https"
             && u.host_str().is_some()
@@ -148,6 +148,16 @@ impl WebAuth {
                 .and_then(|v| v.to_str().ok())
                 == Some("dashboard")
     }
+    pub(crate) async fn revoke(&self, headers: &HeaderMap) -> anyhow::Result<()> {
+        if let Some(id) = cookie(headers, SESSION) {
+            if let Some(durable) = &self.durable {
+                durable.remove(id).await?;
+            } else {
+                self.sessions.lock().await.remove(id);
+            }
+        }
+        Ok(())
+    }
     async fn token(&self, headers: &HeaderMap) -> anyhow::Result<Option<String>> {
         let Some(id) = cookie(headers, SESSION) else {
             return Ok(None);
@@ -167,7 +177,7 @@ fn random() -> String {
 fn challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
-fn cookie<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(crate) fn cookie<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
     // Reject duplicate cookies instead of choosing an ambiguous credential.
     let mut values = h
         .get_all("cookie")
@@ -184,7 +194,7 @@ fn cookie<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
         Some(first)
     }
 }
-fn set_cookie(r: &mut Response, name: &str, value: &str, seconds: u64) {
+pub(crate) fn set_cookie(r: &mut Response, name: &str, value: &str, seconds: u64) {
     r.headers_mut().append(
         "set-cookie",
         HeaderValue::from_str(&format!(
@@ -196,12 +206,19 @@ fn set_cookie(r: &mut Response, name: &str, value: &str, seconds: u64) {
 
 pub(crate) async fn config(State(st): State<AppState>) -> Json<serde_json::Value> {
     Json(
-        serde_json::json!({"enabled": st.web.is_some(), "member_origin": st.web.as_ref().map(|web| &web.origin),
-            "session_storage": st.web.as_ref().map(|web| if web.durable.is_some() { "postgres" } else { "memory" })}),
+        serde_json::json!({"enabled": st.web.is_some() || st.accounts.is_some(), "member_origin": st.web.as_ref().map(|web| &web.origin).or_else(||st.accounts.as_ref().map(|a|&a.cfg.origin)),
+            "session_storage": st.web.as_ref().map(|web| if web.durable.is_some() { "postgres" } else { "memory" }).or_else(||st.accounts.as_ref().map(|_|"postgres"))}),
     )
 }
 
 pub(crate) async fn login(State(st): State<AppState>) -> Response {
+    if st.accounts.is_some() {
+        return Redirect::to("/app/account").into_response();
+    }
+    federation_login(State(st)).await
+}
+
+pub(crate) async fn federation_login(State(st): State<AppState>) -> Response {
     let Some(web) = &st.web else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -259,7 +276,14 @@ pub(crate) async fn callback(
     headers: HeaderMap,
     Query(q): Query<Callback>,
 ) -> Response {
-    let success = complete(&st, &headers, q).await;
+    let mut success = complete(&st, &headers, q).await;
+    if success.is_some()
+        && let Some(a) = &st.accounts
+        && let Some(token) = cookie(&headers, crate::accounts::http::COOKIE)
+        && a.logout(token).await.is_err()
+    {
+        success = None;
+    }
     let mut r = Redirect::to(if success.is_some() {
         "/app"
     } else {
@@ -269,6 +293,7 @@ pub(crate) async fn callback(
     set_cookie(&mut r, LOGIN, "", 0);
     if let Some((id, ttl)) = success {
         set_cookie(&mut r, SESSION, &id, ttl);
+        set_cookie(&mut r, crate::accounts::http::COOKIE, "", 0);
     }
     r
 }
@@ -361,18 +386,22 @@ async fn complete(st: &AppState, headers: &HeaderMap, q: Callback) -> Option<(St
 }
 
 pub(crate) async fn logout(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(a) = &st.accounts {
+        if !crate::accounts::http::same_origin(a, &headers) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        if let Some(token) = cookie(&headers, crate::accounts::http::COOKIE)
+            && a.logout(token).await.is_err()
+        {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    }
     if let Some(web) = &st.web {
         if !web.same_origin(&headers) {
             return StatusCode::FORBIDDEN.into_response();
         }
-        if let Some(id) = cookie(&headers, SESSION) {
-            if let Some(durable) = &web.durable {
-                if durable.remove(id).await.is_err() {
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                }
-            } else {
-                web.sessions.lock().await.remove(id);
-            }
+        if web.revoke(&headers).await.is_err() {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
         if let Some(binding) = cookie(&headers, LOGIN) {
             web.pending.lock().await.retain(|_, p| p.binding != binding);
@@ -380,6 +409,7 @@ pub(crate) async fn logout(State(st): State<AppState>, headers: HeaderMap) -> Re
     }
     let mut r = StatusCode::NO_CONTENT.into_response();
     set_cookie(&mut r, SESSION, "", 0);
+    set_cookie(&mut r, crate::accounts::http::COOKIE, "", 0);
     set_cookie(&mut r, LOGIN, "", 0);
     r
 }
@@ -394,21 +424,33 @@ pub(crate) async fn browser_session(
 ) -> Response {
     let mut denied = false;
     let mut unavailable = false;
-    if req.uri().path().starts_with("/v1/")
-        && !req.headers().contains_key("authorization")
-        && let Some(web) = &st.web
-    {
-        match web.token(req.headers()).await {
-            Err(_) => unavailable = true,
-            Ok(None) => {}
-            Ok(Some(token)) => {
-                if req.method() != Method::GET
-                    && req.method() != Method::HEAD
-                    && !web.same_origin(req.headers())
-                {
-                    denied = true;
-                } else if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
-                    req.headers_mut().insert("authorization", value);
+    if req.uri().path().starts_with("/v1/") && !req.headers().contains_key("authorization") {
+        let native = st.accounts.as_ref().and_then(|a| {
+            cookie(req.headers(), crate::accounts::http::COOKIE).map(|token| (a, token.to_string()))
+        });
+        let credential = if let Some((a, token)) = native {
+            Some((
+                Ok(Some(token)),
+                crate::accounts::http::same_origin(a, req.headers()),
+            ))
+        } else if let Some(web) = &st.web {
+            Some((
+                web.token(req.headers()).await,
+                web.same_origin(req.headers()),
+            ))
+        } else {
+            None
+        };
+        if let Some((token, same_origin)) = credential {
+            match token {
+                Err(_) => unavailable = true,
+                Ok(None) => {}
+                Ok(Some(token)) => {
+                    if req.method() != Method::GET && req.method() != Method::HEAD && !same_origin {
+                        denied = true;
+                    } else if let Ok(value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+                        req.headers_mut().insert("authorization", value);
+                    }
                 }
             }
         }

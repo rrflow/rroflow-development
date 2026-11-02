@@ -20,6 +20,7 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 
 - [Platform v1](plan/platform-v1.md): the slice sequence for native accounts, tenancy, the member console, turnkey onboarding, automatic capture and provenance.
 - [Tenancy v1](spec/tenancy-v1.md): organizations, projects, roles, write-only project keys, invitations, audit and pooled allowances.
+- [Native accounts v1](spec/native-accounts-v1.md): verified email registration, password recovery, durable native sessions and encrypted mail delivery; under verification.
 - [Browser sessions v1](spec/browser-sessions-v1.md): encrypted PostgreSQL sessions, configuration, rotation and remaining native-account work.
 - [Receipt provenance v1](spec/provenance-v1.md) ? server receipts, record ownership and honest unknown states (in development).
 - [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
