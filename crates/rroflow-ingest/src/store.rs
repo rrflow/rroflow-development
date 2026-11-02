@@ -126,16 +126,21 @@ impl Store {
         }
     }
 
-    /// The devspace a Nomen account owns, created on its first sign-in. Postgres only:
-    /// the config check refuses `[nomen]` without a database.
-    pub async fn devspace_for_owner(
+    /// A signed-in account's standing in the project it named, or its own default project,
+    /// created on first sign-in. `None` for a project it cannot see. Postgres only: the
+    /// config check refuses `[nomen]` without a database.
+    pub async fn membership(
         &self,
         issuer: &str,
         subject: &crate::Subject,
-    ) -> anyhow::Result<String> {
-        match self {
-            Store::Jsonl(_) => anyhow::bail!("Nomen sign-in needs the Postgres store"),
-            Store::Postgres(p) => p.devspace_for_owner(issuer, subject).await,
+        project: Option<&str>,
+    ) -> anyhow::Result<Option<crate::Membership>> {
+        match (self, project) {
+            (Store::Jsonl(_), _) => anyhow::bail!("Nomen sign-in needs the Postgres store"),
+            (Store::Postgres(p), None) => p.account_project(issuer, subject).await.map(Some),
+            (Store::Postgres(p), Some(project)) => {
+                p.member_project(issuer, &subject.id, project).await
+            }
         }
     }
 

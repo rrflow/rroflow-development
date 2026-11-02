@@ -6,23 +6,29 @@ Gold-based credential instructions and source-build activation steps.
 
 ## Account ownership
 
-Nomen supplies account identity. RROFLOW stores an account-owned devspace in Postgres;
-it does not store a member's provider password or issue its own identity-provider account.
-The server resolves the devspace from the accepted credential. A request cannot select
-another person's workspace by changing a tenant parameter.
+Nomen supplies account identity today. RROFLOW does not store a member's provider password.
+First-party accounts alongside Nomen are accepted direction (Shippin ADR 0013) and planned as
+[platform v1 slice 2](platform-v1.md#2-native-accounts-and-federation); they are not built.
 
-`devspaces` records the owner issuer and subject, optional identity-provider organization,
-and an optional Shippin tenant reference. The issuer/subject ownership pair is unique.
-The Shippin reference is an integration field, not proof of subscription synchronization
-or an implemented organization/invitation workflow. Identity alone grants neither a paid
-plan nor permission to collect datasets or train models.
+First sign-in creates a user, a personal organization and a default project. Organizations,
+roles, project keys and invitations are specified in [tenancy v1](../spec/tenancy-v1.md). A
+project is a devspace. The server resolves it from the accepted credential; a member may name
+another project they belong to, and membership is checked on every request. A request cannot
+reach another person's workspace by changing a tenant parameter.
+
+`devspaces` records the owner issuer and subject of a person's default project, the optional
+identity-provider organization, and an optional Shippin tenant reference. The issuer/subject
+ownership pair is unique. The identity-provider organization is not an RROFLOW organization.
+The Shippin reference is an integration field, not proof of subscription synchronization.
+Identity alone grants neither a paid plan nor permission to collect datasets or train models.
 
 | Surface | Implemented credential path | Boundary |
 |---|---|---|
 | Member dashboard | Authorization code + S256 PKCE; access token held by the Rust service; opaque HttpOnly browser cookie | Requires configured dashboard client and verified callback; live member session still needs proof |
 | Collector | Device-flow login with protected account storage, or an explicit headless ingest key | Saved queues are bound to their account and ingest destination; changing a profile does not move history |
 | Hosted API | Key-hash lookup or Nomen token introspection using the ingest application's private-key assertion | Checks issuer, project audience, allowed client, expiry and subject; unavailable identity service is not an authenticated member |
-| Static ingest keys | Operator registration/key generation and hashed server lookup | Member-facing key management is not implemented; key access cannot authorize member-only dataset consent |
+| Project keys | Created and revoked by an organization admin through the [tenancy API](../spec/tenancy-v1.md#project-keys); stored as a digest | Write-only: can deliver records but read nothing. No screen yet. Treat as a secret |
+| Static ingest keys | Operator registration/key generation and hashed server lookup | Read and write one devspace; key access cannot authorize member-only dataset consent or tenancy changes |
 
 The collector's current protected `account.json` is separate from its public deployment
 configuration; this guide does not claim OS-keychain token storage. See the owning

@@ -149,12 +149,18 @@ pub(crate) fn digest(value: &impl Serialize) -> String {
 fn reference(ds: &str, kind: &str, id: &str) -> String {
     digest(&(ds, kind, id))
 }
-fn member(caller: &Caller) -> Result<(), ApiError> {
-    if caller.via == "nomen" {
-        Ok(())
-    } else {
-        Err(ApiError::MemberRequired)
+/// Consent and export speak for everyone whose work is in the project, so they need a signed-in
+/// person with an admin's role. In a personal organization that person is its owner.
+fn consent_manager(caller: &Caller) -> Result<(), ApiError> {
+    if caller.user.is_none() {
+        return Err(ApiError::MemberRequired);
     }
+    if caller.role.is_none_or(|role| role < crate::Role::Admin) {
+        return Err(ApiError::Forbidden(
+            "An organization admin or owner manages dataset consent and exports.",
+        ));
+    }
+    Ok(())
 }
 fn configured(st: &AppState) -> Result<(&PgStore, &DatasetConfig), ApiError> {
     match (st.store.as_ref(), st.datasets.as_ref()) {
@@ -202,7 +208,7 @@ pub(crate) async fn status(
     let Ok((pg, cfg)) = configured(&st) else {
         return Ok(Json(json!({"mode":"disabled","training_enabled":false})));
     };
-    if caller.via != "nomen" {
+    if caller.user.is_none() {
         return Ok(Json(
             json!({"mode":"member_signin_required","training_enabled":false}),
         ));
@@ -222,7 +228,7 @@ pub(crate) async fn save(
     Json(request): Json<Update>,
 ) -> Result<Json<Value>, ApiError> {
     let caller = st.caller(&headers).await?;
-    member(&caller)?;
+    consent_manager(&caller)?;
     let (pg, _) = configured(&st)?;
     request.policy.validate().map_err(ApiError::BadRequest)?;
     if request.expected_revision >= i64::MAX as u64 {
@@ -249,7 +255,7 @@ pub(crate) async fn artifact(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let caller = st.caller(&headers).await?;
-    member(&caller)?;
+    consent_manager(&caller)?;
     let (pg, _) = configured(&st)?;
     // Check current consent and retention on every download, including when the worker is down.
     let value:Option<(SqlJson<Value>,String)>=sqlx::query_as("SELECT j.artifact,j.artifact_digest FROM dataset_jobs j JOIN dataset_policies p ON p.devspace_id=j.devspace_id AND p.purpose=j.purpose AND p.revision=j.policy_revision WHERE j.devspace_id=$1 AND j.id=$2 AND j.status='published' AND j.expires_at>clock_timestamp() AND p.enabled")

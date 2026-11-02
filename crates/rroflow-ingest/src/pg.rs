@@ -123,62 +123,6 @@ impl PgStore {
         Ok(())
     }
 
-    /// The devspace owned by `(issuer, subject)`; created on first sign-in with the account
-    /// ID as its id (or a digest of it when the ID has other characters). The account's
-    /// org is kept current.
-    pub async fn devspace_for_owner(
-        &self,
-        issuer: &str,
-        subject: &crate::Subject,
-    ) -> anyhow::Result<String> {
-        let found: Option<String> = sqlx::query_scalar(
-            r#"
-            UPDATE devspaces SET owner_org = $3
-            WHERE owner_issuer = $1 AND owner_subject = $2
-            RETURNING id
-            "#,
-        )
-        .bind(issuer)
-        .bind(&subject.id)
-        .bind(&subject.org)
-        .fetch_optional(&self.pool)
-        .await?;
-        if let Some(id) = found {
-            return Ok(id);
-        }
-        let id = owner_devspace_id(issuer, &subject.id);
-        let created: Option<String> = sqlx::query_scalar(
-            r#"
-            INSERT INTO devspaces (id, owner_issuer, owner_subject, owner_org)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT DO NOTHING
-            RETURNING id
-            "#,
-        )
-        .bind(&id)
-        .bind(issuer)
-        .bind(&subject.id)
-        .bind(&subject.org)
-        .fetch_optional(&self.pool)
-        .await?;
-        if let Some(id) = created {
-            return Ok(id);
-        }
-        // Either a concurrent first sign-in created it, or the id is someone else's.
-        let raced: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM devspaces WHERE owner_issuer = $1 AND owner_subject = $2",
-        )
-        .bind(issuer)
-        .bind(&subject.id)
-        .fetch_optional(&self.pool)
-        .await?;
-        raced.ok_or_else(|| {
-            anyhow::anyhow!(
-                "devspace id {id} already exists without this owner; attach it with `rroflow-ingest claim`"
-            )
-        })
-    }
-
     /// Make an existing devspace (one registered by ingest key) owned by a Nomen account, so
     /// that account's sign-in opens it. Refuses when the devspace has another owner, or the
     /// account already owns a devspace with turns in it (an empty one is removed).
@@ -189,28 +133,33 @@ impl PgStore {
         subject: &str,
     ) -> anyhow::Result<()> {
         let mut tx = self.pool.begin().await?;
-        let owner: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT owner_issuer, owner_subject FROM devspaces WHERE id = $1 FOR UPDATE",
+        let owner: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT owner_issuer, owner_subject, organization_id FROM devspaces WHERE id = $1 FOR UPDATE",
         )
         .bind(devspace)
         .fetch_optional(&mut *tx)
         .await?;
         match owner {
             None => anyhow::bail!("no devspace {devspace}"),
-            Some((Some(i), Some(s))) if i == issuer && s == subject => return Ok(()),
-            Some((Some(_), Some(_))) => {
+            Some((Some(i), Some(s), _)) if i == issuer && s == subject => return Ok(()),
+            Some((Some(_), Some(_), _)) => {
                 anyhow::bail!("devspace {devspace} is owned by another account")
+            }
+            Some((_, _, Some(_))) => {
+                anyhow::bail!("devspace {devspace} belongs to an organization")
             }
             Some(_) => {}
         }
-        let other: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM devspaces WHERE owner_issuer = $1 AND owner_subject = $2",
+        let other: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, organization_id FROM devspaces WHERE owner_issuer = $1 AND owner_subject = $2",
         )
         .bind(issuer)
         .bind(subject)
         .fetch_optional(&mut *tx)
         .await?;
-        if let Some(other) = other {
+        let organization = other.as_ref().map(|(_, organization)| organization.clone());
+        let replaced = other.as_ref().map(|(other, _)| other.clone());
+        if let Some((other, _)) = other {
             // A devspace made by signing in before claiming is empty: it gives way. One
             // that holds turns does not; merging data is not done here.
             let turns: i64 =
@@ -222,17 +171,31 @@ impl PgStore {
                 turns == 0,
                 "account {subject} already owns devspace {other} with {turns} turns; one devspace per account"
             );
+            // Removing it would silently cut off whatever is delivering with its keys.
+            let keys: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM project_keys WHERE devspace_id = $1 AND revoked_at IS NULL",
+            )
+            .bind(&other)
+            .fetch_one(&mut *tx)
+            .await?;
+            anyhow::ensure!(
+                keys == 0,
+                "devspace {other} has {keys} active key(s); revoke them before it can be replaced"
+            );
             sqlx::query("DELETE FROM devspaces WHERE id = $1")
                 .bind(&other)
                 .execute(&mut *tx)
                 .await?;
         }
-        sqlx::query("UPDATE devspaces SET owner_issuer = $2, owner_subject = $3 WHERE id = $1")
-            .bind(devspace)
-            .bind(issuer)
-            .bind(subject)
-            .execute(&mut *tx)
-            .await?;
+        crate::tenancy::attach_claimed(
+            &mut tx,
+            devspace,
+            issuer,
+            subject,
+            organization,
+            replaced.as_deref(),
+        )
+        .await?;
         tx.commit().await?;
         Ok(())
     }

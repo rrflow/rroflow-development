@@ -896,7 +896,7 @@ async fn config_rejects_unsafe_ids_and_shared_keys() {
 pub(crate) struct FakeNomen {
     pub(crate) issuer: String,
     pub(crate) answers: std::sync::Mutex<HashMap<String, serde_json::Value>>,
-    status: std::sync::atomic::AtomicU16,
+    pub(crate) status: std::sync::atomic::AtomicU16,
 }
 
 pub(crate) async fn fake_nomen() -> Arc<FakeNomen> {
@@ -928,8 +928,8 @@ pub(crate) async fn fake_nomen() -> Arc<FakeNomen> {
     fake
 }
 
-const NOMEN_PROJECT: &str = "rroflow-project";
-const NOMEN_CLIENT: &str = "rroflow-cli";
+pub(crate) const NOMEN_PROJECT: &str = "rroflow-project";
+pub(crate) const NOMEN_CLIENT: &str = "rroflow-cli";
 
 pub(crate) fn signed_in(issuer: &str, sub: &str) -> serde_json::Value {
     let exp = std::time::SystemTime::now()
@@ -1548,7 +1548,7 @@ async fn settings_migration_preserves_old_choices_and_refuses_old_writers() {
     tx.rollback().await.unwrap();
 }
 
-fn source_health_report(sequence: u64) -> serde_json::Value {
+pub(crate) fn source_health_report(sequence: u64) -> serde_json::Value {
     serde_json::json!({"schema":"rroflow.source-health/v1","source_id":"00000000-0000-4000-8000-000000000001","sequence":sequence,"observed_at":"2026-10-27T00:00:00Z","collector_version":"0.3.0","pending_revisions":2,"pending_bytes":128,"journal_bytes":256,"oldest_pending_at":"2026-10-26T23:00:00Z","capture_errors":1,"delivery_ok":false,"signal_settings_revision":2})
 }
 

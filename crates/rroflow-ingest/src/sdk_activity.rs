@@ -259,7 +259,7 @@ pub(crate) async fn save_review(
     headers: HeaderMap,
     Json(r): Json<ReviewRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let caller = st.caller(&headers).await?;
+    let caller = st.writer(&headers).await?;
     let Store::Postgres(pg) = st.store.as_ref() else {
         return Err(ApiError::BadRequest("SDK reviews need PostgreSQL.".into()));
     };

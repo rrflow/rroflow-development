@@ -26,7 +26,7 @@ pub(crate) async fn ingest(
     headers: HeaderMap,
     Json(batch): Json<Batch>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st.sender(&headers).await?.devspace;
     if batch.events.len() > st.max_batch {
         return Err(ApiError::BadRequest("capture batch exceeds limit".into()));
     }
