@@ -68,6 +68,7 @@ type Existing = (String, PgJson<Value>, Option<PgJson<Value>>);
 
 fn claims(value: &Value) -> Value {
     let mut claims = serde_json::Map::new();
+    let mut omitted = vec![];
     // No prompt, response, tool payload, local path, key or identity-provider claims.
     for field in [
         "agent",
@@ -84,13 +85,31 @@ fn claims(value: &Value) -> Value {
         "project",
     ] {
         if let Some(text) = value.get(field).and_then(Value::as_str) {
-            claims.insert(
-                field.into(),
-                Value::String(text.chars().take(500).collect()),
-            );
+            if text.chars().take(501).count() > 500 {
+                omitted.push(field);
+            } else {
+                claims.insert(field.into(), Value::String(text.into()));
+            }
         }
     }
+    if !omitted.is_empty() {
+        claims.insert("omitted_over_limit".into(), json!(omitted));
+    }
     Value::Object(claims)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn claims_do_not_copy_content_invent_methods_or_silently_shorten_identifiers() {
+        let input = serde_json::json!({"collector":"c".repeat(501),"agent":"codex",
+            "content":{"input":"private prompt"},"cwd":"private path",
+            "credential":"private key","capture_method":"client speculation"});
+        assert_eq!(
+            super::claims(&input),
+            serde_json::json!({"agent":"codex","omitted_over_limit":["collector"]})
+        );
+    }
 }
 
 /// Must run under the project's write lock, before writing the records, in that same

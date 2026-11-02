@@ -16,6 +16,8 @@ Collector fields are explicitly **claimed**. Missing capture method, machine,
 repository or SDK metadata remains unknown; the endpoint is not evidence of which
 provider really performed an action. Content is not copied into receipts. A digest
 binds a receipt to the stored record, including server-derived signal results.
+Whitelisted claim strings over 500 characters are omitted and named in
+`omitted_over_limit`; they are never silently shortened into a different identifier.
 
 Existing records have no receipt. An identical replay preserves that unknown state
 or the existing receipt; it never fabricates a sender, refreshes receipt time, or
