@@ -16,6 +16,7 @@ import {
 import { Dialog, FlowArt, Icon } from "./ui";
 import "./styles.css";
 import { AccountPage } from "./account";
+import { DevicePage } from "./device";
 
 const brand = (name: string) =>
   document.querySelector(`[data-brand="${name}"]`)?.textContent || "";
@@ -680,6 +681,7 @@ function App() {
             {data && (
               <div className="account">
                 <span>{data.user.name || "Your account"}</span>
+                <a href="/app/device">Collectors</a>
                 <button
                   className="text-button"
                   disabled={outBusy}
@@ -966,6 +968,6 @@ function App() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    {location.pathname === "/app/account" ? <AccountPage name={identity.name} /> : <App />}
+    {location.pathname === "/app/account" ? <AccountPage name={identity.name} /> : location.pathname === "/app/device" ? <DevicePage name={identity.name} /> : <App />}
   </StrictMode>,
 );

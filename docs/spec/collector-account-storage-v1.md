@@ -61,9 +61,9 @@ The issuer and ingest in this test are disposable protocol fixtures, not real AI
 provider traffic or deployed RROFLOW accounts.
 
 Serialization alone does not recover a refresh response lost after the issuer has
-rotated a token. Native device authorization must still implement revocable,
-account-bound grants, bounded approval/polling, and durable retry identity with
-server-side replay handling before it is considered complete. Existing Nomen
+rotated a token. The [native device slice](native-device-authorization-v1.md) implements revocable,
+account-bound grants, bounded approval/polling and durable refresh intent with
+server-side retry receipts; it is under local qualification, not deployed. Existing Nomen
 refresh behavior remains bounded by that issuer's policy. The native CLI must not
 ask for a member's password or silently turn a browser session into a device grant.
 The protocol inputs are [RFC 8628](https://www.rfc-editor.org/rfc/rfc8628.html)

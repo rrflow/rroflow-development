@@ -9,6 +9,8 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+mod device_tests;
+
 const ORIGIN: &str = "https://accounts.example.test";
 const PASSWORD: &str = "a long private test phrase";
 const NEW_PASSWORD: &str = "a different long test phrase";

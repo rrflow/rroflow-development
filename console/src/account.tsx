@@ -15,6 +15,8 @@ type Options = {
 type Mode = "login" | "register" | "reset" | "complete";
 
 export function AccountPage({ name }: { name: string }) {
+  // A closed destination choice, never an arbitrary redirect URL.
+  const deviceReturn = new URLSearchParams(location.search).get("next") === "device";
   const [options, setOptions] = useState<Options | null>(null);
   const [mode, setMode] = useState<Mode>(initialToken ? "complete" : "login");
   const [token, setToken] = useState(initialToken);
@@ -124,7 +126,7 @@ export function AccountPage({ name }: { name: string }) {
           : "Please try again.";
       if (!response.ok) throw new Error(message);
       if (mode === "login") {
-        location.assign("/app/manage");
+        location.assign(deviceReturn ? "/app/device" : "/app/manage");
         return;
       }
       setNotice(message);
@@ -271,7 +273,7 @@ export function AccountPage({ name }: { name: string }) {
         {options && !options.enabled && (
           <p>Email sign-in is not available on this installation.</p>
         )}
-        {options?.federation_enabled && (
+        {options?.federation_enabled && !deviceReturn && (
           <a className="button secondary" href="/auth/federation">
             Continue with Shippin
           </a>

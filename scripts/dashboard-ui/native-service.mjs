@@ -8,7 +8,7 @@ import {randomBytes,createDecipheriv,createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import pg from 'pg';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-export async function nativeFixture(database) {
+export async function nativeFixture(database,{device=false,resourceLoopback=false}={}) {
   const schema='native_ui_'+randomBytes(12).toString('hex');
   const admin=new pg.Client({connectionString:database});await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -30,7 +30,12 @@ host = "smtp.example.test"
 port = 587
 from = "accounts@example.test"
 credentials_file = ${tomlPath(join(root,'not-used.json'))}
-`);
+${device ? `[accounts.device]
+resource = "${resourceLoopback ? base : origin}"
+[[accounts.device.clients]]
+id = "fixture-collector"
+name = "Fixture collector"
+` : ''}`);
   const env={...process.env,RROFLOW_DATABASE_URL:url.toString()};delete env.RROFLOW_INGEST_CONFIG;
   const child=spawn(resolve(process.env.RROFLOW_UI_BINARY),['serve','--config',config],{env,windowsHide:true,stdio:['ignore','ignore','pipe']});
   let stderr='';child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-4000);});
@@ -38,7 +43,7 @@ credentials_file = ${tomlPath(join(root,'not-used.json'))}
   const close=async()=>{child.kill();await Promise.race([exited,sleep(5000)]);await sql.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();};
   try {
     let ready=false;for(let i=0;i<200;i++){try{if((await fetch(base+'/readyz')).ok){ready=true;break;}}catch{}await sleep(50);}if(!ready)throw new Error('Native fixture did not become ready: '+stderr);
-    return {origin,close,sql,
+    return {origin,base,close,sql,
       async connect(page){
         // Browser stays on HTTPS and enforces Secure cookies. Requests are carried
         // to the real loopback Rust service as a TLS-terminating proxy would do.

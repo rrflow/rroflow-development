@@ -4,25 +4,29 @@
 //! b5d974a); the HTTP layer is blocking here because this CLI is. Keep the two in step until
 //! they share a crate.
 //!
-//! Sign-in is OAuth device authorization (RFC 8628) against Nomen, Shippin's identity
-//! provider: the terminal shows a short code and a URL, the person opens it on any device,
-//! and the tokens arrive here. No browser on this machine, no local port, no secret in the
-//! binary: the CLI is a public client. The tokens rest in one owner-only file under the
-//! config directory (`account.json`, 0600 on Unix; inherited user-directory ACLs on
-//! Windows, written whole and renamed into place under a process lock). The
-//! ingest checks the access token by introspection, so a stolen file is a stolen token and
-//! nothing more, and `logout` revokes it.
-//!
-//! The access token is refreshed when within five minutes of expiry. When Nomen cannot be
-//! reached, the account on file stays "signed in (offline)" for seven days past expiry,
-//! then "expired"; nothing here deletes it but `logout`.
+//! Sign-in explicitly selects native RROFLOW device authorization or Nomen's
+//! device adapter. A person approves a short code in their browser; the CLI never
+//! receives a password. Tokens live in a private atomic account file, serialized
+//! by an OS process lock. Native refresh intent is durable before network use,
+//! so a restarted collector can recover a committed response after an outage.
+//! Nomen retains its issuer-specific refresh and seven-day offline behavior.
+//! Native grants instead have a fixed server-provided lifetime and project scope.
 
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod native;
 mod storage;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AuthMethod {
+    #[default]
+    Nomen,
+    Native,
+}
 
 pub(crate) const FILE_NAME: &str = "account.json";
 const SCOPE: &str = "openid profile email offline_access urn:zitadel:iam:user:resourceowner";
@@ -47,6 +51,10 @@ fn scope(project_id: Option<&str>) -> String {
 /// A signed-in account. The tokens are never printed; `Debug` shows the rest.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Account {
+    #[serde(default)]
+    pub auth_method: AuthMethod,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native: Option<native::Grant>,
     pub issuer: String,
     pub client_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -98,7 +106,27 @@ impl Account {
     }
 
     pub fn standing(&self, now: u64) -> Standing {
-        if now + REFRESH_AHEAD.as_secs() < self.expires_at {
+        if let Some(grant) = &self.native {
+            if grant.invalidated || now >= grant.expires_at {
+                return Standing::Expired;
+            }
+            if grant.refresh_request.is_some() {
+                return Standing::Refresh;
+            }
+            if now >= self.expires_at {
+                return Standing::Offline {
+                    grace_ends_at: grant.expires_at,
+                };
+            }
+        }
+        // Native deployments can issue five-minute tokens. Refreshing those five
+        // minutes early would rotate on every read and exhaust the grant limit.
+        let ahead = if self.native.is_some() {
+            60
+        } else {
+            REFRESH_AHEAD.as_secs()
+        };
+        if now.saturating_add(ahead) < self.expires_at {
             Standing::Fresh
         } else if now < self.expires_at {
             Standing::Refresh
@@ -391,6 +419,8 @@ impl Issuer {
         valid_subject(&info.sub)
             .map_err(|why| Refusal::Unavailable(format!("Nomen's account id {why}")))?;
         Ok(Account {
+            auth_method: AuthMethod::Nomen,
+            native: None,
             issuer: self.issuer.clone(),
             client_id: self.client_id.clone(),
             project_id: self.project_id.clone(),
@@ -483,6 +513,12 @@ fn current_checked(
         return Ok(None);
     };
     validate(account)?;
+    if account.auth_method == AuthMethod::Native {
+        return native::current(&locked, account.clone()).map(Some);
+    }
+    if account.native.is_some() {
+        return Err("native grant requires native auth_method".into());
+    }
     if matches!(
         account.standing(unix_now()),
         Standing::Fresh | Standing::Expired
@@ -505,7 +541,7 @@ pub(crate) fn standing_name(standing: Standing) -> String {
     match standing {
         Standing::Fresh | Standing::Refresh => "signed in".into(),
         Standing::Offline { grace_ends_at } => format!(
-            "signed in (offline: Nomen unreachable; sign in again within {} h)",
+            "signed in (offline: sign-in service unreachable; sign in again within {} h)",
             grace_ends_at.saturating_sub(unix_now()) / 3600
         ),
         Standing::Expired => "expired: run `rroflow login`".into(),
@@ -574,14 +610,9 @@ pub(crate) fn saved_sender(path: &Path) -> anyhow::Result<Option<Sender>> {
 
 /// `rroflow login`: device sign-in, the account written owner-only, then the devspace
 /// the ingest opens for it.
-pub(crate) fn login(
-    issuer: &str,
-    client_id: &str,
-    project_id: Option<&str>,
-    ingest_url: &str,
-) -> anyhow::Result<()> {
+pub(crate) fn login(selected: &crate::deployment::Deployment) -> anyhow::Result<()> {
+    let ingest_url = &selected.ingest_url;
     crate::capture::endpoint(ingest_url)?;
-    let nomen = Issuer::new(issuer, client_id, project_id).map_err(anyhow::Error::msg)?;
     let path = account_path()?;
     let (before, revision) = {
         let locked = storage::LockedAccount::acquire(&path).map_err(anyhow::Error::msg)?;
@@ -592,9 +623,18 @@ pub(crate) fn login(
     };
     // A human can take minutes to confirm. Do not lock out active capture while
     // waiting; refuse to replace an account that changed meanwhile.
-    let account = nomen.login(ingest_url, &mut std::io::stdout())?;
+    let account = match selected.auth_method {
+        AuthMethod::Nomen => Issuer::new(
+            &selected.issuer,
+            &selected.client_id,
+            selected.project_id.as_deref(),
+        )
+        .map_err(anyhow::Error::msg)?
+        .login(ingest_url, &mut std::io::stdout())?,
+        AuthMethod::Native => native::login(selected, &mut std::io::stdout())?,
+    };
     if let Err(why) = commit_login(&path, &before, &revision, &account) {
-        let _ = nomen.revoke(&account);
+        let _ = revoke(&account);
         return Err(anyhow::Error::msg(why));
     }
     println!(
@@ -630,6 +670,18 @@ fn commit_login(
     locked.write(account)
 }
 
+fn revoke(account: &Account) -> Result<(), Refusal> {
+    match account.auth_method {
+        AuthMethod::Nomen if account.native.is_none() => Issuer::for_account(account)
+            .map_err(Refusal::Unavailable)?
+            .revoke(account),
+        AuthMethod::Native => native::revoke(account),
+        _ => Err(Refusal::Unavailable(
+            "account authentication method does not match its grant".into(),
+        )),
+    }
+}
+
 /// `rroflow logout`: revoke the tokens at Nomen (best effort) and remove the file.
 pub(crate) fn logout() -> anyhow::Result<()> {
     let path = account_path()?;
@@ -648,13 +700,12 @@ pub(crate) fn logout() -> anyhow::Result<()> {
     };
     match stored {
         Some(account) => {
-            match Issuer::for_account(&account).map(|n| n.revoke(&account)) {
-                Ok(Ok(())) => println!("Tokens revoked at {}.", account.issuer),
-                Ok(Err(why)) => println!(
+            match revoke(&account) {
+                Ok(()) => println!("Tokens revoked at {}.", account.issuer),
+                Err(why) => println!(
                     "Could not revoke the tokens at {} ({why}); they expire on their own.",
                     account.issuer
                 ),
-                Err(why) => println!("Not revoking: {why}"),
             }
             locked.remove().map_err(anyhow::Error::msg)?;
             println!("Signed out ({} removed).", path.display());
@@ -685,7 +736,8 @@ pub(crate) fn whoami(json: bool) -> anyhow::Result<()> {
     if json {
         let out = serde_json::json!({
             "account": account.as_ref().map(|a| serde_json::json!({
-                "issuer": a.issuer, "subject": a.subject, "username": a.username,
+                "issuer": a.issuer, "subject": a.subject, "username": a.username, "auth_method": a.auth_method,
+                "project_id": a.native.as_ref().map(|g| &g.project_id),
                 "standing": standing_name(a.standing(unix_now())), "ingest_url": a.ingest_url,
             })),
             "sending_as": sender.as_ref().map(|s| &s.via),
@@ -704,7 +756,7 @@ pub(crate) fn whoami(json: bool) -> anyhow::Result<()> {
             a.issuer,
             standing_name(a.standing(unix_now()))
         ),
-        None => println!("Not signed in: `rroflow login` signs in with your Shippin account."),
+        None => println!("Not signed in: `rroflow login` connects this collector to your account."),
     }
     match (&sender, &devspace) {
         (Some(s), Some(Ok(who))) => println!(

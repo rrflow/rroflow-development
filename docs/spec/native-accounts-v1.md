@@ -2,8 +2,9 @@
 
 Status: merged in PR50 with PostgreSQL and packaged browser test evidence. Not deployed.
 The owner accepted native accounts alongside Nomen in Shippin ADR 0013. This slice
-implements browser signup, sign-in and recovery. Native CLI device authorization,
-explicit account linking, MFA/passkeys and public-launch security review remain open.
+implements browser signup, sign-in and recovery. [Native CLI device authorization](native-device-authorization-v1.md)
+is a separate slice under local qualification. Explicit account linking, MFA/passkeys
+and public-launch security review remain open.
 
 ## A person's journey
 

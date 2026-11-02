@@ -457,22 +457,38 @@ impl AppState {
                 write_only: true,
             });
         }
-        if token.starts_with(accounts::SESSION_PREFIX) {
+        if token.starts_with(accounts::SESSION_PREFIX)
+            || token.starts_with(accounts::device::ACCESS_PREFIX)
+        {
             let accounts = self.accounts.as_ref().ok_or(ApiError::Unauthorized)?;
-            let subject = accounts
-                .subject(token)
-                .await
-                .map_err(|_| ApiError::AccountUnavailable)?
-                .ok_or(ApiError::Unauthorized)?;
+            let device = token.starts_with(accounts::device::ACCESS_PREFIX);
+            let (subject, project) = if device {
+                let (subject, project) = accounts
+                    .device_subject(token)
+                    .await
+                    .map_err(|_| ApiError::AccountUnavailable)?
+                    .ok_or(ApiError::Unauthorized)?;
+                refuse_other(&project)?;
+                (subject, Some(project))
+            } else {
+                (
+                    accounts
+                        .subject(token)
+                        .await
+                        .map_err(|_| ApiError::AccountUnavailable)?
+                        .ok_or(ApiError::Unauthorized)?,
+                    None,
+                )
+            };
             let membership = self
                 .store
-                .membership(accounts::ISSUER, &subject, requested)
+                .membership(accounts::ISSUER, &subject, project.as_deref().or(requested))
                 .await
                 .map_err(internal)?
                 .ok_or(ApiError::Missing)?;
             return Ok(Caller {
                 devspace: membership.devspace,
-                via: "native",
+                via: if device { "native_device" } else { "native" },
                 subject: Some(subject.id),
                 org: None,
                 name: subject.name,
@@ -980,6 +996,38 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
                 .route("/auth/native/request", post(accounts::http::request))
                 .route("/auth/native/login", post(accounts::http::login))
                 .route("/auth/native/complete", post(accounts::http::complete))
+                .route(
+                    "/auth/native/device/config",
+                    get(accounts::device_http::config),
+                )
+                .route(
+                    "/auth/native/device/start",
+                    post(accounts::device_http::start),
+                )
+                .route(
+                    "/auth/native/device/token",
+                    post(accounts::device_http::token),
+                )
+                .route(
+                    "/auth/native/device/revoke",
+                    post(accounts::device_http::revoke),
+                )
+                .route(
+                    "/auth/native/device/inspect",
+                    post(accounts::device_http::inspect),
+                )
+                .route(
+                    "/auth/native/device/decide",
+                    post(accounts::device_http::decide),
+                )
+                .route(
+                    "/auth/native/device/grants",
+                    post(accounts::device_http::grants),
+                )
+                .route(
+                    "/auth/native/device/disconnect",
+                    post(accounts::device_http::disconnect),
+                )
                 .layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route("/auth/config", get(web_auth::config))
@@ -1081,6 +1129,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/app/", get(dashboard))
         .route("/app/manage", get(member_console::page))
         .route("/app/account", get(member_console::page))
+        .route("/app/device", get(member_console::page))
         .route("/assets/member-console/app.js", get(member_console::script))
         .route(
             "/assets/member-console/index.css",

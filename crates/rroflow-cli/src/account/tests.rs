@@ -258,6 +258,8 @@ fn current_refreshes_when_due_and_keeps_the_file_otherwise() {
 
     let now = unix_now();
     let account = Account {
+        auth_method: AuthMethod::Nomen,
+        native: None,
         issuer: issuer.clone(),
         client_id: CLIENT.into(),
         project_id: Some(PROJECT.into()),
@@ -300,6 +302,8 @@ fn current_refreshes_when_due_and_keeps_the_file_otherwise() {
 
 fn stored_fixture() -> Account {
     Account {
+        auth_method: AuthMethod::Nomen,
+        native: None,
         issuer: DEFAULT_ISSUER.into(),
         client_id: CLIENT.into(),
         project_id: Some(PROJECT.into()),

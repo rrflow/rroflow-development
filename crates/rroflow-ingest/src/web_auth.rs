@@ -455,6 +455,7 @@ pub(crate) async fn browser_session(
             }
         }
     }
+    denied |= !crate::accounts::device_http::route_allowed(&req);
     let mut r = if unavailable {
         (
             StatusCode::SERVICE_UNAVAILABLE,

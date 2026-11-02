@@ -12,7 +12,10 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Semaphore;
 use zeroize::Zeroizing;
 
+pub(crate) mod device;
+pub(crate) mod device_http;
 pub(crate) mod http;
+pub use device::{DeviceClient, DeviceConfig};
 mod mail;
 pub use mail::{MailWorker, SmtpConfig};
 pub(crate) const ISSUER: &str = "rroflow:native:v1";
@@ -37,6 +40,7 @@ pub struct AccountConfig {
     pub global_attempts: i32,
     pub email_attempts: i32,
     pub smtp: Option<SmtpConfig>,
+    pub device: Option<DeviceConfig>,
 }
 impl Default for AccountConfig {
     fn default() -> Self {
@@ -53,6 +57,7 @@ impl Default for AccountConfig {
             global_attempts: 300,
             email_attempts: 5,
             smtp: None,
+            device: None,
         }
     }
 }
@@ -134,6 +139,9 @@ impl Accounts {
         if let Some(smtp) = &cfg.smtp {
             smtp.validate()?;
         }
+        if let Some(device) = &cfg.device {
+            device.validate()?;
+        }
         ensure!(
             !cfg.signup_enabled || cfg.smtp.is_some(),
             "signup requires configured email delivery"
@@ -198,6 +206,21 @@ impl Accounts {
 
     /// Store-level abuse bounds are shared across processes; denied requests don't grow the table.
     pub(crate) async fn allow(&self, operation: &str, subject: &str) -> Result<bool> {
+        self.allow_limits(
+            operation,
+            subject,
+            self.cfg.global_attempts,
+            self.cfg.email_attempts,
+        )
+        .await
+    }
+    async fn allow_limits(
+        &self,
+        operation: &str,
+        subject: &str,
+        global_limit: i32,
+        subject_limit: i32,
+    ) -> Result<bool> {
         let scope = format!("{}/{operation}", self.context);
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
@@ -212,8 +235,8 @@ impl Accounts {
         .await?;
         let mut allowed = true;
         for (subject, limit) in [
-            ("global".to_string(), self.cfg.global_attempts),
-            (format!("email:{subject}"), self.cfg.email_attempts),
+            ("global".to_string(), global_limit),
+            (format!("email:{subject}"), subject_limit),
         ] {
             let digest = hash_key(&subject);
             let n: Option<i32> = sqlx::query_scalar(
