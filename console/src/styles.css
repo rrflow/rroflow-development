@@ -1002,3 +1002,61 @@ dialog form {
     animation: none !important;
   }
 }
+
+.account-layout {
+  max-width: 1100px;
+  margin: auto;
+  padding: var(--space-8);
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-12);
+  align-items: center;
+}
+.account-story {
+  max-width: 450px;
+}
+.account-story svg {
+  width: 100%;
+  max-height: 270px;
+  margin-block: var(--space-8);
+}
+.account-form {
+  padding: var(--space-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.account-form h1 {
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  line-height: 1.15;
+}
+.account-form form {
+  display: grid;
+  gap: var(--space-3);
+}
+.account-form input {
+  width: 100%;
+  min-width: 0;
+}
+.account-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-block: var(--space-6);
+}
+@media (max-width: 700px) {
+  .account-layout {
+    grid-template-columns: 1fr;
+    padding: var(--space-4);
+    gap: var(--space-6);
+  }
+  .account-story svg,
+  .account-story h2,
+  .account-story p {
+    display: none;
+  }
+  .account-form {
+    padding: var(--space-6);
+  }
+}

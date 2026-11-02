@@ -66,8 +66,9 @@ browser login is disabled. It exposes no key IDs, file paths or credentials.
 OAuth state/PKCE attempts remain process-local and expire after ten minutes; a
 restart during sign-in requires starting sign-in again, and callback routing must
 reach the instance that began that attempt. Established sessions can be shared.
-Durable login attempts, native passwords, email verification/reset, native device
-flow, explicit account linking and public-signup security review remain slice-2 work.
+Native passwords and email verification/reset are being verified in the separate
+[native accounts](native-accounts-v1.md) change. Durable federated login attempts, native
+device flow, explicit account linking and public-signup review remain slice-2 work.
 
 Tests use isolated PostgreSQL schemas and fake federation identities. They must
 prove reconstruction with independent instances, cross-instance logout, expiry,

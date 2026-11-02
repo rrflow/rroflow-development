@@ -535,7 +535,7 @@
     try {
       const member = await api('/v1/whoami');
       if (g !== generation) return;
-      $('member-context').textContent = member.via === 'nomen' ? (member.name ? 'Signed in as ' + member.name : 'Signed in with your account') : 'Devspace key access';
+      $('member-context').textContent = member.user ? (member.name ? 'Signed in as ' + member.name : 'Signed in with your account') : 'Devspace key access';
       if (selectedWorkspace) $('member-context').textContent += ' · Selected project';
       $('manage-projects').hidden = !member.user;
       signedIn = true; $('login').hidden = true; $('app').hidden = false; $('key').value = '';

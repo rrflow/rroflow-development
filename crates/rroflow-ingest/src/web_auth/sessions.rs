@@ -1,27 +1,16 @@
 //! Durable credential envelopes. PostgreSQL sees cookie digests and AEAD ciphertext,
 //! never an authenticating cookie or a plaintext federation access token.
+use crate::secret_box::SecretBox;
 use anyhow::{Context, Result, ensure};
-use aws_lc_rs::aead::{AES_256_GCM, Aad, Nonce, RandomizedNonceKey};
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
-use std::collections::BTreeMap;
-use std::io::Read;
 use std::path::Path;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct KeyFile {
-    active: String,
-    keys: BTreeMap<String, String>,
-}
 
 pub(super) struct DurableSessions {
     pool: PgPool,
     context: String,
-    active: String,
-    keys: BTreeMap<String, RandomizedNonceKey>,
+    cipher: SecretBox,
     capacity: i64,
 }
 
@@ -32,52 +21,11 @@ impl DurableSessions {
         context: &[&str],
         capacity: usize,
     ) -> Result<Self> {
-        let file = std::fs::File::open(path).context("cannot open browser session key file")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            ensure!(
-                file.metadata()?.permissions().mode() & 0o077 == 0,
-                "browser session key file must be private (mode 0600)"
-            );
-        }
-        let mut bytes = Vec::new();
-        file.take(16385).read_to_end(&mut bytes)?;
-        ensure!(
-            bytes.len() <= 16384,
-            "browser session key file exceeds limit"
-        );
-        let cfg: KeyFile = serde_json::from_slice(&bytes)
-            .map_err(|_| anyhow::anyhow!("invalid browser session key file"))?;
-        ensure!(
-            !cfg.keys.is_empty() && cfg.keys.len() <= 3 && cfg.keys.contains_key(&cfg.active),
-            "session key ring needs an active key and at most three keys"
-        );
-        let mut keys = BTreeMap::new();
-        for (id, value) in cfg.keys {
-            ensure!(
-                !id.is_empty()
-                    && id.len() <= 64
-                    && id
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'),
-                "invalid session key id"
-            );
-            ensure!(
-                value.len() == 64,
-                "session encryption keys must be 32 bytes of hex"
-            );
-            let raw = hex::decode(value)
-                .map_err(|_| anyhow::anyhow!("invalid session encryption key"))?;
-            let key = RandomizedNonceKey::new(&AES_256_GCM, &raw)
-                .map_err(|_| anyhow::anyhow!("invalid session encryption key"))?;
-            keys.insert(id, key);
-        }
+        let cipher = SecretBox::load(path)?;
         Ok(Self {
             pool,
             context: hex::encode(Sha256::digest(serde_json::to_vec(context)?)),
-            active: cfg.active,
-            keys,
+            cipher,
             capacity: i64::try_from(capacity)?,
         })
     }
@@ -105,21 +53,15 @@ impl DurableSessions {
             return Ok(None);
         };
         let key_id: String = row.try_get("key_id")?;
-        let Some(key) = self.keys.get(&key_id) else {
-            return Ok(None);
-        };
         let user: String = row.try_get("user_id")?;
         let expiry: DateTime<Utc> = row.try_get("expires_at")?;
         let nonce: Vec<u8> = row.try_get("nonce")?;
-        let Ok(nonce) = Nonce::try_assume_unique_for_key(&nonce) else {
-            return Ok(None);
-        };
-        let mut ciphertext: Vec<u8> = row.try_get("ciphertext")?;
+        let ciphertext: Vec<u8> = row.try_get("ciphertext")?;
         let aad = self.aad(&digest, &user, &key_id, expiry.timestamp());
-        let Ok(plain) = key.open_in_place(nonce, Aad::from(aad), &mut ciphertext) else {
-            return Ok(None);
-        };
-        Ok(std::str::from_utf8(plain).ok().map(str::to_owned))
+        Ok(self
+            .cipher
+            .open(&key_id, &nonce, &ciphertext, &aad)
+            .and_then(|plain| String::from_utf8(plain).ok()))
     }
 
     pub(super) async fn put(
@@ -166,13 +108,10 @@ impl DurableSessions {
                 .await?;
         let expiry = now + i64::try_from(ttl)?;
         let digest = crate::hash_key(id);
-        let aad = self.aad(&digest, user, &self.active, expiry);
-        let mut ciphertext = token.as_bytes().to_vec();
-        let nonce = self.keys[&self.active]
-            .seal_in_place_append_tag(Aad::from(aad), &mut ciphertext)
-            .map_err(|_| anyhow::anyhow!("session encryption failed"))?;
+        let aad = self.aad(&digest, user, self.cipher.active(), expiry);
+        let (nonce, ciphertext) = self.cipher.seal(token.as_bytes(), &aad)?;
         sqlx::query("INSERT INTO browser_sessions(context_sha256,session_sha256,user_id,key_id,nonce,ciphertext,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)")
-            .bind(&self.context).bind(digest).bind(user).bind(&self.active).bind(nonce.as_ref())
+            .bind(&self.context).bind(digest).bind(user).bind(self.cipher.active()).bind(nonce.as_slice())
             .bind(ciphertext).bind(DateTime::<Utc>::from_timestamp(expiry,0).context("invalid session expiry")?)
             .execute(&mut *tx).await?;
         tx.commit().await?;

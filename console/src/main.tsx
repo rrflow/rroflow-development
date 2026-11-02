@@ -15,6 +15,7 @@ import {
 } from "./api";
 import { Dialog, FlowArt, Icon } from "./ui";
 import "./styles.css";
+import { AccountPage } from "./account";
 
 const brand = (name: string) =>
   document.querySelector(`[data-brand="${name}"]`)?.textContent || "";
@@ -965,6 +966,6 @@ function App() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    {location.pathname === "/app/account" ? <AccountPage name={identity.name} /> : <App />}
   </StrictMode>,
 );

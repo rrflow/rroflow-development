@@ -10,6 +10,9 @@ repository.workspace = true
 base64 = "0.22"
 anyhow = "1.0.104"
 aws-lc-rs = "1"
+argon2 = { version = "0.6", features = ["zeroize"] }
+zeroize = "1"
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls", "aws-lc-rs", "webpki-roots"] }
 axum = "0.8.9"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
