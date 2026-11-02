@@ -356,6 +356,26 @@ test('late allowance responses cannot restore a signed-out account',async()=>{
 });
 
 const datasetFixture=()=>({mode:'available',policies:[],jobs:[],limits:{max_retained_per_purpose:10},training_enabled:false});
+test('dataset inspection explains evidence without inventing privacy, labels or missing counts',async()=>{
+  let manifest={row_count:2,sharing:'private',purpose:'signal_reviews',projection:'metrics-only/v2',contains_prompt_or_tool_content:false,training_authorized:false,qualification:'not_evaluated'};
+  const rows=[{source_kind:'sdk_operation',agent:'<img src=x>',features:{tool_calls:0,tool_errors:null},label:{verdict:'not_match'}},{source_kind:'session_turn',agent:'codex',features:{},label:null}];
+  const p=await page({signedIn:true,hash:'#datasets',intercept:async path=>path==='/v1/datasets'?{ok:true,status:200,json:async()=>datasetFixture()}:path.includes('/artifact')?{ok:true,status:200,json:async()=>({artifact:{manifest,rows},sha256:'fixture'})}:null});
+  await p.click({datasetOpen:'fixture'});
+  assert.equal(p.el.get('dataset-detail-summary').textContent,'2 examples · Private to this workspace');
+  assert.match(p.el.get('dataset-evidence-summary').innerHTML,/no prompt or tool content/);
+  assert.match(p.el.get('dataset-evidence-summary').innerHTML,/No training has been authorized/);
+  const preview=p.el.get('dataset-example-preview').innerHTML;
+  assert.match(preview,/&lt;img src=x&gt;/);assert.doesNotMatch(preview,/<img/);
+  assert.match(preview,/Signal does not match/);assert.match(preview,/Unlabelled/);
+  assert.match(preview,/Tool calls: 0 · Tool errors: Unknown/);
+  assert.equal(p.el.get('dataset-technical').open,false);
+  p.el.get('dataset-technical').open=true;manifest={};await p.click({datasetOpen:'other'});
+  assert.match(p.el.get('dataset-detail-summary').textContent,/count unavailable.*Sharing status unavailable/);
+  assert.match(p.el.get('dataset-evidence-summary').innerHTML,/Content coverage unavailable/);
+  assert.doesNotMatch(p.el.get('dataset-evidence-summary').innerHTML,/no prompt or tool content|No training has been authorized/);
+  assert.equal(p.el.get('dataset-technical').open,false);
+  await p.el.get('logout').onclick();assert.equal(p.el.get('dataset-evidence-summary').innerHTML,'');assert.equal(p.el.get('dataset-example-preview').innerHTML,'');
+});
 test('dataset consent is explicit, scoped and never sends a training grant',async()=>{
   const p=await page({signedIn:true,hash:'#datasets',intercept:async path=>path==='/v1/datasets'?{ok:true,status:200,json:async()=>datasetFixture()}:null});
   assert.equal(p.el.get('dataset-form').hidden,false);assert.equal(p.el.get('dataset-consent').checked,false);
