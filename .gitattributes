@@ -1,1 +1,3 @@
 *.sh text eol=lf
+# SQLx hashes the exact migration bytes. Checkout policy must not change them.
+crates/rroflow-ingest/migrations/*.sql text eol=lf
