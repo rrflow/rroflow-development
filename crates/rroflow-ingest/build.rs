@@ -1,8 +1,10 @@
 use sha2::{Digest, Sha256};
+mod migration_source;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=RROFLOW_BUILD_REVISION");
     println!("cargo:rerun-if-changed=migrations");
+    println!("cargo:rerun-if-changed=migration_source.rs");
     let revision = std::env::var("RROFLOW_BUILD_REVISION").unwrap_or_else(|_| "development".into());
     assert!(
         revision == "development"
@@ -28,7 +30,7 @@ fn main() {
                 .as_bytes(),
         );
         hash.update([0]);
-        hash.update(std::fs::read(path).expect("read migration"));
+        hash.update(migration_source::read(&path).expect("read canonical migration source"));
         hash.update([0]);
     }
     println!("cargo:rustc-env=RROFLOW_RELEASE_REVISION={revision}");
