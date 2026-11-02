@@ -338,7 +338,25 @@ test('SDK adapters become inspectable activity and reviewed findings in the memb
     await page.getByRole('button',{name:'Close SDK evidence'}).click();await page.evaluate(()=>{location.hash='#signals?kind=sdk';});await settled(page);await expect(page.locator('#sdk-rows .activity-row')).toHaveCount(1);
     await navigate(page,'datasets');await expect(page.locator('#dataset-readiness')).toContainText('SDK operations');
     await expect(page.locator('[data-dataset-sdk-agent="codex"]')).not.toBeChecked();
-    await page.locator('[data-dataset-sdk-agent="codex"]').check();await page.locator('#dataset-consent').check();await page.locator('#dataset-save').click();await settled(page);
+    // A save does not show the global loading indicator until after its PUT.
+    // Hold delivery to exercise a slow connection, then wait for the actual
+    // permission result before reading it through a second HTTP connection.
+    let releaseSave,saveStarted;
+    const saveGate=new Promise(resolve=>{releaseSave=resolve;});
+    const savePending=new Promise(resolve=>{saveStarted=resolve;});
+    await page.route('**/v1/datasets/policy',async route=>{saveStarted();await saveGate;await route.continue();});
+    const saveResponse=page.waitForResponse(response=>response.url()===service.base+'/v1/datasets/policy' && response.request().method()==='PUT');
+    try {
+      await page.locator('[data-dataset-sdk-agent="codex"]').check();await page.locator('#dataset-consent').check();await page.locator('#dataset-save').click();
+      await savePending;
+      await expect(page.locator('#dataset-save-status')).toHaveText('Saving permission...');
+      await expect(page.locator('#dataset-save')).toBeDisabled();
+      expect((await service.api('/v1/datasets')).body.policies).toEqual([]);
+    } finally {releaseSave();}
+    expect((await saveResponse).status()).toBe(200);
+    await expect(page.locator('#dataset-policies')).toContainText('Enabled');
+    await expect(page.locator('#dataset-consent')).not.toBeChecked();
+    await settled(page);
     const policy=(await service.api('/v1/datasets')).body.policies.find(p=>p.policy.purpose==='signal_reviews').policy;
     expect(policy.sdk_agents).toEqual(['codex']);expect(policy.agents).toEqual([]);expect(policy.all_projects).toBe(false);
     await expect.poll(async()=>{await service.work();return (await service.api('/v1/datasets')).body.jobs.some(j=>j.status==='published');},{timeout:15000}).toBe(true);
