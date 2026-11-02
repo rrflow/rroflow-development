@@ -280,6 +280,17 @@ async fn fresh_instances_share_logout_and_preserve_csrf_and_bearer_authority() {
     };
     let key = key_file(f.dir.path(), "one", &[("one", 1)]);
     let (first, web) = f.app(&key).await;
+    let response = first
+        .clone()
+        .oneshot(Request::get("/auth/config").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let public: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(
+        public,
+        json!({"enabled":true,"member_origin":ORIGIN,"session_storage":"postgres"})
+    );
     let (token, user) = f.person(&first, "300000000000000801").await;
     let (other_token, other_user) = f.person(&first, "300000000000000802").await;
     let id = web_auth::random();
