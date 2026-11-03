@@ -16,6 +16,7 @@ invalid links, excessive text and unreadable color combinations prevent startup.
 | `name` | Page titles, welcome heading and product references | 80 characters |
 | `wordmark` | Public header/footer, sign-in and workspace navigation | 24 characters |
 | `mark` | Small vector-style brand tile | 2 characters |
+| `federation_label` | Primary federated sign-in button (default Nomen); presentation only | 80 characters |
 | `tagline` | Footer and sign-in story | 160 characters |
 | `intro_title`, `intro_emphasis` | Public introduction | 120 characters each |
 | `intro_description` | Public introduction and search description | 500 characters |

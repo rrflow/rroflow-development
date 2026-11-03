@@ -52,7 +52,8 @@ fn active<'a>(st: &'a AppState, h: &HeaderMap) -> Result<&'a Accounts, Box<Respo
 pub(crate) async fn config(State(st): State<AppState>) -> Json<serde_json::Value> {
     Json(
         json!({"enabled":st.accounts.is_some(),"signup_enabled":st.accounts.as_ref().is_some_and(|a|a.cfg.signup_enabled),
-        "recovery_enabled":st.accounts.as_ref().is_some_and(|a|a.cfg.smtp.is_some()),"federation_enabled":st.web.is_some()}),
+        "recovery_enabled":st.accounts.as_ref().is_some_and(|a|a.cfg.smtp.is_some()),"federation_enabled":st.web.is_some(),
+        "federation_label":st.brand.federation_label}),
     )
 }
 #[derive(Deserialize)]

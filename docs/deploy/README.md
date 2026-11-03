@@ -1,5 +1,21 @@
 # Deploying rroflow.ai
 
+> Reconciliation, 2026-11-03: the dated record below is the historical deployment
+> plan, not a current runtime inventory. Texas remains the requested service
+> target. The owner's later identity direction is Wisconsin-hosted Nomen, with
+> no Gold dependency. Verify the configured issuer and private network access
+> before migration; do not apply the old hosts entry or Gold secret instructions
+> without that verification.
+>
+> Shippin ADR0012 separates the Astro public landing from the member console
+> (`console/`, embedded by the Rust gateway). ADR0013 permits native accounts
+> alongside Nomen; [dedicated sign-in](../spec/member-signin-v1.md) makes Nomen
+> primary when configured. Merged source is not proof of a production deployment.
+> Texas SSH identity and strict public TLS remain unverified/unresolved in the
+> current execution environment. Proposed VM IDs, addresses, data migration and
+> release installation still require preflight evidence. Preserve the public
+> landing and use the [alias boundary](../plan/public-domain-aliases.md) for WardenMesh.
+
 Date: 2026-10-27. Status: plan. This covers where rroflow.ai runs, how GitHub gets builds onto the server, and what has to move from the first install. Decisions D-4, D-7 and D-8 are in [../plan/rroflow-ai-plan.md](../plan/rroflow-ai-plan.md).
 
 ## Where it runs: Texas

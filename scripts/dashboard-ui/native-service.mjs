@@ -4,11 +4,11 @@ import {mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {createServer} from 'node:http';
-import {randomBytes,createDecipheriv,createHash} from 'node:crypto';
+import {randomBytes,createDecipheriv,createHash,generateKeyPairSync} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import pg from 'pg';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-export async function nativeFixture(database,{device=false,resourceLoopback=false}={}) {
+export async function nativeFixture(database,{device=false,resourceLoopback=false,native=true,federation=false,providerLabel="Nomen"}={}) {
   const schema='native_ui_'+randomBytes(12).toString('hex');
   const admin=new pg.Client({connectionString:database});await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -20,8 +20,7 @@ export async function nativeFixture(database,{device=false,resourceLoopback=fals
   const finder=createServer();await new Promise(r=>finder.listen(0,'127.0.0.1',r));const port=finder.address().port;await new Promise(r=>finder.close(r));
   const base=`http://127.0.0.1:${port}`,origin='https://native-account.example.test';
   const tomlPath=p=>JSON.stringify(p.replaceAll('\\','/'));
-  await writeFile(config,`listen = "127.0.0.1:${port}"
-[accounts]
+  const nativeConfig=native ? `[accounts]
 origin = "${origin}"
 encryption_keys_file = ${tomlPath(keyFile)}
 signup_enabled = true
@@ -35,7 +34,34 @@ resource = "${resourceLoopback ? base : origin}"
 [[accounts.device.clients]]
 id = "fixture-collector"
 name = "Fixture collector"
-` : ''}`);
+` : ''}` : '';
+  let federationConfig='';
+  const issuer='https://signin-nomen.example.test';
+  if(federation){
+    const identityFile=join(root,'identity.json');
+    const {privateKey}=generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs8',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}});
+    await writeFile(identityFile,JSON.stringify({type:'application',keyId:'signin-fixture',clientId:'signin-ingest',key:privateKey}),{mode:0o600});
+    federationConfig=`[nomen]
+issuer = "${issuer}"
+audiences = ["signin-project"]
+clients = ["signin-browser"]
+key_file = ${tomlPath(identityFile)}
+[browser]
+origin = "${origin}"
+client_id = "signin-browser"
+session_keys_file = ${tomlPath(keyFile)}
+`;
+  }
+  await writeFile(config,`listen = "127.0.0.1:${port}"
+${nativeConfig}
+${federationConfig}
+${!native && !federation ? `[[devspace]]
+id = "signin_unavailable_fixture"
+key_sha256 = ["${createHash('sha256').update(randomBytes(32)).digest('hex')}"]
+` : ''}
+[brand]
+federation_label = ${JSON.stringify(providerLabel)}
+`);
   const env={...process.env,RROFLOW_DATABASE_URL:url.toString()};delete env.RROFLOW_INGEST_CONFIG;
   const child=spawn(resolve(process.env.RROFLOW_UI_BINARY),['serve','--config',config],{env,windowsHide:true,stdio:['ignore','ignore','pipe']});
   let stderr='';child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-4000);});
@@ -43,7 +69,7 @@ name = "Fixture collector"
   const close=async()=>{child.kill();await Promise.race([exited,sleep(5000)]);await sql.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();};
   try {
     let ready=false;for(let i=0;i<200;i++){try{if((await fetch(base+'/readyz')).ok){ready=true;break;}}catch{}await sleep(50);}if(!ready)throw new Error('Native fixture did not become ready: '+stderr);
-    return {origin,base,close,sql,
+    return {origin,base,close,sql,issuer,
       async connect(page){
         // Browser stays on HTTPS and enforces Secure cookies. Requests are carried
         // to the real loopback Rust service as a TLS-terminating proxy would do.
