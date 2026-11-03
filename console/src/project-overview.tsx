@@ -145,9 +145,11 @@ function Agents({
 }
 export function ProjectOverview({
   project,
+  signalLibraryHref,
   onExpired,
 }: {
   project: string;
+  signalLibraryHref: string;
   onExpired: () => void;
 }) {
   const [turnData, setTurns] = useState<Load<Turns>>(initial),
@@ -307,7 +309,7 @@ export function ProjectOverview({
                     {fmt(v.usageMissing)} turns.
                   </p>
                 )}
-                <a href={monitorLink(project, "signals")}>
+                <a href={signalLibraryHref}>
                   Explore signals and create your own <Icon name="arrow" />
                 </a>
               </>

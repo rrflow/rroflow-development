@@ -18,6 +18,7 @@ import "./styles.css";
 import { AccountPage } from "./account";
 import { DevicePage } from "./device";
 import { ProjectOverview } from "./project-overview";
+import { SignalLibrary } from "./signal-library";
 
 const brand = (name: string) =>
   document.querySelector(`[data-brand="${name}"]`)?.textContent || "";
@@ -34,9 +35,10 @@ const cancelled = (e: unknown) => e instanceof Error && e.name === "AbortError";
 function route() {
   return new URLSearchParams(location.hash.slice(1));
 }
-function destination(org: string, project?: string) {
+function destination(org: string, project?: string, view?: string) {
   const q = new URLSearchParams({ org });
   if (project) q.set("project", project);
+  if (view) q.set("view", view);
   return "#" + q;
 }
 function when(value: string | null) {
@@ -277,10 +279,12 @@ function KeyDialog({
 function ProjectDetail({
   project,
   organization,
+  view,
   onExpired,
 }: {
   project: Project;
   organization: Organization;
+  view: string | null;
   onExpired: () => void;
 }) {
   const [items, setItems] = useState<ProjectKey[] | null>(null),
@@ -336,6 +340,31 @@ function ProjectDetail({
       if (alive.current) setBusy(false);
     }
   }
+  if (view === "signals")
+    return (
+      <>
+        <a
+          className="back-link"
+          href={destination(organization.id, project.id)}
+        >
+          Back to project overview
+        </a>
+        <header className="page-title">
+          <div>
+            <p className="eyebrow">{organization.name} / Project</p>
+            <h1>{project.name}</h1>
+            <p className="muted">
+              Choose what to notice, then follow each finding into its evidence.
+            </p>
+          </div>
+        </header>
+        <SignalLibrary
+          project={project.id}
+          canWrite={organization.role !== "viewer"}
+          onExpired={onExpired}
+        />
+      </>
+    );
   return (
     <>
       <a className="back-link" href={destination(organization.id)}>
@@ -368,7 +397,11 @@ function ProjectDetail({
           </a>
         ))}
       </div>
-      <ProjectOverview project={project.id} onExpired={onExpired} />
+      <ProjectOverview
+        project={project.id}
+        signalLibraryHref={destination(organization.id, project.id, "signals")}
+        onExpired={onExpired}
+      />
       <section className="panel">
         <div className="section-heading">
           <div>
@@ -798,6 +831,7 @@ function App() {
                     key={project.id}
                     project={project}
                     organization={organization}
+                    view={locationState.get("view")}
                     onExpired={expired}
                   />
                 ) : (
@@ -970,6 +1004,12 @@ function App() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    {location.pathname === "/app/account" ? <AccountPage name={identity.name} /> : location.pathname === "/app/device" ? <DevicePage name={identity.name} /> : <App />}
+    {location.pathname === "/app/account" ? (
+      <AccountPage name={identity.name} />
+    ) : location.pathname === "/app/device" ? (
+      <DevicePage name={identity.name} />
+    ) : (
+      <App />
+    )}
   </StrictMode>,
 );
