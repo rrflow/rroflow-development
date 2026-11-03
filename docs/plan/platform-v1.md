@@ -6,7 +6,8 @@ management (PR48) and durable browser sessions (PR49) are merged in source;
 see [session storage](../spec/browser-sessions-v1.md). Native browser signup/recovery is merged in PR50
 ([contract](../spec/native-accounts-v1.md)). The [native device flow](../spec/native-device-authorization-v1.md)
 is merged in PR52 with packaged browser and real CLI recovery proof. The
-[React project overview](../spec/member-project-overview-v1.md) is under qualification;
+[React project overview](../spec/member-project-overview-v1.md) is merged in PR53;
+the [member signal library](../spec/member-signal-library-v1.md) now has local workflow proof;
 explicit identity linking and full React monitoring parity remain incomplete. Nothing here
 establishes deployment. Texas activation remains
 separately blocked (see "Dependencies").
@@ -15,6 +16,9 @@ Goal (owner, 2026-11-02): RROFLOW should work the way Sentry or PostHog do, for 
 signs up, creates a project, installs an SDK or connects their agents, and from then on every
 time that project starts it reports, with provenance, into clearly organized signals. This
 builds on the [capability map](capability-map.md), which stays the owner of capability status.
+The [owner screenshot and hosted-service acceptance](../ux/owner-hosted-service-reference.md)
+makes early-access requests, administrator users/plans and the supplied dashboard
+organization explicit release requirements. Local fixtures do not satisfy that journey.
 
 ## Baseline when this plan was written
 

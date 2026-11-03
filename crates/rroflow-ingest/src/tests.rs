@@ -1318,6 +1318,8 @@ async fn custom_signals_preview_ingest_pause_and_persist_per_owner() {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(preview["evaluated"], 1);
+        let (_, identity) = call(&app, get("key-jesse", "/v1/whoami")).await;
+        assert_eq!(preview["devspace"], identity["devspace"]);
         assert_eq!(preview["unavailable"], 1);
         assert_eq!(preview["matches"].as_array().unwrap().len(), 1);
         assert_eq!(

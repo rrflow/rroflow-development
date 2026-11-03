@@ -905,7 +905,7 @@ async fn preview_signal(
         }
     }
     Ok(Json(
-        serde_json::json!({"scanned":turns.len().min(100),"evaluated":evaluated,"unavailable":unavailable,"more_history":turns.len()>100,"matches":matches}),
+        serde_json::json!({"devspace":devspace,"scanned":turns.len().min(100),"evaluated":evaluated,"unavailable":unavailable,"more_history":turns.len()>100,"matches":matches}),
     ))
 }
 
