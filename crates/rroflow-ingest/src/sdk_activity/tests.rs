@@ -88,6 +88,28 @@ async fn hosted_sdk_projections_recover_isolate_paginate_and_pin_reviews() {
     assert_eq!(list["matched_activities"], 1);
     assert_eq!(list["activities"][0]["new_events_pending"], true);
     assert_eq!(list["coverage"]["pending_captures"], 1);
+    let (status, summary) = call(&app, get("fixture-a", "/v1/sdk/summary")).await;
+    assert_eq!(status, StatusCode::OK, "{summary}");
+    assert_eq!(summary["activities"], 1);
+    assert_eq!(summary["activities_with_findings"], 1);
+    assert_eq!(
+        summary["by_agent"],
+        json!([{"agent":"codex","activities":1}])
+    );
+    assert_eq!(
+        summary["top_signals"][0],
+        json!({"signal":"sdk_call_failed","activities":1})
+    );
+    assert_eq!(summary["coverage"]["pending_captures"], 1);
+    assert!(summary.get("record").is_none() && summary.get("events").is_none());
+    assert_eq!(
+        call(&app, get("fixture-b", "/v1/sdk/summary")).await.1["activities"],
+        0
+    );
+    assert_eq!(
+        call(&app, get("not-a-key", "/v1/sdk/summary")).await.0,
+        StatusCode::UNAUTHORIZED
+    );
     let old = list["activities"][0].clone();
     let review = json!({"review_id":"22222222-2222-4222-8222-222222222222","activity_id":old["activity"]["activity_id"],"revision":old["revision"],"signal":"sdk_call_failed","rule_version":1,"verdict":"match"});
     assert_eq!(
@@ -204,6 +226,12 @@ async fn hosted_sdk_projections_recover_isolate_paginate_and_pin_reviews() {
     let (_, limited) = call(&app, get("fixture-a", "/v1/sdk/activity")).await;
     assert_eq!(limited["coverage"]["error_captures"], 1);
     assert_eq!(limited["matched_activities"], 1);
+    let (_, summary) = call(&app, get("fixture-a", "/v1/sdk/summary")).await;
+    assert_eq!(
+        summary["activities"], 1,
+        "indexing failure retains the last published count"
+    );
+    assert_eq!(summary["coverage"]["error_captures"], 1);
     retry_errors(pg).await.unwrap();
     assert_eq!(run_once(pg, &options).await.unwrap()["published"], true);
     // Same timestamps: cursor pages and their full-cohort count use identical filters.

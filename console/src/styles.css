@@ -39,6 +39,28 @@
   color-scheme: light;
   line-height: 1.5;
 }
+
+.project-overview { display: grid; gap: var(--space-6); margin-bottom: var(--space-6); }
+.overview-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: var(--space-4); }
+.overview-metrics > a { display: grid; gap: var(--space-2); text-decoration: none; color: var(--ink); }
+.overview-metrics > a > strong { font-size: clamp(1.8rem,3vw,2.7rem); line-height: 1.15; }
+.overview-metrics small { color: var(--muted); }
+.overview-explainer { color: var(--muted); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); }
+.overview-explainer summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+.overview-panels { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4); }
+.overview-panels > section { min-width: 0; }
+.overview-signals,.overview-agents,.overview-delivery { list-style: none; padding: 0; }
+.overview-signals a { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--space-2); text-decoration: none; color: var(--ink); padding: var(--space-3) 0; }
+.overview-signals span { overflow-wrap: anywhere; }
+.overview-signals small { font-weight: 400; color: var(--muted); }
+.overview-signals svg { grid-column: 1/-1; width: 100%; height: 6px; }
+.bar-track { fill: var(--border); }.bar-value { fill: var(--focus); }
+.overview-agents { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-2); border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.overview-agents a { display: flex; align-items: center; gap: var(--space-2); color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.overview-agents strong { margin-left: auto; }
+.overview-delivery li { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); border-top: 1px solid var(--border); padding: var(--space-4) 0; }
+.overview-delivery p { margin: var(--space-1) 0; }.overview-delivery .badge { flex-shrink: 0; }
+@media(max-width:800px) { .overview-panels,.overview-metrics { grid-template-columns: 1fr; }.overview-delivery li { flex-direction: column; }.overview-agents { grid-template-columns: 1fr; } }
 @media (prefers-color-scheme: dark) {
   :root {
     --ink: #eff4ed;
