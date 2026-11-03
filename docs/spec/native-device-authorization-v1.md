@@ -1,6 +1,7 @@
 # Native collector authorization v1
 
-Status: implementation under local qualification. Not deployed. This extends
+Status: merged in PR52 with packaged browser and real CLI recovery proof.
+Not deployed. This extends
 [native accounts](native-accounts-v1.md) and the existing protected
 [collector account store](collector-account-storage-v1.md).
 

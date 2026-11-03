@@ -1,4 +1,5 @@
 //! Durable, account-scoped SDK monitoring. Raw events remain the source of truth.
+mod overview;
 mod worker;
 use crate::{ApiError, AppState, PgStore, Store, internal};
 use axum::{
@@ -6,6 +7,7 @@ use axum::{
     extract::{Query, State},
     http::HeaderMap,
 };
+pub(crate) use overview::get as summary;
 use rroflow_core::activity::{Activity, revision};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

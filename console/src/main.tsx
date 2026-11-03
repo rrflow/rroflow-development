@@ -17,6 +17,7 @@ import { Dialog, FlowArt, Icon } from "./ui";
 import "./styles.css";
 import { AccountPage } from "./account";
 import { DevicePage } from "./device";
+import { ProjectOverview } from "./project-overview";
 
 const brand = (name: string) =>
   document.querySelector(`[data-brand="${name}"]`)?.textContent || "";
@@ -367,6 +368,7 @@ function ProjectDetail({
           </a>
         ))}
       </div>
+      <ProjectOverview project={project.id} onExpired={onExpired} />
       <section className="panel">
         <div className="section-heading">
           <div>

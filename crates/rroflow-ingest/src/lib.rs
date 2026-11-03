@@ -1079,6 +1079,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         )
         .route("/v1/allowances", get(allowances::status))
         .route("/v1/sdk/activity", get(sdk_activity::list))
+        .route("/v1/sdk/summary", get(sdk_activity::summary))
         .route(
             "/v1/sdk/reviews",
             get(sdk_activity::reviews).post(sdk_activity::save_review),

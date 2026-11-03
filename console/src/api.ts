@@ -98,6 +98,7 @@ export async function api(
   signal: AbortSignal,
   method = "GET",
   body?: unknown,
+  project?: string,
 ): Promise<unknown> {
   const r = await fetch(path, {
     method,
@@ -106,6 +107,7 @@ export async function api(
     headers: {
       "Content-Type": "application/json",
       "X-Rroflow-Request": "dashboard",
+      ...(project ? { "X-Rroflow-Project": project } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
