@@ -52,6 +52,21 @@ fn generic_runtime_ids_are_bounded_and_engine_contract_remains_reserved() {
     );
 }
 #[test]
+fn generic_runtime_hook_names_do_not_inherit_claude_tool_meaning() {
+    for hook in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+        let mut e = event(0, "hook.event", Some(hook));
+        e.agent = "clyffy".into();
+        let a = one(&[e.clone()]);
+        assert_eq!(a.kind, "observation");
+        assert_eq!(a.provider_outcome, None);
+        assert!(a.findings.is_empty());
+        assert_eq!(a.unsupported_event_ids, vec![e.event_id]);
+        assert!(a.coverage_notes.contains(&"start_not_observed".into()));
+        assert_ne!(a.outcome, Outcome::Completed);
+        assert_ne!(a.outcome, Outcome::Failed);
+    }
+}
+#[test]
 fn generic_runtime_stream_does_not_inherit_codex_terminal_meaning() {
     let mut rows = vec![
         event(0, "call.started", None),

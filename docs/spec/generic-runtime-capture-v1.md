@@ -35,7 +35,8 @@ An explicitly wrapped tool is distinct from a model proposing a tool call.
 Generic payloads do not inherit known-provider interpretation. Model, tokens,
 native IDs/status and structural provider facts stay unknown rather than being
 guessed from similarly named fields. The native event type is retained for
-inspection. Content is absent by default; explicit content consent retains the
+inspection. Claude hook names are interpreted only for Claude captures; a generic
+`PostToolUseFailure` hook remains unsupported evidence, not an inferred failure. Content is absent by default; explicit content consent retains the
 scrubbed body. A future normalization adapter needs its own reviewed schema and
 qualification before it can report provider-specific usage or outcomes.
 

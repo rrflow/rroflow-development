@@ -122,7 +122,9 @@ test('provider SDKs and generic runtimes record, replay, isolate, redact and ret
   await exec(binary,['capture','flush','--spool',join(dir,'clyffy')]);
   assert.equal(JSON.parse((await exec(binary,['capture','flush','--spool',join(dir,'clyffy')])).stdout).acknowledged,0);
   const custom=make('constructor');
-  await custom.call(()=>customResult);await custom.close();
+  await custom.call(()=>customResult);
+  await custom.record('hook.event',{operationId:'generic-hook',nativeType:'PostToolUseFailure'});
+  await custom.close();
 
   const claude=make('claude',true); let receivedOptions;
   await consume(claudeStream(claude, args => { receivedOptions=args.options;return events([{type:'stream_event',event:{type:'message_start',message:{model:'claude-fixture',usage:{input_tokens:2}}}},{type:'assistant',message:{content:[{type:'tool_use',id:'tool-c',name:'Read'}]}},{type:'result',subtype:'success',is_error:false,stop_reason:'end_turn',usage:{input_tokens:2,output_tokens:3},api_key:'never-store-me',text:'sk-ABCDEFGHIJKLMNOPQRSTUV'}]); }, {prompt:'fixture',options:{permissionMode:'default'}}));
@@ -145,7 +147,7 @@ test('provider SDKs and generic runtimes record, replay, isolate, redact and ret
   const rows=(await response.json()).events;
   assert.deepEqual([...new Set(rows.map(e=>e.agent))].sort(),['claude','clyffy','codex','constructor','grok']);
   const genericRows=rows.filter(e=>['clyffy','constructor'].includes(e.agent));
-  assert.equal(genericRows.length,12);
+  assert.equal(genericRows.length,13);
   assert(genericRows.every(e=>e.usage===null&&e.model===null&&e.native==null&&e.native_status===null));
   assert(rows.filter(e=>e.agent==='constructor').every(e=>e.payload===null));
   assert(!JSON.stringify(rows).includes('private-generic-key'));
@@ -174,6 +176,10 @@ test('provider SDKs and generic runtimes record, replay, isolate, redact and ret
   const activities=await project(rows),reversed=await project([...rows].reverse().concat(rows[0]));
   assert.deepEqual(activities,reversed,'actual received events converge after replay and reorder');
   const codexCall=activities.find(a=>a.agent==='codex');
+  const genericHook=activities.find(a=>a.operation_id==='generic-hook');
+  assert.equal(genericHook.kind,'observation');
+  assert.equal(genericHook.findings.length,0);
+  assert.equal(genericHook.unsupported_event_ids.length,1);
   const genericActivities=activities.filter(a=>a.agent==='clyffy');
   assert.equal(genericActivities.length,4);
   assert(genericActivities.every(a=>a.provider_outcome===null&&a.usage===null));
