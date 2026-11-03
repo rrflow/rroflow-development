@@ -47,17 +47,25 @@ being enabled or a paid subscription being active.
 
 ## Current boundary
 
-The React project overview is merged in PR53. The member signal library is being
-qualified and now uses a compact table in response to these references. Native
+The React project overview is merged in PR53. The member signal library is merged
+in PR54 and uses a compact table in response to these references. Native
 accounts/device grants and capture queues have source-level tests. This does not
 establish the full reference layout, hosted early-access requests, service-admin
 user/plan controls, actual provider subscription coverage or a Texas release.
 
 Current operational checks find the expected Cloudflare zone and active DNS-edit
-token. Trusted Texas SSH file references are still missing on the executing
-account. Nomen discovery succeeds, but the current introspection probe returns
+token. The owner supplied candidate Texas SSH identity and original trusted-host paths
+in a Linux environment; those files are absent from the executing Windows account
+and its Ubuntu/NVIDIA-Workbench WSL environments. The machine/connection holding
+them still needs to be identified before authentication can be tested. Nomen discovery succeeds, but the current introspection probe returns
 `unauthorized_client`; previous authentication evidence must not be reused as a
 current pass. Runtime values and secrets stay outside the repository.
+
+Generic runtime capture, including instrumented Clyffy callbacks, is covered by
+the [generic capture contract](../spec/generic-runtime-capture-v1.md). Its real
+collector/ingest tests use explicit runtime fixtures. An installed Clyffy
+integration, generic dataset consent and automatic SDK initialization remain
+separate acceptance work.
 
 ## Reference identity
 
