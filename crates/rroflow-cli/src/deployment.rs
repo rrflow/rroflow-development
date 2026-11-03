@@ -8,6 +8,12 @@ use std::path::{Path, PathBuf};
 #[derive(clap::Args, Default)]
 #[group(id = "deployment_options")]
 pub(crate) struct Args {
+    /// Authentication service: Nomen or native RROFLOW accounts.
+    #[arg(long, env = "RROFLOW_AUTH_METHOD", value_enum)]
+    auth_method: Option<account::AuthMethod>,
+    /// Name shown when you approve this collector (no hostname is uploaded automatically).
+    #[arg(long, env = "RROFLOW_DEVICE_NAME")]
+    device_name: Option<String>,
     /// Public deployment JSON; otherwise deployment.json in RROFLOW_CONFIG_DIR.
     #[arg(long, env = "RROFLOW_DEPLOYMENT")]
     deployment: Option<PathBuf>,
@@ -28,6 +34,8 @@ pub(crate) struct Args {
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Profile {
+    pub auth_method: Option<account::AuthMethod>,
+    pub device_name: Option<String>,
     pub issuer: Option<String>,
     pub client_id: Option<String>,
     pub project_id: Option<String>,
@@ -35,9 +43,11 @@ pub(crate) struct Profile {
 }
 
 pub(crate) struct Deployment {
+    pub auth_method: account::AuthMethod,
+    pub device_name: String,
     pub issuer: String,
     pub client_id: String,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub ingest_url: String,
 }
 
@@ -57,7 +67,7 @@ pub(crate) fn read(path: &Path, required: bool) -> Result<Profile> {
     // Do not echo unrecognized values: a misplaced credential is still private.
     serde_json::from_slice(&bytes).map_err(|_| {
         anyhow::anyhow!(
-            "invalid deployment JSON: expected only issuer, client_id, project_id and ingest_url"
+            "invalid deployment JSON: expected public auth_method, device_name, issuer, client_id, project_id and ingest_url"
         )
     })
 }
@@ -108,7 +118,41 @@ impl Args {
                 .or_else(|| saved.map(|a| a.ingest_url.clone())),
             "ingest_url",
         )?;
+        let auth_method = self
+            .auth_method
+            .or(file.auth_method)
+            .or_else(|| saved.map(|a| a.auth_method))
+            .unwrap_or_default();
+        let project = self
+            .project_id
+            .clone()
+            .or(file.project_id)
+            .or_else(|| saved.and_then(|a| a.project_id.clone()));
+        let project_id = match auth_method {
+            account::AuthMethod::Nomen => Some(required(project, "project_id")?),
+            account::AuthMethod::Native => {
+                ensure!(
+                    project.is_none(),
+                    "native sign-in chooses a project in the browser; omit the Nomen project_id"
+                );
+                None
+            }
+        };
+        let device_name = self
+            .device_name
+            .clone()
+            .or(file.device_name)
+            .unwrap_or_else(|| "This collector".into());
+        ensure!(
+            (1..=80).contains(&device_name.chars().count())
+                && !device_name.trim().is_empty()
+                && !device_name.chars().any(char::is_control),
+            "device name must be 1..80 characters without control characters"
+        );
         Ok(Deployment {
+            auth_method,
+            device_name,
+            project_id,
             issuer: capture::endpoint(&issuer).context("invalid deployment issuer")?,
             ingest_url: capture::endpoint(&ingest).context("invalid deployment ingest origin")?,
             client_id: required(
@@ -117,13 +161,6 @@ impl Args {
                     .or(file.client_id)
                     .or_else(|| saved.map(|a| a.client_id.clone())),
                 "client_id",
-            )?,
-            project_id: required(
-                self.project_id
-                    .clone()
-                    .or(file.project_id)
-                    .or_else(|| saved.and_then(|a| a.project_id.clone())),
-                "project_id",
             )?,
         })
     }
@@ -135,7 +172,8 @@ impl Deployment {
             self.issuer == capture::endpoint(&saved.issuer)?
                 && self.ingest_url == capture::endpoint(&saved.ingest_url)?
                 && self.client_id == saved.client_id
-                && Some(self.project_id.as_str()) == saved.project_id.as_deref(),
+                && self.project_id == saved.project_id
+                && self.auth_method == saved.auth_method,
             "saved account belongs to another deployment; use a separate RROFLOW_CONFIG_DIR for each deployment (queues are never reassigned)"
         );
         Ok(())
@@ -148,6 +186,15 @@ pub(crate) fn check_saved(
     file: Profile,
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<()> {
+    let method = match env("RROFLOW_AUTH_METHOD") {
+        Some(v) => Some(match v.as_str() {
+            "native" => account::AuthMethod::Native,
+            "nomen" => account::AuthMethod::Nomen,
+            _ => anyhow::bail!("invalid authentication method"),
+        }),
+        None => file.auth_method,
+    }
+    .unwrap_or(saved.auth_method);
     let issuer = env("RROFLOW_ISSUER")
         .or(file.issuer)
         .unwrap_or_else(|| saved.issuer.clone());
@@ -164,7 +211,8 @@ pub(crate) fn check_saved(
         capture::endpoint(&issuer)? == capture::endpoint(&saved.issuer)?
             && capture::endpoint(&ingest)? == capture::endpoint(&saved.ingest_url)?
             && client == saved.client_id
-            && project == saved.project_id,
+            && project == saved.project_id
+            && method == saved.auth_method,
         "saved account belongs to another deployment; use a separate RROFLOW_CONFIG_DIR (credentials and queues retained)"
     );
     Ok(())
@@ -180,6 +228,7 @@ mod tests {
             ingest_url: Some(format!("https://api.{host}")),
             client_id: Some("cli-a".into()),
             project_id: Some("project-a".into()),
+            ..Default::default()
         }
     }
 
@@ -191,6 +240,22 @@ mod tests {
     fn cli_options_compose_without_collisions() {
         use clap::CommandFactory;
         crate::Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn native_profile_has_no_nomen_audience_and_never_infers_auth_from_urls() {
+        let mut native = file("one.example");
+        native.auth_method = Some(account::AuthMethod::Native);
+        native.project_id = None;
+        let selected = Args::default().resolve_with(native, None).unwrap();
+        assert_eq!(selected.auth_method, account::AuthMethod::Native);
+        assert!(selected.project_id.is_none());
+        let mut wrong = file("one.example");
+        wrong.auth_method = Some(account::AuthMethod::Native);
+        assert!(Args::default().resolve_with(wrong, None).is_err());
+        let mut missing = file("one.example");
+        missing.project_id = None;
+        assert!(Args::default().resolve_with(missing, None).is_err());
     }
 
     #[test]
@@ -235,6 +300,7 @@ mod tests {
             "RROFLOW_INGEST_URL",
             "RROFLOW_CLIENT_ID",
             "RROFLOW_NOMEN_PROJECT",
+            "RROFLOW_AUTH_METHOD",
         ] {
             assert!(
                 check_saved(&saved, Profile::default(), |key| (key == field)

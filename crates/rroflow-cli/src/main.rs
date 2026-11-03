@@ -434,12 +434,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Capture { command } => capture::run(command)?,
         Cmd::Login { deployment } => {
             let selected = deployment.resolve(None)?;
-            account::login(
-                &selected.issuer,
-                &selected.client_id,
-                Some(&selected.project_id),
-                &selected.ingest_url,
-            )?;
+            account::login(&selected)?;
         }
         Cmd::Logout => account::logout()?,
         Cmd::Whoami { json } => account::whoami(json)?,

@@ -27,7 +27,9 @@ To make the settings the default, save the file as `deployment.json` under
 
 | Public setting | Command option | Environment |
 |---|---|---|
-| Nomen issuer origin | `--issuer` | `RROFLOW_ISSUER` |
+| Authentication method (`nomen` or `native`) | `--auth-method` | `RROFLOW_AUTH_METHOD` |
+| Collector display name | `--device-name` | `RROFLOW_DEVICE_NAME` |
+| Authentication issuer origin | `--issuer` | `RROFLOW_ISSUER` |
 | CLI public client | `--client-id` | `RROFLOW_CLIENT_ID` |
 | Project audience | `--project-id` | `RROFLOW_NOMEN_PROJECT` |
 | Ingest origin | `--ingest-url` | `RROFLOW_INGEST_URL` |
@@ -39,12 +41,35 @@ login requires a complete configuration. An explicitly selected missing file,
 unknown JSON field, empty setting or unsafe origin is an error. The default file
 may be absent. URLs must be origins without credentials, paths, query strings or
 fragments; HTTPS is required except for loopback development. Identity uses the
-existing Nomen/Zitadel protocol adapter, not arbitrary OIDC provider discovery.
+explicit Nomen/Zitadel or native RROFLOW device adapter, without arbitrary OIDC provider discovery.
 
 The public JSON must never contain tokens, private keys or provider credentials.
 Sign-in saves the resolved deployment and tokens in the separate protected
 `account.json`. The background collector uses its saved account reference, so it
 does not depend on the interactive shell retaining environment variables.
+
+## Native RROFLOW account sign-in
+
+Native device authorization is being qualified in source; it is not yet a deployed
+release. The server must enable the [native device contract](../spec/native-device-authorization-v1.md).
+An example public profile (replace these placeholders):
+
+```json
+{
+  "auth_method": "native",
+  "issuer": "https://your-ingest.example",
+  "client_id": "your-collector",
+  "ingest_url": "https://your-ingest.example",
+  "device_name": "My laptop"
+}
+```
+
+Run `rroflow login --deployment /absolute/path/to/deployment.json`, open the printed
+URL and enter its code. The member page shows your account and lets you choose a
+project. Native profiles omit the Nomen project audience. No hostname is uploaded
+as a device label unless you explicitly supply one. Disconnect a grant at
+`/app/device`, or run `rroflow logout` to revoke and remove this machine's sign-in.
+The browser's own logout leaves collectors connected.
 
 ## Multiple deployments and account changes
 

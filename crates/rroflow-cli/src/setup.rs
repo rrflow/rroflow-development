@@ -99,12 +99,7 @@ pub(crate) fn run(args: Args) -> Result<()> {
         .is_none_or(|a| a.standing(account::unix_now()) == account::Standing::Expired)
     {
         println!("Sign in to {} to link this computer.", selected.ingest_url);
-        account::login(
-            &selected.issuer,
-            &selected.client_id,
-            Some(&selected.project_id),
-            &selected.ingest_url,
-        )?;
+        account::login(&selected)?;
     } else {
         println!(
             "signed in: using the saved account for {}",

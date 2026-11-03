@@ -4,8 +4,8 @@ Date: 2026-11-02. Status: active implementation. Owner of the slice sequence bel
 Tenancy (PR46), initial receipt provenance (PR47) and initial React organization/project/key
 management (PR48) and durable browser sessions (PR49) are merged in source;
 see [session storage](../spec/browser-sessions-v1.md). Native browser signup/recovery is merged in PR50
-([contract](../spec/native-accounts-v1.md)); native device flow, explicit linking and full React monitoring
-parity remain incomplete. Nothing here establishes deployment. Texas activation remains
+([contract](../spec/native-accounts-v1.md)). The [native device flow](../spec/native-device-authorization-v1.md)
+is implemented under local qualification; explicit linking and full React monitoring parity remain incomplete. Nothing here establishes deployment. Texas activation remains
 separately blocked (see "Dependencies").
 
 Goal (owner, 2026-11-02): RROFLOW should work the way Sentry or PostHog do, for AI. A person
