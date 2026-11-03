@@ -19,6 +19,7 @@ export function AccountPage({ name }: { name: string }) {
   // A closed destination choice, never an arbitrary redirect URL.
   const deviceReturn = new URLSearchParams(location.search).get("next") === "device";
   const [options, setOptions] = useState<Options | null>(null);
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
   const [mode, setMode] = useState<Mode>(initialToken ? "complete" : "login");
   const [token, setToken] = useState(initialToken);
   const [email, setEmail] = useState("");
@@ -46,6 +47,7 @@ export function AccountPage({ name }: { name: string }) {
   useEffect(() => {
     const c = new AbortController();
     controller.current = c;
+    setError("");
     fetch("/auth/native/config", {
       credentials: "same-origin",
       signal: c.signal,
@@ -86,7 +88,7 @@ export function AccountPage({ name }: { name: string }) {
           );
       });
     return () => c.abort();
-  }, []);
+  }, [optionsAttempt]);
   function change(next: Mode) {
     setMode(next);
     setPassword("");
@@ -190,7 +192,10 @@ export function AccountPage({ name }: { name: string }) {
         {notice && <p role="status">{notice}</p>}
         {!options && !error && <p role="status">Loading sign-in options…</p>}
         {!options && error && (
-          <button className="secondary" onClick={() => location.reload()}>
+          <button
+            className="secondary"
+            onClick={() => setOptionsAttempt((attempt) => attempt + 1)}
+          >
             Reload sign-in options
           </button>
         )}

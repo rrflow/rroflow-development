@@ -101,8 +101,14 @@ test('native member verifies mailbox, signs in, recovers, and reaches real proje
     await expect(page.getByRole('status')).toContainText('If this address is eligible');
     expect((await fixture.sql.query('SELECT count(*)::int AS n FROM users')).rows[0].n).toBe(0);
     const link=await fixture.mailLink('native-member@example.test');
+    await page.goto('about:blank');
+    // The action token has been removed from the URL. Retrying account options
+    // must retain it in memory rather than reloading away the verified link.
+    await page.route('**/auth/native/config',route=>route.fulfill({status:503,body:'Unavailable'}),{times:1});
     await page.goto(link);await expect(page.getByRole('heading',{name:'Choose your password'})).toBeVisible();
     await expect(page).toHaveURL(fixture.origin+'/app/account');
+    await expect(page.getByRole('alert')).toContainText('could not be loaded');
+    await page.getByRole('button',{name:'Reload sign-in options'}).click();
     await page.getByLabel('Password',{exact:true}).fill('a long browser test password');
     await page.getByRole('button',{name:'Show password',exact:true}).click();
     await page.getByRole('button',{name:'Save password'}).click();
