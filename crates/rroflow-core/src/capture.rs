@@ -4,6 +4,16 @@ use serde_json::Value;
 
 pub const CAPTURE_SCHEMA: &str = "rroflow.capture/v1";
 
+/// Runtime identity is a bounded slug, not a provider capability declaration.
+pub fn valid_agent_id(agent: &str) -> bool {
+    !agent.is_empty()
+        && agent.len() <= 64
+        && agent.as_bytes()[0].is_ascii_lowercase()
+        && agent
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(&c))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureEvent {
@@ -74,8 +84,8 @@ impl CaptureEvent {
         if !uuid(&self.event_id) || !uuid(&self.capture_id) {
             return Err("event and capture IDs must be UUIDs");
         }
-        if !["codex", "claude", "grok", "rrflow"].contains(&self.agent.as_str()) {
-            return Err("unsupported capture agent");
+        if !valid_agent_id(&self.agent) {
+            return Err("invalid capture agent ID");
         }
         if !id(&self.session_id)
             || !id(&self.operation_id)

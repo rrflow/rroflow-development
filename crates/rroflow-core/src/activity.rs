@@ -197,7 +197,8 @@ fn project_operation(rows: &[&CaptureEvent]) -> Result<Activity, &'static str> {
     }
     let tool_operation = rows.iter().any(|e| {
         e.kind.starts_with("tool.")
-            || (e.kind == "hook.event"
+            || (e.agent == "claude"
+                && e.kind == "hook.event"
                 && matches!(
                     e.native_type.as_deref(),
                     Some("PreToolUse" | "PostToolUse" | "PostToolUseFailure")
@@ -221,7 +222,8 @@ fn project_operation(rows: &[&CaptureEvent]) -> Result<Activity, &'static str> {
         .iter()
         .filter(|e| {
             matches!(e.kind.as_str(), "call.failed" | "tool.failed")
-                || (e.kind == "hook.event"
+                || (e.agent == "claude"
+                    && e.kind == "hook.event"
                     && e.native_type.as_deref() == Some("PostToolUseFailure")
                     && e.native.as_ref().and_then(|n| n.is_interrupt) != Some(true))
         })
@@ -230,7 +232,8 @@ fn project_operation(rows: &[&CaptureEvent]) -> Result<Activity, &'static str> {
         .iter()
         .filter(|e| {
             e.kind == "stream.cancelled"
-                || (e.kind == "hook.event"
+                || (e.agent == "claude"
+                    && e.kind == "hook.event"
                     && e.native_type.as_deref() == Some("PostToolUseFailure")
                     && e.native.as_ref().and_then(|n| n.is_interrupt) == Some(true))
         })
@@ -239,12 +242,16 @@ fn project_operation(rows: &[&CaptureEvent]) -> Result<Activity, &'static str> {
         .iter()
         .filter(|e| {
             matches!(e.kind.as_str(), "call.completed" | "tool.completed")
-                || (e.kind == "hook.event" && e.native_type.as_deref() == Some("PostToolUse"))
+                || (e.agent == "claude"
+                    && e.kind == "hook.event"
+                    && e.native_type.as_deref() == Some("PostToolUse"))
         })
         .collect();
     let started = rows.iter().any(|e| {
         matches!(e.kind.as_str(), "call.started" | "tool.started")
-            || (e.kind == "hook.event" && e.native_type.as_deref() == Some("PreToolUse"))
+            || (e.agent == "claude"
+                && e.kind == "hook.event"
+                && e.native_type.as_deref() == Some("PreToolUse"))
     });
     if !started {
         notes.insert("start_not_observed".into());
@@ -351,23 +358,24 @@ fn project_operation(rows: &[&CaptureEvent]) -> Result<Activity, &'static str> {
                 _ => false,
             }
         } else if e.kind == "hook.event" {
-            matches!(
-                e.native_type.as_deref(),
-                Some(
-                    "PreToolUse"
-                        | "PostToolUse"
-                        | "PostToolUseFailure"
-                        | "UserPromptSubmit"
-                        | "Stop"
-                        | "SubagentStart"
-                        | "SubagentStop"
-                        | "PreCompact"
-                        | "PermissionRequest"
-                        | "SessionStart"
-                        | "SessionEnd"
-                        | "Notification"
+            e.agent == "claude"
+                && matches!(
+                    e.native_type.as_deref(),
+                    Some(
+                        "PreToolUse"
+                            | "PostToolUse"
+                            | "PostToolUseFailure"
+                            | "UserPromptSubmit"
+                            | "Stop"
+                            | "SubagentStart"
+                            | "SubagentStop"
+                            | "PreCompact"
+                            | "PermissionRequest"
+                            | "SessionStart"
+                            | "SessionEnd"
+                            | "Notification"
+                    )
                 )
-            )
         } else {
             true
         };

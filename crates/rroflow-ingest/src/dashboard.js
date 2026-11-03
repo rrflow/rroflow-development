@@ -7,7 +7,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const fmt = value => value == null ? 'Unknown' : Number(value).toLocaleString();
   const names = {'claude-code':'Claude Code', codex:'Codex', grok:'Grok'};
-  const name = id => names[id] || id;
+  const name = id => Object.hasOwn(names,id) ? names[id] : id;
   const verdictLabel = verdict => verdict === 'match' ? 'Matches' : 'Does not match';
   const titles = {blocked_handoff:'Blocked handoff', false_done:'Possible false completion', tool_error_streak:'Repeated tool failures', usage_limit_hit:'Usage limit reached', context_loss:'Context compaction', correction_spiral:'Possible correction spiral', aborted_turn:'Interrupted turn', mood:'Mood shift'};
   const title = id => metadata?.settings?.custom?.find(s => s.id === id)?.name || titles[id] || String(id).replaceAll('_', ' ');

@@ -1,10 +1,12 @@
 # RROFLOW SDK capture
 
 Status: tested implementation; this package is not yet published to npm.
-Use the [v0.4.0 collector release](https://github.com/rrflow/rroflow-development/releases/tag/v0.4.0)
-and a compatible deployed ingest with native facts v1 support. For this release, check out
+The [v0.4.0 collector release](https://github.com/rrflow/rroflow-development/releases/tag/v0.4.0)
+supports the three provider IDs with a compatible ingest using native facts v1. For that release, check out
 `v0.4.0` and install the SDK tarball from `npm pack ./sdk/javascript`. A source build from
 that same revision also works. The release does not establish a live hosted account service.
+Generic runtime IDs below require a collector, ingest and SDK built from this
+source revision or a later compatible release; v0.4.0 rejects those IDs.
 
 The JavaScript adapter is a small bridge to the Rust collector. Every observed
 event waits for a local durable acknowledgement before the adapter yields it.
@@ -27,6 +29,44 @@ const capture = new Capture({
 Supply the verified destination before recording. The uploader checks the current
 account's devspace and endpoint before sending any pending event. A different
 login cannot silently take ownership of a backlog. Local recording works offline.
+
+## Clyffy and other instrumented runtimes
+
+Use your own lowercase runtime ID, starting with a letter, up to 64 ASCII
+letters, digits, dots, underscores or hyphens. `rrflow` is reserved for the
+separate engine-observation contract. Configure the same verified account,
+endpoint and private queue as above, then wrap the actual execution boundaries:
+
+```js
+const capture = new Capture({ ...yourCaptureOptions, agent: 'clyffy' });
+try {
+  const result = await capture.call(() => runYourAgent({
+    // Supply the wrapper at your runtime's actual tool dispatch point.
+    lookup: () => capture.tool('lookup', () => executeYourTool(), {
+      parentOperationId: 'run-1',
+    }),
+  }), { operationId: 'run-1' });
+  // For an async iterable, use capture.stream(() => yourRuntimeStream()).
+} finally {
+  await capture.close(); // delivery failure is visible; queued records remain
+}
+```
+
+`runYourAgent` and `executeYourTool` stand for your application's existing
+functions; they are not claimed Clyffy SDK APIs. Instrument nested tools at their
+actual dispatch points and pass the enclosing operation ID. The provider helpers
+`claudeStream`, `codexStream` and `grokStream` require matching agent IDs; they
+cannot be used to relabel a generic runtime.
+
+Generic captures retain call/tool/stream boundaries and explicit failures. They
+do not guess models, usage or provider outcomes from arbitrary payload fields.
+Missing usage stays unknown. A stream ending alone does not prove success. Content
+remains opt-in and scrubbed. The account-bound queue, retry and isolation rules
+are identical for generic and provider captures. Running on a phone or a remote
+machine requires instrumentation and a collector at the execution source.
+
+See [the generic contract](../../docs/spec/generic-runtime-capture-v1.md) for
+coverage limits, dataset consent and installed-runtime qualification still owed.
 
 ## Codex
 

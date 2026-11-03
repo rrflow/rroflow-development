@@ -29,6 +29,17 @@ test('capture refuses absent or unsafe destinations before spawning a collector'
   }
 });
 
+test('runtime IDs and provider adapters reject invalid or mismatched identities before execution', () => {
+  const options = { sessionId: 'fixture', devspace: 'owner', spool: 'unused', endpoint: 'https://ingest.example.test', executable: 'must-not-spawn' };
+  for (const agent of [undefined, '', 'Clyffy', '1agent', 'agent/path', 'agent name', 'a\n', 'a'.repeat(65), 'rrflow', '<script>']) {
+    assert.throws(() => new Capture({ ...options, agent }), /runtime ID/);
+  }
+  const capture = { agent: 'clyffy', stream() { assert.fail('must reject before recording or dispatch'); } };
+  assert.throws(() => codexStream(capture, null, ''), /requires agent 'codex'/);
+  assert.throws(() => claudeStream(capture, null, {}), /requires agent 'claude'/);
+  assert.throws(() => grokStream(capture, null, {}), /requires agent 'grok'/);
+});
+
 test('an early recorder refusal survives a broken stdin pipe', { timeout: 15000 }, async () => {
   const spool = await mkdtemp(join(tmpdir(), 'rroflow-sdk-refusal-'));
   const options = { agent: 'codex', sessionId: 'fixture', spool, executable: binary,
@@ -45,7 +56,7 @@ test('an early recorder refusal survives a broken stdin pipe', { timeout: 15000 
   assert.equal(status.pending, 1);
 });
 
-test('three SDKs record, replay, isolate, redact and retain failures through the real collector', { timeout: 60000 }, async t => {
+test('provider SDKs and generic runtimes record, replay, isolate, redact and retain failures through the real collector', { timeout: 90000 }, async t => {
   const dir = await mkdtemp(join(tmpdir(), 'rroflow-sdk-proof-'));
   const listener = createServer(); await new Promise(r => listener.listen(0, '127.0.0.1', r));
   const port = listener.address().port; await new Promise(r => listener.close(r));
@@ -77,7 +88,7 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   const waitForRetry = async spool => {
     const state=JSON.parse((await exec(binary,['capture','status','--spool',spool])).stdout).retry;
     const delay=Math.max(0,state.next_attempt_unix*1000-Date.now())+100;
-    assert(delay<12000,'fixture retry wait must be bounded');
+    assert(delay<22000,'fixture retry wait must stay within the second-attempt 20s ceiling plus clock margin');
     await new Promise(r=>setTimeout(r,delay));
   };
   // Record successfully while the ingest is completely offline.
@@ -88,10 +99,32 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   await assert.rejects(exec(binary,['capture','flush','--spool',join(dir,'codex')]));
   const pending=JSON.parse((await exec(binary,['capture','status','--spool',join(dir,'codex')])).stdout);
   assert.equal(pending.pending,native.length+2);
+  // The same account-bound outbox accepts an instrumented runtime while offline.
+  // These are fixture callbacks, not an installed Clyffy integration claim.
+  const clyffy=make('clyffy',true);
+  assert.throws(() => { clyffy.agent='codex'; }, TypeError);
+  const customResult={type:'turn.completed',model:'unknown-contract',usage:{input_tokens:123,output_tokens:7},api_key:'private-generic-key'};
+  assert.equal(await clyffy.call(()=>customResult,{operationId:'generic-call',input:{api_key:'private-generic-key'}}),customResult);
+  await assert.rejects(clyffy.tool('lookup',()=>{throw Error('fixture tool failure');},{parentOperationId:'generic-call'}),/fixture tool failure/);
+  await consume(clyffy.stream(()=>events([customResult])));
+  for await (const _ of clyffy.stream(()=>events([{type:'first'},{type:'not-consumed'}]))) break;
+  await clyffy.close({flush:false});
+  await assert.rejects(exec(binary,['capture','flush','--spool',join(dir,'clyffy')]));
+  assert.equal(JSON.parse((await exec(binary,['capture','status','--spool',join(dir,'clyffy')])).stdout).pending,10);
   await start();
   await waitForRetry(join(dir,'codex'));
   await exec(binary,['capture','flush','--spool',join(dir,'codex')]);
   assert.equal(JSON.parse((await exec(binary,['capture','flush','--spool',join(dir,'codex')])).stdout).acknowledged,0);
+  await waitForRetry(join(dir,'clyffy'));
+  await assert.rejects(exec(binary,['capture','flush','--spool',join(dir,'clyffy')],{env:{...process.env,RROFLOW_INGEST_KEY:'fixture-other'}}));
+  assert.equal(JSON.parse((await exec(binary,['capture','status','--spool',join(dir,'clyffy')])).stdout).pending,10);
+  await waitForRetry(join(dir,'clyffy'));
+  await exec(binary,['capture','flush','--spool',join(dir,'clyffy')]);
+  assert.equal(JSON.parse((await exec(binary,['capture','flush','--spool',join(dir,'clyffy')])).stdout).acknowledged,0);
+  const custom=make('constructor');
+  await custom.call(()=>customResult);
+  await custom.record('hook.event',{operationId:'generic-hook',nativeType:'PostToolUseFailure'});
+  await custom.close();
 
   const claude=make('claude',true); let receivedOptions;
   await consume(claudeStream(claude, args => { receivedOptions=args.options;return events([{type:'stream_event',event:{type:'message_start',message:{model:'claude-fixture',usage:{input_tokens:2}}}},{type:'assistant',message:{content:[{type:'tool_use',id:'tool-c',name:'Read'}]}},{type:'result',subtype:'success',is_error:false,stop_reason:'end_turn',usage:{input_tokens:2,output_tokens:3},api_key:'never-store-me',text:'sk-ABCDEFGHIJKLMNOPQRSTUV'}]); }, {prompt:'fixture',options:{permissionMode:'default'}}));
@@ -112,7 +145,13 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
 
   const response=await api('/v1/events?limit=1000');assert.equal(response.status,200);
   const rows=(await response.json()).events;
-  assert.deepEqual([...new Set(rows.map(e=>e.agent))].sort(),['claude','codex','grok']);
+  assert.deepEqual([...new Set(rows.map(e=>e.agent))].sort(),['claude','clyffy','codex','constructor','grok']);
+  const genericRows=rows.filter(e=>['clyffy','constructor'].includes(e.agent));
+  assert.equal(genericRows.length,13);
+  assert(genericRows.every(e=>e.usage===null&&e.model===null&&e.native==null&&e.native_status===null));
+  assert(rows.filter(e=>e.agent==='constructor').every(e=>e.payload===null));
+  assert(!JSON.stringify(rows).includes('private-generic-key'));
+  assert(rows.some(e=>e.agent==='clyffy'&&e.payload?.model==='unknown-contract'),'consented scrubbed body retained without interpreting its schema');
   const codexRows=rows.filter(e=>e.agent==='codex');assert.equal(codexRows.length,native.length+2);
   assert(codexRows.every(e=>e.payload===null));
   assert.equal(codexRows.find(e=>e.native_type==='turn.completed').usage.output_tokens,0);
@@ -137,6 +176,17 @@ test('three SDKs record, replay, isolate, redact and retain failures through the
   const activities=await project(rows),reversed=await project([...rows].reverse().concat(rows[0]));
   assert.deepEqual(activities,reversed,'actual received events converge after replay and reorder');
   const codexCall=activities.find(a=>a.agent==='codex');
+  const genericHook=activities.find(a=>a.operation_id==='generic-hook');
+  assert.equal(genericHook.kind,'observation');
+  assert.equal(genericHook.findings.length,0);
+  assert.equal(genericHook.unsupported_event_ids.length,1);
+  const genericActivities=activities.filter(a=>a.agent==='clyffy');
+  assert.equal(genericActivities.length,4);
+  assert(genericActivities.every(a=>a.provider_outcome===null&&a.usage===null));
+  assert(genericActivities.some(a=>a.findings.some(f=>f.signal==='sdk_tool_failed')));
+  assert(genericActivities.some(a=>a.findings.some(f=>f.signal==='sdk_interrupted')));
+  assert(genericActivities.some(a=>a.outcome==='partial'&&a.unsupported_event_ids.length===1));
+  assert(genericActivities.some(a=>a.operation_id==='generic-call'&&a.outcome==='completed'));
   assert.equal(codexCall.outcome,'completed');assert.equal(codexCall.tools[0].outcome,'failed');
   assert.equal(codexCall.findings[0].signal,'sdk_tool_failed');assert.equal(codexCall.usage.output_tokens,0);
   assert.equal(codexCall.unsupported_event_ids.length,1);

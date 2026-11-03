@@ -25,6 +25,70 @@ fn one(events: &[CaptureEvent]) -> Activity {
     project(events).unwrap().remove(0)
 }
 #[test]
+fn generic_runtime_ids_are_bounded_and_engine_contract_remains_reserved() {
+    let mut e = event(0, "call.started", None);
+    for agent in ["clyffy", "my-agent.v2", "constructor", "a"] {
+        e.agent = agent.into();
+        assert_eq!(e.validate(), Ok(()));
+    }
+    for agent in ["", "Clyffy", "a/b", "a b", "1agent", "<agent>", "a\n"] {
+        e.agent = agent.into();
+        assert!(e.validate().is_err(), "accepted {agent:?}");
+    }
+    e.agent = "a".repeat(64);
+    assert!(e.validate().is_ok());
+    e.agent.push('a');
+    assert!(e.validate().is_err());
+    e.agent = "rrflow".into();
+    assert_eq!(
+        e.validate(),
+        Err("engine metadata requires an RRFlow observation")
+    );
+    e.agent = "clyffy".into();
+    e.kind = "engine.observed".into();
+    assert_eq!(
+        e.validate(),
+        Err("engine metadata requires an RRFlow observation")
+    );
+}
+#[test]
+fn generic_runtime_hook_names_do_not_inherit_claude_tool_meaning() {
+    for hook in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
+        let mut e = event(0, "hook.event", Some(hook));
+        e.agent = "clyffy".into();
+        let a = one(&[e.clone()]);
+        assert_eq!(a.kind, "observation");
+        assert_eq!(a.provider_outcome, None);
+        assert!(a.findings.is_empty());
+        assert_eq!(a.unsupported_event_ids, vec![e.event_id]);
+        assert!(a.coverage_notes.contains(&"start_not_observed".into()));
+        assert_ne!(a.outcome, Outcome::Completed);
+        assert_ne!(a.outcome, Outcome::Failed);
+    }
+}
+#[test]
+fn generic_runtime_stream_does_not_inherit_codex_terminal_meaning() {
+    let mut rows = vec![
+        event(0, "call.started", None),
+        event(1, "stream.event", Some("turn.completed")),
+        event(2, "stream.completed", None),
+    ];
+    for e in &mut rows {
+        e.agent = "clyffy".into();
+    }
+    let a = one(&rows);
+    assert_eq!(a.outcome, Outcome::Partial);
+    assert_eq!(a.provider_outcome, None);
+    assert_eq!(a.usage, None);
+    assert_eq!(a.unsupported_event_ids, vec![rows[1].event_id.clone()]);
+    rows.push(event(3, "call.failed", None));
+    rows[3].agent = "clyffy".into();
+    let a = one(&rows);
+    assert_eq!(a.outcome, Outcome::Failed);
+    assert_eq!(a.findings[0].signal, "sdk_call_failed");
+    assert_eq!(a.findings[0].event_ids, vec![rows[3].event_id.clone()]);
+}
+#[test]
 fn iterator_end_is_not_provider_success_and_partial_usage_is_not_totalled() {
     let start = event(0, "call.started", None);
     let mut delta = event(1, "stream.event", Some("future.event"));

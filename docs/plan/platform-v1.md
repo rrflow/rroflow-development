@@ -142,6 +142,11 @@ layers, and the gap is shown rather than hidden:
 
 ### 7. Application SDKs
 
+The [generic runtime contract](../spec/generic-runtime-capture-v1.md) extends the
+existing explicit wrappers to instrumented runtimes including Clyffy, with durable
+account-bound capture and unknown provider semantics kept unknown. This is a
+foundation for the automatic instrumentation below, not its completion.
+
 `@rroflow/node`: `import "@rroflow/node/auto"` or `node --import @rroflow/node/register`
 instruments Anthropic, the Claude Agent SDK, OpenAI, the Codex SDK and xAI without changing
 each call. The current wrappers become its internals. Python follows with the same contract.

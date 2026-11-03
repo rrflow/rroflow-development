@@ -32,15 +32,19 @@ const labels: Record<string, string> = {
   sdk_incomplete: "Incomplete activity",
 };
 const title = (id: string, names: Record<string, string>) =>
-  names[id] || labels[id] || id.replaceAll("_", " ");
-const agent = (id: string, kind: "turn" | "sdk") =>
-  ({
+  (Object.hasOwn(names, id) ? names[id] : undefined) ||
+  (Object.hasOwn(labels, id) ? labels[id] : undefined) || id.replaceAll("_", " ");
+const agent = (id: string, kind: "turn" | "sdk") => {
+  const names: Record<string, string> = {
     "claude-code": "Claude Code",
     codex: kind === "sdk" ? "Codex SDK" : "Codex",
     claude: "Claude SDK",
     grok: "Grok SDK",
     rrflow: "RRFlow",
-  })[id] || id;
+    clyffy: "Clyffy",
+  };
+  return Object.hasOwn(names, id) ? names[id] : id;
+};
 function link(
   project: string,
   kind: "turn" | "sdk",

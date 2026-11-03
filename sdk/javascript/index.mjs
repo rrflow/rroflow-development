@@ -4,12 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
+const providerAgents = new Set(['codex', 'claude', 'grok']);
 
 /** A Rust collector subprocess acknowledges fsynced events, not network delivery. */
 export class Capture {
   #child; #pending = []; #done; #failure; #tail = Promise.resolve(); #sequence = 0; #closed = false; #content = false;
   constructor({ agent, sessionId, devspace, spool, endpoint, executable = 'rroflow', content = false }) {
-    if (!['codex', 'claude', 'grok'].includes(agent)) throw new Error('Unsupported capture agent');
+    if (typeof agent !== 'string' || agent.length > 64 || !/^[a-z]/.test(agent) || /[^a-z0-9._-]/.test(agent) || agent === 'rrflow') {
+      throw new Error('Capture agent must be a lowercase runtime ID (1-64 characters); rrflow is reserved for engine observations');
+    }
     if (![sessionId, devspace, spool].every(v => typeof v === 'string' && v.length)) throw new Error('sessionId, devspace and spool are required');
     // Never silently bind a durable outbox to someone else's hosted service.
     let destination;
@@ -20,7 +23,8 @@ export class Capture {
       throw new Error('Endpoint must be an HTTPS origin without credentials, path, query or fragment (loopback HTTP allowed)');
     }
     this.#content = content === true;
-    this.agent = agent; this.sessionId = sessionId; this.captureId = randomUUID();
+    Object.defineProperty(this, 'agent', { value: agent, enumerable: true });
+    this.sessionId = sessionId; this.captureId = randomUUID();
     this.executable = executable; this.spool = spool;
     this.#child = spawn(executable, ['capture', 'record', '--spool', spool, '--endpoint', endpoint,
       '--devspace', devspace, ...(this.#content ? ['--content'] : [])], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false });
@@ -52,6 +56,11 @@ export class Capture {
   }
   record(kind, { operationId, parentOperationId = null, nativeType = null, payload = null } = {}) {
     if (this.#closed) return Promise.reject(new Error('Capture is closed'));
+    // Generic runtimes share durable boundaries, not provider-specific meanings.
+    // Similar-looking fields must not invent token accounting or terminal outcomes.
+    const originalPayload = payload;
+    const knownProvider = providerAgents.has(this.agent);
+    if (!knownProvider) payload = null;
     const u = payload?.usage || payload?.response?.usage || payload?.message?.usage || payload?.event?.message?.usage || payload?.event?.usage;
     const n = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
     const usage = u ? { input_tokens: n(u.input_tokens), output_tokens: n(u.output_tokens),
@@ -76,7 +85,7 @@ export class Capture {
     const event = { schema: 'rroflow.capture/v1', event_id: randomUUID(), capture_id: this.captureId,
       sequence: this.#sequence++, agent: this.agent, session_id: this.sessionId,
       operation_id: operationId || randomUUID(), parent_operation_id: parentOperationId,
-      observed_at: new Date().toISOString(), kind, native_type: nativeType, native_id, parent_native_id, native_status, tool_name, exit_code, native, model, usage, payload: this.#content ? payload : null };
+      observed_at: new Date().toISOString(), kind, native_type: nativeType, native_id, parent_native_id, native_status, tool_name, exit_code, native: knownProvider ? native : null, model, usage, payload: this.#content ? originalPayload : null };
     const task = this.#tail.then(() => new Promise((resolve, reject) => {
       if (this.#failure) return reject(this.#failure);
       let line; try { line = JSON.stringify(event) + '\n'; } catch (e) { return reject(e); }
@@ -167,10 +176,12 @@ export class Capture {
 
 /** Codex TypeScript runStreamed() exposes its native thread/turn/item events. */
 export function codexStream(capture, thread, input, options) {
+  requireAgent(capture, 'codex');
   return capture.stream(async () => (await thread.runStreamed(input, options)).events, { input });
 }
 /** Opt into Claude's partial events; preserve caller hooks and all other options. */
 export function claudeStream(capture, query, args) {
+  requireAgent(capture, 'claude');
   const operationId = randomUUID();
   const hooks = { ...args.options?.hooks };
   const names = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'Stop', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PermissionRequest', 'SessionStart', 'SessionEnd', 'Notification'];
@@ -186,5 +197,10 @@ export function claudeStream(capture, query, args) {
 }
 /** Grok through xAI's OpenAI-compatible Responses API, using the caller's client. */
 export function grokStream(capture, client, request) {
+  requireAgent(capture, 'grok');
   return capture.stream(() => client.responses.create({ ...request, stream: true }), { input: request });
+}
+
+function requireAgent(capture, expected) {
+  if (capture.agent !== expected) throw new Error(`This adapter requires agent '${expected}'; use call, tool or stream for a generic runtime`);
 }
