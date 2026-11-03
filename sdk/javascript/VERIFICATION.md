@@ -54,3 +54,22 @@ automated integration coverage; it does not change the live-provider ledger abov
 
 See `docs/spec/sdk-activity-v1.md` for semantics, capacity controls, worker configuration
 and the explicit separation of SDK operations from session turns and dataset policies.
+
+
+## Generic runtime capture - 2026-11-03
+
+The generic runtime contract accepts bounded source IDs including `clyffy` and
+custom application names. The actual Rust recorder, durable outbox, HTTP ingest
+and projector passed fixture callbacks and streams through offline capture,
+backoff, wrong-account refusal, restored delivery, deduplication and restart.
+Generic payload fields resembling provider model/usage/terminal fields were not
+interpreted. Explicit tool failures and interrupted streams produced findings
+linked to their recorded event IDs. Content stayed absent by default; opted-in
+content was scrubbed. Known provider adapters retained their existing tests and
+refused mismatched runtime IDs before dispatch.
+
+This is automated integration evidence, not a live Clyffy, Grok or hosted Texas
+qualification. The published v0.4.0 binaries do not accept generic runtime IDs;
+use matching SDK, collector and ingest builds containing this change. Dataset
+consent still enumerates the three known provider SDKs; generic consent and
+provider-specific normalization remain separate work.

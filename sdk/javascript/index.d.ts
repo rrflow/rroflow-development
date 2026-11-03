@@ -1,4 +1,7 @@
-export type Agent = 'codex' | 'claude' | 'grok';
+/** Lowercase runtime ID, 1-64 ASCII letters/digits/._-, starting with a letter.
+ * Known adapters: codex, claude, grok. Other IDs use generic call/tool/stream.
+ * rrflow is reserved for the separate engine observation contract. */
+export type Agent = 'codex' | 'claude' | 'grok' | 'clyffy' | (string & {});
 export interface Scope { input?: unknown; operationId?: string; parentOperationId?: string | null }
 export interface CaptureOptions { agent: Agent; sessionId: string; devspace: string; spool: string; endpoint: string; executable?: string; content?: boolean }
 export class Capture {

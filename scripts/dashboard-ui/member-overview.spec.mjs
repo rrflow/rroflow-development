@@ -318,3 +318,43 @@ test("overview does not replace unavailable, stale or foreign responses with hea
   ).toBeVisible();
   await accessible(page);
 });
+
+
+test("generic runtimes open account-scoped evidence with accessible literal names", async ({ page, member: f }, info) => {
+  const { org, project } = await membership(f);
+  for (const agent of ["clyffy", "constructor"]) {
+    const capture_id = randomUUID();
+    const events = ["call.started", "call.failed"].map((kind, sequence) => ({
+      schema: "rroflow.capture/v1", event_id: randomUUID(), capture_id, sequence,
+      agent, session_id: "generic-runtime-fixture", operation_id: "generic-call",
+      observed_at: new Date().toISOString(), kind,
+    }));
+    expect((await f.api("/v1/events", { events })).status).toBe(200);
+  }
+  await expect.poll(async () => (await f.api("/v1/sdk/summary")).body.activities).toBe(2);
+  await connect(page, f);
+  await page.goto(pageUrl(f, org, project));
+  await expect(page.getByTestId("overview-sdk-count")).toHaveText("2");
+  await expect(page.getByRole("link", { name: "Clyffy 1", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "constructor 1", exact: true })).toBeVisible();
+  await accessible(page);
+  await page.getByRole("link", { name: "constructor 1", exact: true }).click();
+  await expect(page.locator("#sdk-filters select[name=agent]")).toHaveValue("constructor");
+  await expect(page.locator("#sdk-rows .activity-row")).toHaveCount(1);
+  await expect(page.locator("#sdk-rows")).toContainText("constructor");
+  expect(await page.locator("body").innerText()).not.toContain("[native code]");
+  await page.getByRole("button", { name: "Open evidence", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "constructor call", exact: true })).toBeVisible();
+  await expect(page.locator("#sdk-detail").getByRole("heading", { name: "Call failed", exact: true })).toBeVisible();
+  await accessible(page);
+  const proof = info.outputPath("generic-runtime-evidence-test-fixture.png");
+  await page.screenshot({ path: proof });
+  await info.attach("Generic runtime evidence (fixture)", { path: proof, contentType: "image/png" });
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#sdk-inspector")).not.toBeVisible();
+  await page.goto(pageUrl(f, org, project));
+  await page.getByRole("link", { name: "Clyffy 1", exact: true }).click();
+  await expect(page.locator("#sdk-filters select[name=agent]")).toHaveValue("clyffy");
+  await expect(page.locator("#sdk-rows .activity-row")).toHaveCount(1);
+  await expect(page.locator("#sdk-rows")).toContainText("Clyffy");
+});
