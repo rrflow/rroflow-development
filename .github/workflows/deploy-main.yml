@@ -1,0 +1,93 @@
+name: deploy-main
+# Every push to main: the full CI suite, then the exact packaged ingest (dashboard embedded)
+# is activated on the tx host. Host, paths and URLs are environment variables of the `tx`
+# GitHub environment; the SSH key and pinned host key are its secrets.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deploy-tx
+  cancel-in-progress: false
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-24.04
+    environment:
+      name: tx
+      url: ${{ vars.PUBLIC_URL }}
+    timeout-minutes: 20
+    env:
+      REV: ${{ github.sha }}
+      TX_HOST: ${{ vars.TX_HOST }}
+      TX_USER: ${{ vars.TX_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      HEALTH_URL: ${{ vars.HEALTH_URL }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+    steps:
+      - name: Required environment configuration
+        run: |
+          for name in TX_HOST TX_USER DEPLOY_PATH HEALTH_URL PUBLIC_URL; do
+            [ -n "${!name}" ] || { echo "::error::Set the $name variable on the tx environment"; exit 1; }
+          done
+      - name: Fetch the artifact CI built and verified for this commit
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: rroflow-ingest-${{ github.sha }}-x86_64-linux
+          path: dist
+      - name: Verify artifact checksum
+        id: artifact
+        run: |
+          archive="dist/rroflow-ingest-$REV-x86_64-unknown-linux-gnu.tar.gz"
+          sha=$(sha256sum "$archive" | cut -d' ' -f1)
+          [ "$sha" = "$(cat "$archive.sha256")" ] || { echo '::error::checksum mismatch'; exit 1; }
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+      - name: SSH with the pinned host key
+        env:
+          TX_SSH_KEY: ${{ secrets.TX_SSH_KEY }}
+          TX_KNOWN_HOSTS: ${{ secrets.TX_KNOWN_HOSTS }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$TX_SSH_KEY" > ~/.ssh/tx_deploy && chmod 0600 ~/.ssh/tx_deploy
+          printf '%s\n' "$TX_KNOWN_HOSTS" > ~/.ssh/known_hosts && chmod 0600 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CFG
+          Host tx
+            HostName $TX_HOST
+            User $TX_USER
+            IdentityFile ~/.ssh/tx_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            BatchMode yes
+            ConnectTimeout 20
+          CFG
+      - name: Upload
+        run: scp -q "${{ steps.artifact.outputs.archive }}" "tx:$DEPLOY_PATH/"
+      - name: Activate (verifies checksum, identity and authenticated smoke; restores the prior release itself on failure)
+        run: ssh tx sudo -n /usr/local/sbin/rroflow-deploy activate "${{ steps.artifact.outputs.sha256 }}" "$REV"
+      - name: Public health
+        id: health
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl -fsS --max-time 10 "$HEALTH_URL" >/dev/null &&
+               curl -fsS --max-time 10 "$PUBLIC_URL/build-info" | grep -q "\"revision\":\"$REV\""; then
+              echo "healthy: $HEALTH_URL serves $REV"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$HEALTH_URL did not serve $REV"; exit 1
+      - name: Roll back after a failed public health check
+        if: failure() && steps.health.outcome == 'failure'
+        run: ssh tx sudo -n /usr/local/sbin/rroflow-deploy rollback
+      - name: Deployment status
+        if: always()
+        run: ssh tx sudo -n /usr/local/sbin/rroflow-deploy status || true
+      - name: Remove the key
+        if: always()
+        run: rm -f ~/.ssh/tx_deploy

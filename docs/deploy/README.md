@@ -124,3 +124,21 @@ This keeps the earlier rule "deploy from GitHub only, no hand-built copies". Bui
 1. In Cloudflare, add `api.rroflow.ai` and `app.rroflow.ai` as `A 23.156.136.173`, DNS only.
 2. In Nomen, make sure `rroflow-dashboard` has the redirect `https://app.rroflow.ai/auth/callback`. The first guess was `https://rroflow.ai/auth/callback`.
 3. After increment 3: paste the bootstrap into a root shell on the Texas host, with the Nomen key file ready from Gold's sops.
+
+## Continuous deployment to tx (2026-11-04)
+
+`.github/workflows/deploy-main.yml` runs on every push to `main` (and by hand). It runs the
+whole `ci.yml` suite, takes the exact artifact `hosted-artifact` built and verified, uploads it
+to the tx host as the restricted `rroflow-deploy` user, and calls
+`sudo /usr/local/sbin/rroflow-deploy activate SHA256 COMMIT`. That root-owned wrapper (source:
+`deploy/tx-infra-prod/rroflow-deploy`) dumps the database, then runs a host-pinned copy of
+`activate-release.sh`, which restores the prior release itself when readiness, build identity or
+the authenticated smoke check fails. The workflow then checks the public `HEALTH_URL` serves the
+new revision and runs `rroflow-deploy rollback` when it does not.
+
+Configuration lives on the `tx` GitHub environment (main only): variables `TX_HOST`, `TX_USER`,
+`DEPLOY_PATH`, `HEALTH_URL`, `PUBLIC_URL`, `NOMEN_ISSUER`, `NOMEN_PROJECT_ID`; secrets
+`TX_SSH_KEY`, `TX_KNOWN_HOSTS`. Host values live in `/etc/rroflow/deploy.env` (root, 0600).
+The workflow never ships root-executed code: updating `activate-release.sh`, `preflight.sh` or
+the wrapper on the host is an operator step. `RROFLOW_APPROVED_BARE_HOST` (it must equal the
+hostname and `EXPECTED_HOST`) lets preflight accept the approved Proxmox host for a direct install.

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Root-owned entry point for the CI deploy user (installed as /usr/local/sbin/rroflow-deploy,
+# allowed by sudoers for exactly: activate SHA256 COMMIT | rollback | status).
+# The deploy user can only upload an archive to its incoming directory; everything that runs as
+# root (this file, activate-release.sh, preflight.sh) is a host-pinned copy installed by an
+# operator, never code from the upload. Host values live in /etc/rroflow/deploy.env (root, 0600):
+#   EXPECTED_HOST, RROFLOW_INCOMING, RROFLOW_SMOKE_KEY_FILE, RROFLOW_SMOKE_DEVSPACE,
+#   RROFLOW_BACKUP_DIR, optional RROFLOW_APPROVED_BARE_HOST, LISTEN.
+set +x
+set -euo pipefail
+umask 077
+die() { printf 'REFUSED: %s\n' "$*" >&2; exit 1; }
+[[ $EUID == 0 ]] || die 'Run through sudo.'
+env_file=${RROFLOW_DEPLOY_ENV:-/etc/rroflow/deploy.env}
+[[ -f "$env_file" && ! -L "$env_file" && "$(stat -c %u%a "$env_file")" == 0600 ]] || die 'deploy.env must be root-owned 0600.'
+set -a; . "$env_file"; set +a
+: "${EXPECTED_HOST:?}" "${RROFLOW_INCOMING:?}" "${RROFLOW_SMOKE_KEY_FILE:?}" "${RROFLOW_SMOKE_DEVSPACE:?}" "${RROFLOW_BACKUP_DIR:?}"
+export LISTEN=${LISTEN:-127.0.0.1:8787}
+lib=${RROFLOW_DEPLOY_LIB:-/usr/local/lib/rroflow-deploy}
+root=${RROFLOW_RELEASE_ROOT:-/opt/rroflow}
+service=rroflow-ingest.service
+
+case "${1:-}" in
+  activate)
+    [[ $# == 3 && "$2" =~ ^[0-9a-f]{64}$ && "$3" =~ ^[0-9a-f]{40}$ ]] || die 'Usage: rroflow-deploy activate SHA256 COMMIT'
+    archive="$RROFLOW_INCOMING/rroflow-ingest-$3-x86_64-unknown-linux-gnu.tar.gz"
+    [[ -f "$archive" && ! -L "$archive" ]] || die 'Upload the release archive first.'
+    # A fresh database dump before every activation is the backup receipt activation requires.
+    install -d -m 0700 "$RROFLOW_BACKUP_DIR"
+    dump="$RROFLOW_BACKUP_DIR/rroflow-$(date -u +%Y%m%dT%H%M%SZ)-pre-$3.dump"
+    runuser -u postgres -- pg_dump -Fc rroflow > "$dump"
+    [[ -s "$dump" ]] || die 'Database backup is empty.'
+    printf 'dump=%s\nsha256=%s\nbefore=%s\ncreated_at=%s\n' "$dump" "$(sha256sum "$dump" | cut -d' ' -f1)" "$3" "$(date -u +%FT%TZ)" > "$RROFLOW_BACKUP_DIR/latest.receipt"
+    chmod 0600 "$RROFLOW_BACKUP_DIR/latest.receipt"
+    ls -1t "$RROFLOW_BACKUP_DIR"/rroflow-*.dump | tail -n +11 | xargs -r rm -f --
+    export RROFLOW_BACKUP_RECEIPT="$RROFLOW_BACKUP_DIR/latest.receipt" RROFLOW_SMOKE_KEY_FILE RROFLOW_SMOKE_DEVSPACE EXPECTED_HOST
+    [[ -z "${RROFLOW_APPROVED_BARE_HOST:-}" ]] || export RROFLOW_APPROVED_BARE_HOST
+    status=0; bash "$lib/activate-release.sh" "$archive" "$2" "$3" || status=$?
+    rm -f -- "$archive"
+    exit "$status"
+    ;;
+  rollback)
+    # Return to the release that was live before the last successful activation.
+    [[ $# == 1 ]] || die 'Usage: rroflow-deploy rollback'
+    previous=$(sed -n 's/^previous=//p' "$root/last-deployment.receipt" 2>/dev/null || true)
+    [[ "$previous" =~ ^releases/[0-9a-f]{40}$ && -d "$root/$previous" && ! -L "$root/$previous" ]] || die 'No managed previous release to return to.'
+    exec 9>"$root/deploy.lock"; flock -n 9 || die 'Another activation holds the deployment lock.'
+    ln -s "$previous" "$root/.current.$$" && mv -Tf -- "$root/.current.$$" "$root/current"
+    systemctl restart "$service"
+    for _ in {1..10}; do
+      if curl --noproxy '*' -fsS --max-time 3 "http://$LISTEN/readyz" >/dev/null; then
+        printf 'active=%s\nrolled_back_from=%s\nat=%s\n' "$previous" "$(sed -n 's/^revision=//p' "$root/last-deployment.receipt")" "$(date -u +%FT%TZ)" > "$root/last-rollback.receipt"
+        echo "Rolled back to $previous"; exit 0
+      fi
+      sleep 1
+    done
+    die 'Rollback target did not become ready; operator needed.'
+    ;;
+  status)
+    [[ $# == 1 ]] || die 'Usage: rroflow-deploy status'
+    systemctl is-active "$service" || true
+    readlink "$root/current" || true
+    cat "$root/last-deployment.receipt" 2>/dev/null || true
+    ;;
+  *) die 'Usage: rroflow-deploy activate SHA256 COMMIT | rollback | status' ;;
+esac
