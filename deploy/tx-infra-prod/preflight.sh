@@ -13,11 +13,26 @@ elif [[ "$actual_host" != "$EXPECTED_HOST" ]]; then
   fail "Hostname does not match EXPECTED_HOST."
 fi
 info "Observed hostname: $actual_host"
+# Exception for a host the operator approved for a direct install (tx-infra-prod/rl07 in dev).
+# It must name this exact host, so a copied environment cannot widen it.
+approved_host=0
+if [[ -n "${RROFLOW_APPROVED_BARE_HOST:-}" ]]; then
+  if [[ "$RROFLOW_APPROVED_BARE_HOST" == "$actual_host" && "$actual_host" == "${EXPECTED_HOST:-}" ]]; then
+    approved_host=1
+  else
+    fail "RROFLOW_APPROVED_BARE_HOST does not name this host."
+  fi
+fi
 
 if command -v pveversion >/dev/null 2>&1 || [[ -d /etc/pve ]]; then
-  fail "This is a Proxmox host. Select the dedicated application VM."
+  if (( approved_host )); then
+    info "Proxmox host: direct install approved for $actual_host (RROFLOW_APPROVED_BARE_HOST)."
+  else
+    fail "This is a Proxmox host. Select the dedicated application VM."
+  fi
 fi
 if ! virtualization=$(systemd-detect-virt --vm 2>/dev/null); then
+  (( approved_host )) && info "Virtualization: none (approved host)" ||
   fail "Could not verify that this is a VM."
 else
   info "Virtualization: $virtualization"

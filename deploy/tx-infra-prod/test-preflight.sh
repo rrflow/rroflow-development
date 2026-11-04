@@ -45,6 +45,8 @@ pass
 reject 'Set EXPECTED_HOST' EXPECTED_HOST=
 reject 'Hostname does not match' EXPECTED_HOST=another-vm
 reject 'verify that this is a VM' MOCK_VIRT=bare-metal
+reject 'does not name this host' MOCK_VIRT=bare-metal RROFLOW_APPROVED_BARE_HOST=another-host
+env MOCK_VIRT=bare-metal RROFLOW_APPROVED_BARE_HOST=fixture-vm bash "$script_dir/preflight.sh" > "$fixture/output" 2>&1 || { cat "$fixture/output"; exit 1; }
 reject 'full lowercase Git commit SHA' REV=main
 reject 'IPv4 loopback' LISTEN=0.0.0.0:8787
 reject 'outside 1..65535' LISTEN=127.0.0.1:99999
@@ -53,4 +55,6 @@ reject 'occupied by another' PUBLIC_HOSTS=example.invalid MOCK_LISTENER=occupied
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/bin/pveversion"
 chmod +x "$fixture/bin/pveversion"
 reject 'Proxmox host'
-echo 'PASS: 10 deployment guard cases'
+env RROFLOW_APPROVED_BARE_HOST=fixture-vm bash "$script_dir/preflight.sh" > "$fixture/output" 2>&1 || { cat "$fixture/output"; exit 1; }
+grep -qF 'direct install approved' "$fixture/output" || { cat "$fixture/output"; exit 1; }
+echo 'PASS: 13 deployment guard cases'

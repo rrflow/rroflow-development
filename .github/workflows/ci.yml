@@ -1,8 +1,8 @@
 name: ci
 on:
-  push:
-    branches: [main]
   pull_request:
+  # Pushes to main run this suite through deploy-main.yml, which deploys only when it passes.
+  workflow_call:
 permissions:
   contents: read
 jobs:
