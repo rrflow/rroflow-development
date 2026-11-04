@@ -3,15 +3,15 @@
 Status: merged in PR50 with PostgreSQL and packaged browser test evidence. Not deployed.
 The owner accepted native accounts alongside Nomen in Shippin ADR 0013. This slice
 implements browser signup, sign-in and recovery. [Native CLI device authorization](native-device-authorization-v1.md)
-is a separate slice under local qualification. Explicit account linking, MFA/passkeys
+is merged in PR52 and remains separate from Nomen device authorization. Explicit account linking, MFA/passkeys
 and public-launch security review remain open.
 
 ## A person's journey
 
-`/auth/login` opens `/app/account` when native accounts are configured. The React
+`/auth/login` opens the dedicated `/app/account` page when native accounts or browser federation are configured. The React
 page offers email sign-in, registration when enabled, and password recovery when
-mail is configured. "Continue with Shippin" goes through `/auth/federation` when
-browser federation is configured. Both routes use the same existing organization
+mail is configured. "Continue with Nomen" is the primary choice and goes through `/auth/federation` when
+browser federation is configured. Its public provider label is configurable. Both routes use the same existing organization
 and project APIs; signing in never grants a paid entitlement or dataset consent.
 
 Registration first sends a verification link to the email address. It does not

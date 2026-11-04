@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { FlowArt } from "./ui";
+import { FlowArt, Icon } from "./ui";
 
 // Read once before React's development replay, then remove from the visible URL.
 let initialToken = /^#rrnv_[a-f0-9]{64}$/.test(location.hash)
@@ -11,6 +11,7 @@ type Options = {
   signup_enabled: boolean;
   recovery_enabled: boolean;
   federation_enabled: boolean;
+  federation_label: string;
 };
 type Mode = "login" | "register" | "reset" | "complete";
 
@@ -18,10 +19,12 @@ export function AccountPage({ name }: { name: string }) {
   // A closed destination choice, never an arbitrary redirect URL.
   const deviceReturn = new URLSearchParams(location.search).get("next") === "device";
   const [options, setOptions] = useState<Options | null>(null);
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
   const [mode, setMode] = useState<Mode>(initialToken ? "complete" : "login");
   const [token, setToken] = useState(initialToken);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,6 +36,7 @@ export function AccountPage({ name }: { name: string }) {
       setToken(location.hash.slice(1));
       setMode("complete");
       setPassword("");
+      setShowPassword(false);
       setError("");
       setNotice("");
       history.replaceState(null, "", location.pathname);
@@ -43,6 +47,7 @@ export function AccountPage({ name }: { name: string }) {
   useEffect(() => {
     const c = new AbortController();
     controller.current = c;
+    setError("");
     fetch("/auth/native/config", {
       credentials: "same-origin",
       signal: c.signal,
@@ -65,7 +70,11 @@ export function AccountPage({ name }: { name: string }) {
             (k) =>
               k in data &&
               typeof (data as Record<string, unknown>)[k] === "boolean",
-          )
+          ) ||
+          !("federation_label" in data) ||
+          typeof data.federation_label !== "string" ||
+          !data.federation_label.trim() ||
+          [...data.federation_label].length > 80
         )
           throw new Error(
             "Account options could not be read. Reload to try again.",
@@ -79,10 +88,11 @@ export function AccountPage({ name }: { name: string }) {
           );
       });
     return () => c.abort();
-  }, []);
+  }, [optionsAttempt]);
   function change(next: Mode) {
     setMode(next);
     setPassword("");
+    setShowPassword(false);
     setNotice("");
     setError("");
   }
@@ -131,6 +141,7 @@ export function AccountPage({ name }: { name: string }) {
       }
       setNotice(message);
       setPassword("");
+      setShowPassword(false);
       if (mode === "complete") {
         initialToken = "";
         setToken("");
@@ -152,6 +163,8 @@ export function AccountPage({ name }: { name: string }) {
         : mode === "complete"
           ? "Choose your password"
           : "Welcome back";
+  const federationAvailable =
+    options?.federation_enabled && !deviceReturn && mode === "login";
   return (
     <main className="account-layout">
       <section className="account-story" aria-label="About your account">
@@ -178,6 +191,27 @@ export function AccountPage({ name }: { name: string }) {
         )}
         {notice && <p role="status">{notice}</p>}
         {!options && !error && <p role="status">Loading sign-in options…</p>}
+        {!options && error && (
+          <button
+            className="secondary"
+            onClick={() => setOptionsAttempt((attempt) => attempt + 1)}
+          >
+            Reload sign-in options
+          </button>
+        )}
+        {federationAvailable && (
+          <div className="account-federation">
+            <a className="button" href="/auth/federation">
+              <Icon name="key" /> Continue with {options.federation_label}
+            </a>
+            <p className="muted">
+              Use your shared {options.federation_label} sign-in.
+            </p>
+            {options.enabled && (
+              <p className="account-divider">Or use your {name} password</p>
+            )}
+          </div>
+        )}
         {options?.enabled && (
           <>
             <p className="muted">
@@ -212,7 +246,7 @@ export function AccountPage({ name }: { name: string }) {
                   <input
                     id="account-password"
                     name="password"
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     autoComplete={
                       mode === "login" ? "current-password" : "new-password"
                     }
@@ -224,12 +258,26 @@ export function AccountPage({ name }: { name: string }) {
                     disabled={busy}
                     aria-describedby="password-help"
                   />
+                  <button
+                    type="button"
+                    className="text-button account-password-toggle"
+                    aria-controls="account-password"
+                    aria-pressed={showPassword}
+                    disabled={busy}
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? "Hide password" : "Show password"}
+                  </button>
                   <p id="password-help" className="muted">
                     15–128 characters. Spaces and password managers are welcome.
                   </p>
                 </>
               )}
-              <button type="submit" disabled={busy}>
+              <button
+                type="submit"
+                className={federationAvailable ? "secondary" : undefined}
+                disabled={busy}
+              >
                 {busy
                   ? "Working…"
                   : mode === "login"
@@ -270,13 +318,12 @@ export function AccountPage({ name }: { name: string }) {
             </div>
           </>
         )}
-        {options && !options.enabled && (
-          <p>Email sign-in is not available on this installation.</p>
-        )}
-        {options?.federation_enabled && !deviceReturn && (
-          <a className="button secondary" href="/auth/federation">
-            Continue with Shippin
-          </a>
+        {options && !options.enabled && !federationAvailable && (
+          <p role="status">
+            {deviceReturn
+              ? "This connection needs password sign-in, which is not available here."
+              : "Sign-in is not available right now. Please try again later."}
+          </p>
         )}
         <p className="muted">
           <a href="/">Back to home</a>

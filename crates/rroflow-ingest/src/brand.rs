@@ -13,6 +13,8 @@ pub struct BrandConfig {
     pub intro_emphasis: String,
     pub intro_description: String,
     pub documentation_url: String,
+    /// Public label for the configured federation provider; never an endpoint.
+    pub federation_label: String,
     pub links: Vec<BrandLink>,
     pub accent: String,
     pub highlight: String,
@@ -34,6 +36,7 @@ impl Default for BrandConfig {
             intro_emphasis: "See the whole story.".into(),
             intro_description: "What happened? Where did it get stuck? What was worth keeping? Turn your agents’ activity into a clear picture you can actually use.".into(),
             documentation_url: "https://github.com/rrflow/rroflow-development/blob/main/docs/plan/sdk-install-and-linking.md".into(),
+            federation_label: "Nomen".into(),
             links: vec![
                 BrandLink { label: "Source & documentation ↗".into(), url: "https://github.com/rrflow/rroflow-development".into() },
                 BrandLink { label: "RRFlow reasoning engine ↗".into(), url: "https://rrflow.ai".into() },
@@ -106,6 +109,7 @@ impl BrandConfig {
             ("intro_title", &self.intro_title, 120),
             ("intro_emphasis", &self.intro_emphasis, 120),
             ("intro_description", &self.intro_description, 500),
+            ("federation_label", &self.federation_label, 80),
         ] {
             text(value, max, field)?;
         }
@@ -172,6 +176,7 @@ pub(crate) struct RenderedBrand {
     pub dashboard: String,
     pub member: String,
     pub css: String,
+    pub federation_label: String,
 }
 
 impl RenderedBrand {
@@ -261,6 +266,7 @@ impl RenderedBrand {
             dashboard,
             member,
             css,
+            federation_label: config.federation_label.clone(),
         })
     }
 }
@@ -271,6 +277,17 @@ mod tests {
     #[test]
     fn validates_bounds_urls_and_readable_colors() {
         BrandConfig::default().validate().unwrap();
+        assert_eq!(BrandConfig::default().federation_label, "Nomen");
+        for label in [String::new(), "a".repeat(81), "Nomen\nOther".into()] {
+            assert!(
+                BrandConfig {
+                    federation_label: label,
+                    ..Default::default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
         let example: crate::Config =
             toml::from_str(include_str!("../../../deploy/brand.example.toml")).unwrap();
         example.brand.validate().unwrap();

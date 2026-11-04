@@ -212,10 +212,10 @@ pub(crate) async fn config(State(st): State<AppState>) -> Json<serde_json::Value
 }
 
 pub(crate) async fn login(State(st): State<AppState>) -> Response {
-    if st.accounts.is_some() {
+    if st.accounts.is_some() || st.web.is_some() {
         return Redirect::to("/app/account").into_response();
     }
-    federation_login(State(st)).await
+    StatusCode::SERVICE_UNAVAILABLE.into_response()
 }
 
 pub(crate) async fn federation_login(State(st): State<AppState>) -> Response {

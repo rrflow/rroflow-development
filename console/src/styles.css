@@ -1124,3 +1124,8 @@ dialog form {
 .signal-table .signal-actions { gap: var(--space-2); }
 .signal-table button { padding: .35rem .6rem; }
 @media(max-width:1000px) { .signal-table thead { position: absolute; clip: rect(0,0,0,0); width: 1px; height: 1px; overflow: hidden; }.signal-table,.signal-table tbody { display: block; }.signal-table tr { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--border); }.signal-table td { display: block; border: 0; min-width: 0; }.signal-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: .75rem; margin-bottom: .25rem; }.signal-table td:nth-child(2),.signal-table td:last-child { grid-column: 1/-1; }.signal-table td:nth-child(2) { grid-row: 1; } }
+
+.account-federation .button { display:flex; width:100%; justify-content:center; white-space:normal; overflow-wrap:anywhere; }
+.account-federation > .muted { margin-block:var(--space-3) var(--space-6); }
+.account-divider { padding-top:var(--space-4); border-top:1px solid var(--border); color:var(--muted); }
+.account-password-toggle { justify-self:start; min-height:44px; }

@@ -107,9 +107,21 @@ fn pkce_matches_rfc7636_vector_and_config_rejects_insecure_origins() {
 #[tokio::test]
 async fn login_binds_state_and_callback_to_the_browser() {
     let (app, web, _dir) = app().await;
-    let r = app
+    let entry = app
         .clone()
         .oneshot(Request::get("/auth/login").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(entry.status(), StatusCode::SEE_OTHER);
+    assert_eq!(entry.headers()["location"], "/app/account");
+    assert!(!entry.headers().contains_key("set-cookie"));
+    let r = app
+        .clone()
+        .oneshot(
+            Request::get("/auth/federation")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(r.status(), StatusCode::SEE_OTHER);

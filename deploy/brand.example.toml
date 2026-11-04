@@ -4,6 +4,7 @@
 name = "Orbit AI"
 wordmark = "orbit."
 mark = "o"
+federation_label = "Nomen"
 tagline = "Clarity for every conversation"
 intro_title = "Good work deserves"
 intro_emphasis = "a clearer view."
