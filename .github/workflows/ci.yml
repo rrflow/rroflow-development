@@ -40,6 +40,12 @@ jobs:
       - name: Verify React member console embedded assets
         working-directory: console
         run: npm ci --ignore-scripts && npm run verify
+      - name: Verify connection bottleneck summaries
+        working-directory: console
+        run: node --test test/connection-health.test.mjs
+      - name: Verify local MCP setup bridge
+        working-directory: mcp/setup
+        run: npm ci --ignore-scripts && npm test
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy

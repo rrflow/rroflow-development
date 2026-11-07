@@ -10,6 +10,7 @@ import {
   type Bucket,
 } from "./monitoring-api";
 import { Icon } from "./ui";
+import { connectionHealth } from "./connection-health";
 
 type Load<T> =
   | { state: "loading" }
@@ -209,6 +210,7 @@ export function ProjectOverview({
   );
   const elapsed =
     loadedAt === null ? 0 : Math.max(0, performance.now() - loadedAt);
+  const connection = health.state === "ready" ? connectionHealth(health.data, elapsed) : null;
   return (
     <section
       className="project-overview"
@@ -268,6 +270,35 @@ export function ProjectOverview({
           <small>Saved reports, not an online count</small>
         </a>
       </div>
+      <section className="panel" aria-labelledby="connection-attention-title">
+        <div className="panel-heading">
+          <h3 id="connection-attention-title">Connection bottlenecks</h3>
+          <a href={monitorLink(project, "sources")}>
+            Open connection details <Icon name="arrow" />
+          </a>
+        </div>
+        {health.state === "loading" || sdkData.state === "loading" ? (
+          <p role="status">Checking the last saved reports...</p>
+        ) : health.state === "error" || sdkData.state === "error" ? (
+          <p role="alert">Some connection data is unavailable. Refresh the overview or open connection details.</p>
+        ) : (
+          <>
+            {health.data.rows.length === 0 ? (
+              <p>No collector has reported for this project. Open connection details to connect a source.</p>
+            ) : (
+              <ul>
+                <li>{fmt(connection!.stale)} collectors have no recent report.</li>
+                <li>{fmt(connection!.problems)} collectors last reported a delivery, capture or SDK queue problem.</li>
+                <li>{fmt(connection!.pendingTurns)} turn revisions were waiting in the last reports.</li>
+              </ul>
+            )}
+            {sdkData.data.available ? (
+              <p>{fmt(sdkData.data.pending)} SDK captures await indexing; {fmt(sdkData.data.errors)} have an indexing error.</p>
+            ) : <p>SDK indexing is unavailable: {sdkData.data.reason}</p>}
+            <p className="muted">These are last-reported values, not live access to a collector's offline queue. Refresh to check again.</p>
+          </>
+        )}
+      </section>
       <details className="overview-explainer">
         <summary>What do these numbers mean?</summary>
         <p>
