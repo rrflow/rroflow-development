@@ -144,6 +144,11 @@ test("project overview shows received activity, signal evidence and delivery wit
   await expect(page.getByTestId("overview-turn-count")).toHaveText("2");
   await expect(page.getByTestId("overview-sdk-count")).toHaveText("1");
   await expect(page.getByTestId("overview-source-count")).toHaveText("1");
+  const bottlenecks = page.getByRole("region", { name: "Connection bottlenecks" });
+  await expect(bottlenecks.getByText("0 collectors have no recent report.")).toBeVisible();
+  await expect(bottlenecks.getByText("1 collector last reported a delivery, capture or SDK queue problem.")).toBeVisible();
+  await expect(bottlenecks.getByText("2 turn revisions were waiting in the last reports.")).toBeVisible();
+  await expect(bottlenecks.getByRole("link", { name: /Open connection details/ })).toBeVisible();
   await expect(
     page.getByText("Reported a problem", { exact: true }),
   ).toBeVisible();

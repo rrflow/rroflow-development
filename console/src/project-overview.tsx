@@ -287,8 +287,8 @@ export function ProjectOverview({
               <p>No collector has reported for this project. Open connection details to connect a source.</p>
             ) : (
               <ul>
-                <li>{fmt(connection!.stale)} collectors have no recent report.</li>
-                <li>{fmt(connection!.problems)} collectors last reported a delivery, capture or SDK queue problem.</li>
+                <li>{fmt(connection!.stale)} {connection!.stale === 1 ? "collector has" : "collectors have"} no recent report.</li>
+                <li>{fmt(connection!.problems)} {connection!.problems === 1 ? "collector" : "collectors"} last reported a delivery, capture or SDK queue problem.</li>
                 <li>{fmt(connection!.pendingTurns)} turn revisions were waiting in the last reports.</li>
               </ul>
             )}
