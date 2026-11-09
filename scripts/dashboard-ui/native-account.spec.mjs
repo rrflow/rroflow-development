@@ -147,3 +147,83 @@ test('native member verifies mailbox, signs in, recovers, and reaches real proje
     await other.close();
   } finally {await fixture.close();}
 });
+
+test('first run replaces an exposed setup password and shows the new one once',async({page})=>{
+  test.skip(!process.env.RROFLOW_DATASET_UI_DATABASE_URL,'Requires disposable Postgres');
+  const fixture=await nativeFixture(process.env.RROFLOW_DATASET_UI_DATABASE_URL);
+  try {
+    const setup=await fixture.setupPassword();
+    await fixture.connect(page);await page.goto(fixture.origin+'/app/account');
+    await expect(page.getByRole('heading',{name:'Finish setting up'})).toBeVisible();
+    await page.getByLabel('Setup password',{exact:true}).fill(setup);
+    await page.getByRole('button',{name:'Continue',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Save your new password'})).toBeVisible();
+    const first=await page.getByLabel('New password',{exact:true}).inputValue();
+    expect(first).not.toBe(setup);expect(first).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){5}$/);
+    expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+
+    // Closing the page before saving loses that password but not the account.
+    await page.reload();
+    await page.getByRole('button',{name:'Make a new password',exact:true}).click();
+    const password=await page.getByLabel('New password',{exact:true}).inputValue();
+    expect(password).not.toBe(first);
+    const proceed=page.getByRole('button',{name:'Go to my workspace',exact:true});
+    await expect(proceed).toBeDisabled();
+    await page.getByLabel('I saved this password',{exact:true}).check();
+    await proceed.click();
+    await expect(page).toHaveURL(fixture.origin+'/app/manage');
+    await expect(page.getByRole('heading',{level:1}).first()).toBeVisible();
+
+    // The saved password signs in by name; the exposed one never works again.
+    await page.context().clearCookies();await page.goto(fixture.origin+'/app/account');
+    await page.getByLabel('Email or admin name',{exact:true}).fill('admin');
+    await page.getByLabel('Password',{exact:true}).fill(setup);
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();
+    await expect(page.getByRole('alert')).toContainText('not recognized');
+    await page.getByLabel('Password',{exact:true}).fill(password);
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();
+    await expect(page).toHaveURL(fixture.origin+'/app/manage');
+  } finally { await fixture.close(); }
+});
+
+test('a live reset password is not hidden behind an earlier unsaved password',async({page})=>{
+  test.skip(!process.env.RROFLOW_DATASET_UI_DATABASE_URL,'Requires disposable Postgres');
+  const fixture=await nativeFixture(process.env.RROFLOW_DATASET_UI_DATABASE_URL);
+  try {
+    await fixture.connect(page);
+    await page.goto(fixture.origin+'/app/account');
+    await page.getByLabel('Email address').waitFor();
+    const setup=await fixture.setupPassword();
+    await page.reload();
+    await page.getByLabel('Setup password',{exact:true}).fill(setup);
+    await page.getByRole('button',{name:'Continue',exact:true}).click();
+    await expect(page.getByLabel('New password',{exact:true})).toBeVisible();
+    const reset=await fixture.setupPassword('--reset');
+    await page.reload();
+    await expect(page.getByRole('heading',{name:'Finish setting up'})).toBeVisible();
+    await page.getByLabel('Setup password',{exact:true}).fill(reset);
+    await page.getByRole('button',{name:'Continue',exact:true}).click();
+    await expect(page.getByLabel('New password',{exact:true})).toBeVisible();
+  } finally { await fixture.close(); }
+});
+
+test('a local install works on plain localhost, including after signing out',async({page})=>{
+  test.skip(!process.env.RROFLOW_DATASET_UI_DATABASE_URL,'Requires disposable Postgres');
+  const fixture=await nativeFixture(process.env.RROFLOW_DATASET_UI_DATABASE_URL,{local:true});
+  try {
+    const setup=await fixture.setupPassword();
+    await page.goto(fixture.origin+'/app/account');
+    await page.getByLabel('Setup password',{exact:true}).fill(setup);
+    await page.getByRole('button',{name:'Continue',exact:true}).click();
+    await page.getByLabel('I saved this password',{exact:true}).check();
+    await page.getByRole('button',{name:'Go to my workspace',exact:true}).click();
+    await expect(page).toHaveURL(fixture.origin+'/app/manage');
+    await page.context().clearCookies();
+    await page.goto(fixture.origin+'/app/manage');
+    await expect(page.getByRole('link',{name:'Sign in with your account'})).toBeVisible();
+    await expect(page.getByText('Sign-in configuration is invalid.')).toHaveCount(0);
+    await page.goto(fixture.origin+'/');
+    await expect(page.locator('#member-status')).toContainText('Continue to account sign-in');
+  } finally { await fixture.close(); }
+});

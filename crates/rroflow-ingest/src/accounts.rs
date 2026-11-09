@@ -14,8 +14,10 @@ use zeroize::Zeroizing;
 
 pub(crate) mod device;
 pub(crate) mod device_http;
+pub(crate) mod first_run;
 pub(crate) mod http;
 pub use device::{DeviceClient, DeviceConfig};
+pub use first_run::{SETUP_TTL_MINUTES, SetupPassword, issue_setup_password};
 mod mail;
 pub use mail::{MailWorker, SmtpConfig};
 pub(crate) const ISSUER: &str = "rroflow:native:v1";
@@ -109,6 +111,13 @@ pub(crate) fn normalize_email(email: &str) -> Option<String> {
     }
     Some(email.to_ascii_lowercase())
 }
+/// The built-in admin signs in by name; every other account signs in by email.
+pub(crate) fn normalize_login(login: &str) -> Option<String> {
+    if login.trim().eq_ignore_ascii_case(first_run::ADMIN_LOGIN) {
+        return Some(first_run::ADMIN_LOGIN.to_string());
+    }
+    normalize_email(login)
+}
 pub(crate) fn valid_password(password: &str) -> bool {
     (15..=128).contains(&password.chars().count()) && password.len() <= 512
 }
@@ -122,8 +131,8 @@ async fn audit(tx: &mut Transaction<'_, Postgres>, user: &str, action: &str) -> 
 impl Accounts {
     pub(crate) fn new(cfg: &AccountConfig, pool: PgPool) -> Result<Self> {
         ensure!(
-            crate::web_auth::https_origin(&cfg.origin),
-            "native accounts need a canonical HTTPS origin"
+            crate::web_auth::member_origin(&cfg.origin),
+            "native accounts need a canonical HTTPS origin, or http://localhost for a local install"
         );
         ensure!(
             (300..=86400).contains(&cfg.action_ttl_seconds)
@@ -444,21 +453,37 @@ impl Accounts {
         if current != Some((stored, epoch)) {
             return Ok(None);
         }
+        // Signing in with a generated password proves it was saved.
+        sqlx::query("UPDATE native_credentials SET unsaved_session_sha256=NULL WHERE user_id=$1")
+            .bind(&user)
+            .execute(&mut *tx)
+            .await?;
+        audit(&mut tx, &user, "account.signed_in").await?;
+        let token = self.open_session(&mut tx, &user, epoch).await?;
+        tx.commit().await?;
+        Ok(Some(token))
+    }
+
+    /// The caller's transaction serializes this against resets of the same account.
+    async fn open_session(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        user: &str,
+        epoch: i64,
+    ) -> Result<String> {
         sqlx::query(
             "DELETE FROM native_sessions WHERE user_id=$1 AND expires_at<=clock_timestamp()",
         )
-        .bind(&user)
-        .execute(&mut *tx)
+        .bind(user)
+        .execute(&mut **tx)
         .await?;
         sqlx::query("DELETE FROM native_sessions WHERE session_sha256 IN (SELECT session_sha256 FROM native_sessions WHERE user_id=$1 ORDER BY created_at DESC,session_sha256 OFFSET $2)")
-            .bind(&user).bind(self.cfg.sessions_per_user-1).execute(&mut *tx).await?;
-        audit(&mut tx, &user, "account.signed_in").await?;
+            .bind(user).bind(self.cfg.sessions_per_user-1).execute(&mut **tx).await?;
         let token = secret(SESSION_PREFIX);
         sqlx::query("INSERT INTO native_sessions(session_sha256,context_sha256,user_id,credential_epoch,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+make_interval(secs=>$5))")
             .bind(hash_key(&token)).bind(&self.context).bind(user).bind(epoch).bind(self.cfg.session_ttl_seconds as f64)
-            .execute(&mut *tx).await?;
-        tx.commit().await?;
-        Ok(Some(token))
+            .execute(&mut **tx).await?;
+        Ok(token)
     }
 
     pub(crate) async fn subject(&self, token: &str) -> Result<Option<Subject>> {

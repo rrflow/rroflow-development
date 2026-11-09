@@ -78,8 +78,9 @@ Email and password with argon2id, email verification, password reset and rate li
 sessions in Postgres so a restart does not sign people out; generic OIDC federation with Nomen
 as the first issuer; account linking only on verified email with explicit confirmation; a
 device flow served by RROFLOW so `rroflow login` works for native accounts; reviews record RROFLOW
-user ids rather than Nomen IDs. Passkeys and MFA follow. Requires an email provider (open question)
-and a security review before public signup.
+user ids rather than Nomen IDs. Requires an email provider (open question) and a security review
+before public signup. [First-run access](../spec/first-run-access-v1.md) owns the built-in admin
+account and the path from a one-time password to a saved password, passkeys and Google sign-in.
 
 ### 3. Provenance contract
 

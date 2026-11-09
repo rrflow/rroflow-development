@@ -605,3 +605,33 @@ async fn device_expiry_is_rechecked_after_credential_lock_waits() {
     refused(task.await.unwrap(), "invalid_grant");
     f.close().await;
 }
+
+#[tokio::test]
+async fn grants_from_before_a_credential_change_do_not_use_up_capacity() {
+    let Some(mut f) = fixture().await else {
+        return;
+    };
+    f.cfg
+        .accounts
+        .as_mut()
+        .unwrap()
+        .device
+        .as_mut()
+        .unwrap()
+        .max_grants_per_user = 1;
+    let a = f.accounts();
+    let session = f.register(&a, EMAIL).await;
+    let project = project(&f, &a, &session).await;
+    connect(&f, &a, &session, &project).await;
+    sqlx::query("UPDATE native_credentials SET credential_epoch=credential_epoch+1")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE native_sessions SET credential_epoch=credential_epoch+1")
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    connect(&f, &a, &session, &project).await;
+    drop(a);
+    f.close().await;
+}
