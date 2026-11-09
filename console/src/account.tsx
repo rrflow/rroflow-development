@@ -12,8 +12,115 @@ type Options = {
   recovery_enabled: boolean;
   federation_enabled: boolean;
   federation_label: string;
+  first_run: boolean;
+  builtin_admin: boolean;
 };
-type Mode = "login" | "register" | "reset" | "complete";
+type Mode =
+  | "login"
+  | "register"
+  | "reset"
+  | "complete"
+  | "first-run"
+  | "unsaved";
+type NewPassword = {
+  signin: string;
+  password: string;
+  revision: number;
+  active_keys?: number;
+};
+
+const postHeaders = {
+  "Content-Type": "application/json",
+  "X-Rroflow-Request": "dashboard",
+};
+
+function SavePassword({
+  created,
+  onSaved,
+}: {
+  created: NewPassword;
+  onSaved: (revision: number) => Promise<void>;
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(created.password);
+      setCopied(true);
+    } catch {
+      setError("Copy did not work here. Select the password and copy it.");
+    }
+  }
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!confirmed || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onSaved(created.revision);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Please try again.");
+      setBusy(false);
+    }
+  }
+  return (
+    <form onSubmit={submit}>
+      <p className="account-warning">
+        This is the only time it will be shown. Keep it in a password manager,
+        and do not paste this one into an AI chat.
+      </p>
+      {Boolean(created.active_keys) && (
+        <p role="status">
+          {created.active_keys} connection{" "}
+          {created.active_keys === 1 ? "key" : "keys"} from before this reset
+          still {created.active_keys === 1 ? "works" : "work"}. If you did not
+          make {created.active_keys === 1 ? "it" : "them"}, revoke{" "}
+          {created.active_keys === 1 ? "it" : "them"} in your workspace.
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+      <label htmlFor="new-signin">Sign-in name</label>
+      <input
+        id="new-signin"
+        name="username"
+        autoComplete="username"
+        readOnly
+        value={created.signin}
+      />
+      <label htmlFor="new-password">New password</label>
+      <input
+        id="new-password"
+        name="password"
+        type="text"
+        className="account-secret"
+        autoComplete="new-password"
+        spellCheck={false}
+        readOnly
+        value={created.password}
+      />
+      <button type="button" className="secondary" onClick={copy}>
+        {copied ? "Copied" : "Copy password"}
+      </button>
+      <label className="account-check">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          onChange={(e) => setConfirmed(e.target.checked)}
+        />
+        I saved this password
+      </label>
+      <button type="submit" disabled={!confirmed || busy}>
+        {busy ? "Working…" : "Go to my workspace"}
+      </button>
+    </form>
+  );
+}
 
 export function AccountPage({ name }: { name: string }) {
   // A closed destination choice, never an arbitrary redirect URL.
@@ -28,6 +135,11 @@ export function AccountPage({ name }: { name: string }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState<NewPassword | null>(null);
+  const [unsaved, setUnsaved] = useState<{
+    signin: string;
+    revision: number;
+  } | null>(null);
   const pending = useRef(false);
   const controller = useRef(new AbortController());
   useEffect(() => {
@@ -66,6 +178,8 @@ export function AccountPage({ name }: { name: string }) {
             "signup_enabled",
             "recovery_enabled",
             "federation_enabled",
+            "first_run",
+            "builtin_admin",
           ].every(
             (k) =>
               k in data &&
@@ -80,6 +194,7 @@ export function AccountPage({ name }: { name: string }) {
             "Account options could not be read. Reload to try again.",
           );
         setOptions(data as Options);
+        if ((data as Options).first_run && !initialToken) setMode("first-run");
       })
       .catch((e) => {
         if (!c.signal.aborted)
@@ -89,6 +204,68 @@ export function AccountPage({ name }: { name: string }) {
       });
     return () => c.abort();
   }, [optionsAttempt]);
+  useEffect(() => {
+    // Only the built-in admin is ever given a generated password to save. A live setup
+    // password comes first, or a reset would be hidden behind this older question.
+    if (!options?.builtin_admin || options.first_run) return;
+    const c = new AbortController();
+    // A page closed before saving can still get a new password while signed in.
+    fetch("/auth/native/password/status", {
+      method: "POST",
+      credentials: "same-origin",
+      signal: c.signal,
+      headers: postHeaders,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((status) => {
+        if (status?.unsaved === true && typeof status.signin === "string") {
+          setUnsaved({ signin: status.signin, revision: status.revision });
+          setMode("unsaved");
+        }
+      })
+      .catch(() => {});
+    return () => c.abort();
+  }, [options?.builtin_admin, options?.first_run]);
+  function enterWorkspace() {
+    location.assign(deviceReturn ? "/app/device" : "/app/manage");
+  }
+  async function markSaved(revision: number) {
+    const response = await fetch("/auth/native/password/saved", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: postHeaders,
+      body: JSON.stringify({ revision }),
+    });
+    if (response.status === 409)
+      throw new Error(
+        "A newer password was made in another tab. Reload this page.",
+      );
+    if (!response.ok) throw new Error("That did not save. Please try again.");
+    enterWorkspace();
+  }
+  async function makeNewPassword() {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/auth/native/password/replace", {
+        method: "POST",
+        credentials: "same-origin",
+        signal: controller.current.signal,
+        headers: postHeaders,
+      });
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error("Please sign in and try again.");
+      setCreated(data as NewPassword);
+    } catch (e) {
+      if (!controller.current.signal.aborted)
+        setError(e instanceof Error ? e.message : "Please try again.");
+    } finally {
+      pending.current = false;
+      if (!controller.current.signal.aborted) setBusy(false);
+    }
+  }
   function change(next: Mode) {
     setMode(next);
     setPassword("");
@@ -108,22 +285,23 @@ export function AccountPage({ name }: { name: string }) {
         ? "request"
         : mode === "complete"
           ? "complete"
-          : "login";
+          : mode === "first-run"
+            ? "first-run"
+            : "login";
     const body =
       endpoint === "request"
         ? { email, purpose: mode }
         : endpoint === "complete"
           ? { token, password }
-          : { email, password };
+          : endpoint === "first-run"
+            ? { password }
+            : { email, password };
     try {
       const response = await fetch(`/auth/native/${endpoint}`, {
         method: "POST",
         credentials: "same-origin",
         signal: controller.current.signal,
-        headers: {
-          "Content-Type": "application/json",
-          "X-Rroflow-Request": "dashboard",
-        },
+        headers: postHeaders,
         body: JSON.stringify(body),
       });
       const data: unknown = await response.json().catch(() => null);
@@ -136,7 +314,13 @@ export function AccountPage({ name }: { name: string }) {
           : "Please try again.";
       if (!response.ok) throw new Error(message);
       if (mode === "login") {
-        location.assign(deviceReturn ? "/app/device" : "/app/manage");
+        enterWorkspace();
+        return;
+      }
+      if (mode === "first-run") {
+        setPassword("");
+        setShowPassword(false);
+        setCreated(data as NewPassword);
         return;
       }
       setNotice(message);
@@ -155,8 +339,13 @@ export function AccountPage({ name }: { name: string }) {
       if (!controller.current.signal.aborted) setBusy(false);
     }
   }
-  const title =
-    mode === "register"
+  const title = created
+    ? "Save your new password"
+    : mode === "first-run"
+      ? "Finish setting up"
+      : mode === "unsaved"
+        ? "You still need to save your password"
+        : mode === "register"
       ? "Your AI work, in one place"
       : mode === "reset"
         ? "Let's get you back in"
@@ -191,6 +380,33 @@ export function AccountPage({ name }: { name: string }) {
         )}
         {notice && <p role="status">{notice}</p>}
         {!options && !error && <p role="status">Loading sign-in options…</p>}
+        {created && <SavePassword created={created} onSaved={markSaved} />}
+        {!created && mode === "unsaved" && (
+          <>
+            <p className="muted">
+              You are signed in as {unsaved?.signin}. A password can only be
+              shown once. If you did not save it, make a new one, which stops
+              the old one from working.
+            </p>
+            <button disabled={busy} onClick={makeNewPassword}>
+              {busy ? "Working…" : "Make a new password"}
+            </button>
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => {
+                setError("");
+                markSaved(unsaved?.revision ?? 0).catch((e) =>
+                  setError(
+                    e instanceof Error ? e.message : "Please try again.",
+                  ),
+                );
+              }}
+            >
+              I already saved it
+            </button>
+          </>
+        )}
         {!options && error && (
           <button
             className="secondary"
@@ -212,10 +428,12 @@ export function AccountPage({ name }: { name: string }) {
             )}
           </div>
         )}
-        {options?.enabled && (
+        {options?.enabled && !created && mode !== "unsaved" && (
           <>
             <p className="muted">
-              {mode === "register"
+              {mode === "first-run"
+                ? "Paste the one-time setup password from your install. It works once, then we give you a new one to keep."
+                : mode === "register"
                 ? "Start with your email. We will send a link to verify it before you choose a password."
                 : mode === "reset"
                   ? "Enter your account email. We will send a recovery link if it is eligible."
@@ -224,13 +442,21 @@ export function AccountPage({ name }: { name: string }) {
                     : "Sign in to see your organizations and projects."}
             </p>
             <form onSubmit={submit}>
-              {mode !== "complete" && (
+              {mode !== "complete" && mode !== "first-run" && (
                 <>
-                  <label htmlFor="account-email">Email address</label>
+                  <label htmlFor="account-email">
+                    {mode === "login" && options.builtin_admin
+                      ? "Email or admin name"
+                      : "Email address"}
+                  </label>
                   <input
                     id="account-email"
                     name="email"
-                    type="email"
+                    type={
+                      mode === "login" && options.builtin_admin
+                        ? "text"
+                        : "email"
+                    }
                     autoComplete="username"
                     value={email}
                     maxLength={254}
@@ -240,15 +466,23 @@ export function AccountPage({ name }: { name: string }) {
                   />
                 </>
               )}
-              {(mode === "login" || mode === "complete") && (
+              {(mode === "login" ||
+                mode === "complete" ||
+                mode === "first-run") && (
                 <>
-                  <label htmlFor="account-password">Password</label>
+                  <label htmlFor="account-password">
+                    {mode === "first-run" ? "Setup password" : "Password"}
+                  </label>
                   <input
                     id="account-password"
                     name="password"
                     type={showPassword ? "text" : "password"}
                     autoComplete={
-                      mode === "login" ? "current-password" : "new-password"
+                      mode === "login"
+                        ? "current-password"
+                        : mode === "first-run"
+                          ? "off"
+                          : "new-password"
                     }
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -269,7 +503,9 @@ export function AccountPage({ name }: { name: string }) {
                     {showPassword ? "Hide password" : "Show password"}
                   </button>
                   <p id="password-help" className="muted">
-                    15–128 characters. Spaces and password managers are welcome.
+                    {mode === "first-run"
+                      ? "It starts with rrsetup- and is safe to paste from your AI chat."
+                      : "15–128 characters. Spaces and password managers are welcome."}
                   </p>
                 </>
               )}
@@ -280,7 +516,9 @@ export function AccountPage({ name }: { name: string }) {
               >
                 {busy
                   ? "Working…"
-                  : mode === "login"
+                  : mode === "first-run"
+                    ? "Continue"
+                    : mode === "login"
                     ? "Sign in"
                     : mode === "complete"
                       ? "Save password"

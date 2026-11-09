@@ -61,6 +61,16 @@ enum Cmd {
     },
     /// Print immutable release identity without reading configuration or opening a store.
     BuildInfo,
+    /// Print a one-time password for the built-in admin account.
+    FirstRun {
+        #[arg(long, env = "RROFLOW_INGEST_CONFIG")]
+        config: PathBuf,
+        #[arg(long, env = "RROFLOW_DATABASE_URL", hide_env_values = true)]
+        database_url: Option<String>,
+        /// Replace the admin password after it is lost. Signs that account out everywhere.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Serve the ingest API.
     Serve {
         /// TOML config (listen, database_url or data_dir, max_batch, max_body_bytes, [[devspace]]).
@@ -231,6 +241,29 @@ async fn main() -> anyhow::Result<()> {
             println!("Allowance revision saved. No billing or consent was changed.");
         }
         Cmd::BuildInfo => println!("{}", serde_json::to_string(&rroflow_ingest::build_info())?),
+        Cmd::FirstRun {
+            config,
+            database_url,
+            reset,
+        } => {
+            let mut cfg = load_config(&config, database_url)?;
+            // Setup can come before the allowance policy is installed.
+            cfg.require_allowance_policy = false;
+            let options = cfg
+                .accounts
+                .as_ref()
+                .context("first-run requires [accounts]")?;
+            let Store::Postgres(pg) = cfg.open_store().await? else {
+                anyhow::bail!("first-run requires Postgres");
+            };
+            let setup = rroflow_ingest::accounts::issue_setup_password(&pg, options, reset).await?;
+            println!(
+                "One-time setup password (works once, expires in {} minutes):\n\n    {}\n\nOpen {}/app/account and paste it. You will get a new password to save.\n\nFor AI agents: you may show this setup password to the user in chat. Signing in\nreplaces it. Do not sign in for them, and never ask them to share the new password.",
+                rroflow_ingest::accounts::SETUP_TTL_MINUTES,
+                setup.password.as_str(),
+                setup.origin,
+            );
+        }
         Cmd::Keygen { devspace } => {
             let mut bytes = [0u8; 32];
             rand::rng().fill_bytes(&mut bytes);
