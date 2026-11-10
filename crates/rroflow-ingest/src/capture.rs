@@ -26,7 +26,7 @@ pub(crate) async fn ingest(
     headers: HeaderMap,
     Json(batch): Json<Batch>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let caller = st.sender(&headers).await?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectSend).await?;
     let ds = caller.devspace.clone();
     if batch.events.len() > st.max_batch {
         return Err(ApiError::BadRequest("capture batch exceeds limit".into()));
@@ -60,7 +60,10 @@ pub(crate) async fn list(
     headers: HeaderMap,
     Query(f): Query<Filter>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     let limit = f.limit.unwrap_or(100).min(1000);
     let events = match st.store.as_ref() {
         Store::Postgres(p) => {

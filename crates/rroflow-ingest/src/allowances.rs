@@ -292,7 +292,10 @@ pub(crate) async fn status(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     let result = match st.store.as_ref() {
         Store::Postgres(pg) => pg.allowance_status(&ds).await.map_err(internal)?,
         Store::Jsonl(_) => {

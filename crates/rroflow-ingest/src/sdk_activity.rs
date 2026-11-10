@@ -80,7 +80,10 @@ pub(crate) async fn list(
     headers: HeaderMap,
     Query(f): Query<Filter>,
 ) -> Result<Json<Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     let Store::Postgres(pg) = st.store.as_ref() else {
         return Ok(Json(
             json!({"available":false,"reason":"SDK activity indexing needs the configured PostgreSQL service. Raw SDK events remain available in Sources."}),
@@ -240,7 +243,10 @@ pub(crate) async fn reviews(
     headers: HeaderMap,
     Query(f): Query<ReviewFilter>,
 ) -> Result<Json<Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     if [&f.activity_id, &f.review_id]
         .iter()
         .any(|v| v.as_ref().is_some_and(|v| v.len() > 80))
@@ -261,7 +267,9 @@ pub(crate) async fn save_review(
     headers: HeaderMap,
     Json(r): Json<ReviewRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let caller = st.writer(&headers).await?;
+    let caller = st
+        .allowed(&headers, crate::Permission::ProjectWrite)
+        .await?;
     let Store::Postgres(pg) = st.store.as_ref() else {
         return Err(ApiError::BadRequest("SDK reviews need PostgreSQL.".into()));
     };

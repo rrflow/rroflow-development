@@ -71,9 +71,10 @@ request with no cache to wait out. A key is **write-only**. It can:
 - read built-in signal settings: `GET /v1/signals/settings`, without custom rules, which run on the
   server and can describe private work.
 
-Every other route refuses it. Read access is the default for a route (`AppState::caller`), so a new
-route refuses write-only keys unless it deliberately asks for `AppState::sender`. An unrecognized
-`rrop_` key is refused without being sent to the identity provider.
+Every other route refuses it. A project key holds only `project.send`, and every route declares the
+permission it needs ([permissions v1](permissions-v1.md)), so a new route refuses write-only keys
+unless it declares `project.send`. An unrecognized `rrop_` key is refused without being sent to the
+identity provider.
 
 **Treat a key as a secret.** Do not commit one. A key held in CI or a server environment is the intended
 use. A leaked key cannot read records back, but until it is revoked it can:

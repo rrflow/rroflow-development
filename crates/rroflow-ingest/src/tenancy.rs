@@ -1,11 +1,13 @@
 //! Accounts, organizations and projects. A project is a devspace under its product name, so
 //! the monitoring tables keep partitioning on `devspace_id` and no record moves.
 //!
-//! Access is decided here and in [`AppState::caller`](crate::AppState::caller): every request
+//! Access is decided by [`permissions::require`], called here inside each change's transaction
+//! and from [`AppState::allowed`](crate::AppState::allowed) for project routes. Every request
 //! re-reads membership, so removing someone or revoking a key takes effect on their next
 //! request. Someone outside an organization gets the same answer as for one that does not
 //! exist. Keys and invitation tokens are stored only as digests and shown once.
 use crate::nomen::Subject;
+use crate::permissions::{self, Grant, Permission};
 use crate::{ApiError, AppState, PgStore, Store, hash_key, internal};
 use axum::{
     Json,
@@ -474,19 +476,17 @@ async fn role_in<'e>(
     Role::parse(&role.ok_or(ApiError::Missing)?).map_err(internal)
 }
 
-fn require_admin(role: Role) -> Result<(), ApiError> {
-    if role >= Role::Admin {
-        Ok(())
-    } else {
-        Err(ApiError::Forbidden(
-            "An organization admin or owner must do this.",
-        ))
-    }
+/// [`permissions::require`] for a person's role in an organization.
+fn require(role: Role, permission: Permission) -> Result<(), ApiError> {
+    permissions::require(Grant::Role(role), permission)
 }
 
-/// Nobody manages someone above them or grants a role above their own.
+/// Managing members needs `members.manage`, and nobody manages someone above them or grants a
+/// role above their own.
 fn may_change(actor: Role, current: Role, new: Option<Role>) -> bool {
-    actor >= Role::Admin && current <= actor && new.is_none_or(|role| role <= actor)
+    Grant::Role(actor).allows(Permission::MembersManage)
+        && current <= actor
+        && new.is_none_or(|role| role <= actor)
 }
 
 const PERSONAL_ONE_MEMBER: ApiError = ApiError::Refused(
@@ -511,8 +511,19 @@ pub(crate) async fn me(
     Ok(Json(json!({
         "user": {"id": user, "name": name},
         "default_project": default_project,
-        "organizations": organizations.into_iter().map(|o| o.0).collect::<Vec<_>>(),
+        "organizations": organizations.into_iter().map(|o| with_permissions(o.0)).collect::<Vec<_>>(),
     })))
+}
+
+/// Adds what the member's role allows there, so a console offers only what will work.
+fn with_permissions(mut organization: Value) -> Value {
+    let permissions = organization["role"]
+        .as_str()
+        .and_then(|role| Role::parse(role).ok())
+        .map(|role| Grant::Role(role).permissions().to_vec())
+        .unwrap_or_default();
+    organization["permissions"] = json!(permissions);
+    organization
 }
 
 #[derive(Deserialize)]
@@ -592,7 +603,7 @@ pub(crate) async fn create_project(
     let name = valid_label(&body.name, "A project name")?;
     let mut tx = pg.pool.begin().await.map_err(db)?;
     let (role, _) = locked_organization(&mut tx, &organization, &user).await?;
-    require_admin(role)?;
+    require(role, Permission::ProjectsCreate)?;
     let existing: i64 =
         sqlx::query_scalar("SELECT count(*) FROM devspaces WHERE organization_id=$1")
             .bind(&organization)
@@ -638,7 +649,10 @@ pub(crate) async fn members(
     Path(organization): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let (pg, user) = signed_in(&st, &headers).await?;
-    role_in(&pg.pool, &organization, &user).await?;
+    require(
+        role_in(&pg.pool, &organization, &user).await?,
+        Permission::OrganizationRead,
+    )?;
     let members: Vec<SqlJson<Value>> = sqlx::query_scalar("SELECT jsonb_build_object('user',u.id,'name',u.display_name,'role',m.role,'joined_at',m.created_at) FROM organization_members m JOIN users u ON u.id=m.user_id WHERE m.organization_id=$1 ORDER BY m.created_at,u.id")
         .bind(&organization).fetch_all(&pg.pool).await.map_err(db)?;
     Ok(Json(
@@ -786,7 +800,7 @@ pub(crate) async fn invite(
     let (pg, user) = signed_in(&st, &headers).await?;
     let mut tx = pg.pool.begin().await.map_err(db)?;
     let (actor, personal) = locked_organization(&mut tx, &organization, &user).await?;
-    require_admin(actor)?;
+    require(actor, Permission::MembersInvite)?;
     if personal {
         return Err(PERSONAL_ONE_MEMBER);
     }
@@ -828,7 +842,10 @@ pub(crate) async fn invitations(
     Path(organization): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let (pg, user) = signed_in(&st, &headers).await?;
-    require_admin(role_in(&pg.pool, &organization, &user).await?)?;
+    require(
+        role_in(&pg.pool, &organization, &user).await?,
+        Permission::MembersInvite,
+    )?;
     let pending: Vec<SqlJson<Value>> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'role',role,'created_by',created_by,'created_at',created_at,'expires_at',expires_at) FROM organization_invitations WHERE organization_id=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() ORDER BY created_at DESC,id")
         .bind(&organization).fetch_all(&pg.pool).await.map_err(db)?;
     Ok(Json(
@@ -844,7 +861,7 @@ pub(crate) async fn revoke_invitation(
     let (pg, user) = signed_in(&st, &headers).await?;
     let mut tx = pg.pool.begin().await.map_err(db)?;
     let (actor, _) = locked_organization(&mut tx, &organization, &user).await?;
-    require_admin(actor)?;
+    require(actor, Permission::MembersInvite)?;
     let revoked = sqlx::query("UPDATE organization_invitations SET revoked_at=now() WHERE id=$1 AND organization_id=$2 AND accepted_at IS NULL AND revoked_at IS NULL")
         .bind(&id).bind(&organization).execute(&mut *tx).await.map_err(db)?;
     if revoked.rows_affected() == 0 {
@@ -917,7 +934,10 @@ pub(crate) async fn keys(
     let (pg, user) = signed_in(&st, &headers).await?;
     let role: Option<String> = sqlx::query_scalar("SELECT m.role FROM devspaces d JOIN organization_members m ON m.organization_id=d.organization_id AND m.user_id=$2 WHERE d.id=$1")
         .bind(&project).bind(&user).fetch_optional(&pg.pool).await.map_err(db)?;
-    require_admin(Role::parse(&role.ok_or(ApiError::Missing)?).map_err(internal)?)?;
+    require(
+        Role::parse(&role.ok_or(ApiError::Missing)?).map_err(internal)?,
+        Permission::KeysManage,
+    )?;
     let keys: Vec<SqlJson<Value>> = sqlx::query_scalar("SELECT jsonb_build_object('id',id,'label',label,'prefix',prefix,'created_by',created_by,'created_at',created_at,'last_used_at',last_used_at,'revoked_at',revoked_at) FROM project_keys WHERE devspace_id=$1 ORDER BY created_at DESC,id")
         .bind(&project).fetch_all(&pg.pool).await.map_err(db)?;
     Ok(Json(
@@ -941,7 +961,7 @@ pub(crate) async fn create_key(
     let label = valid_label(&body.label, "A key label")?;
     let mut tx = pg.pool.begin().await.map_err(db)?;
     let (organization, role) = locked_project(&mut tx, &project, &user).await?;
-    require_admin(role)?;
+    require(role, Permission::KeysManage)?;
     let active: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM project_keys WHERE devspace_id=$1 AND revoked_at IS NULL",
     )
@@ -983,7 +1003,7 @@ pub(crate) async fn revoke_key(
     let (pg, user) = signed_in(&st, &headers).await?;
     let mut tx = pg.pool.begin().await.map_err(db)?;
     let (organization, role) = locked_project(&mut tx, &project, &user).await?;
-    require_admin(role)?;
+    require(role, Permission::KeysManage)?;
     let revoked = sqlx::query("UPDATE project_keys SET revoked_at=now(),revoked_by=$3 WHERE id=$1 AND devspace_id=$2 AND revoked_at IS NULL")
         .bind(&id).bind(&project).bind(&user).execute(&mut *tx).await.map_err(db)?;
     if revoked.rows_affected() > 0 {
@@ -1029,7 +1049,10 @@ pub(crate) async fn audit_log(
     Query(q): Query<AuditQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let (pg, user) = signed_in(&st, &headers).await?;
-    require_admin(role_in(&pg.pool, &organization, &user).await?)?;
+    require(
+        role_in(&pg.pool, &organization, &user).await?,
+        Permission::AuditRead,
+    )?;
     let limit = q.limit.unwrap_or(AUDIT_PAGE).clamp(1, AUDIT_PAGE_MAX);
     let rows: Vec<(i64, SqlJson<Value>)> = sqlx::query_as("SELECT id,jsonb_build_object('id',id,'actor',actor_user_id,'action',action,'target',target,'detail',detail,'at',at) FROM audit_events WHERE organization_id=$1 AND ($2::bigint IS NULL OR id<$2) ORDER BY id DESC LIMIT $3")
         .bind(&organization).bind(q.before).bind(limit).fetch_all(&pg.pool).await.map_err(db)?;
