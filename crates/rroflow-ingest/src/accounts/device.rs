@@ -540,8 +540,8 @@ impl Accounts {
             .bind(format!("device-user-capacity/{context}/{user}"))
             .execute(&mut *tx)
             .await?;
-        let n:i64=sqlx::query_scalar("SELECT count(*) FROM native_device_grants WHERE user_id=$1 AND context_sha256=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp()")
-            .bind(&user).bind(&context).fetch_one(&mut *tx).await?;
+        let n:i64=sqlx::query_scalar("SELECT count(*) FROM native_device_grants WHERE user_id=$1 AND credential_epoch=$3 AND context_sha256=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp()")
+            .bind(&user).bind(&context).bind(epoch).fetch_one(&mut *tx).await?;
         if n >= cfg.max_grants_per_user {
             return fail("access_denied");
         }

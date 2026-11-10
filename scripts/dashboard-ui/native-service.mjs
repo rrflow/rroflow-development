@@ -5,10 +5,11 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {createServer} from 'node:http';
 import {randomBytes,createDecipheriv,createHash,generateKeyPairSync} from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import pg from 'pg';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-export async function nativeFixture(database,{device=false,resourceLoopback=false,native=true,federation=false,providerLabel="Nomen"}={}) {
+export async function nativeFixture(database,{device=false,resourceLoopback=false,native=true,federation=false,providerLabel="Nomen",local=false}={}) {
   const schema='native_ui_'+randomBytes(12).toString('hex');
   const admin=new pg.Client({connectionString:database});await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -18,7 +19,7 @@ export async function nativeFixture(database,{device=false,resourceLoopback=fals
   const key=randomBytes(32),keyFile=join(root,'keys.json'),config=join(root,'service.toml');
   await writeFile(keyFile,JSON.stringify({active:'fixture',keys:{fixture:key.toString('hex')}}),{mode:0o600});
   const finder=createServer();await new Promise(r=>finder.listen(0,'127.0.0.1',r));const port=finder.address().port;await new Promise(r=>finder.close(r));
-  const base=`http://127.0.0.1:${port}`,origin='https://native-account.example.test';
+  const base=`http://127.0.0.1:${port}`,origin=local?`http://localhost:${port}`:'https://native-account.example.test';
   const tomlPath=p=>JSON.stringify(p.replaceAll('\\','/'));
   const nativeConfig=native ? `[accounts]
 origin = "${origin}"
@@ -70,7 +71,12 @@ federation_label = ${JSON.stringify(providerLabel)}
   try {
     let ready=false;for(let i=0;i<200;i++){try{if((await fetch(base+'/readyz')).ok){ready=true;break;}}catch{}await sleep(50);}if(!ready)throw new Error('Native fixture did not become ready: '+stderr);
     return {origin,base,close,sql,issuer,
+      async setupPassword(...args){
+        const {stdout}=await promisify(execFile)(resolve(process.env.RROFLOW_UI_BINARY),['first-run','--config',config,...args],{env,windowsHide:true});
+        return stdout.match(/rrsetup-[0-9A-Z-]+/)[0];
+      },
       async connect(page){
+        if(local)return;
         // Browser stays on HTTPS and enforces Secure cookies. Requests are carried
         // to the real loopback Rust service as a TLS-terminating proxy would do.
         await page.route('**/*',async route=>{

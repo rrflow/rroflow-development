@@ -63,6 +63,21 @@ pub(crate) struct WebAuth {
     session_ttl: u64,
 }
 
+/// Browsers treat http://localhost as secure for cookies and passkeys, so a fresh local
+/// install can sign in before TLS exists. An IP address or other host cannot.
+pub(crate) fn member_origin(s: &str) -> bool {
+    https_origin(s)
+        || reqwest::Url::parse(s).is_ok_and(|u| {
+            u.scheme() == "http"
+                && u.host_str() == Some("localhost")
+                && u.username().is_empty()
+                && u.password().is_none()
+                && u.query().is_none()
+                && u.fragment().is_none()
+                && u.path() == "/"
+        })
+}
+
 pub(crate) fn https_origin(s: &str) -> bool {
     reqwest::Url::parse(s).is_ok_and(|u| {
         u.scheme() == "https"
