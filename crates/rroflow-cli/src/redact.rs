@@ -1,64 +1,28 @@
-//! Secret redaction applied to every string before it leaves the machine.
+//! Secret redaction applied to every string before it leaves the machine. The rules live in
+//! [`crate::scrub`].
 
-use regex::Regex;
+use crate::scrub::Scrubber;
 
 pub(crate) struct Redactor {
-    pub(crate) patterns: Vec<Regex>,
-    pub(crate) literals: Vec<String>,
+    scrubber: Scrubber,
 }
 
 impl Redactor {
     pub(crate) fn new() -> Self {
-        let pats = [
-            r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}",
-            r"sk-[A-Za-z0-9_-]{16,}",
-            r"xai-[A-Za-z0-9_-]{16,}",
-            r"gh[pousr]_[A-Za-z0-9]{20,}",
-            r"xox[abprs]-[A-Za-z0-9-]{10,}",
-            r"AKIA[0-9A-Z]{16}",
-            r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
-            r"\b[a-f0-9]{48,}\b",
-        ];
-        let mut literals: Vec<String> = [
-            "RROFLOW_INGEST_KEY",
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "XAI_API_KEY",
-            "RAINDROP_WRITE_KEY",
-            "RAINDROP_QUERY_KEY",
-            "RAINDROP_QUERY_API_KEY",
-        ]
-        .iter()
-        .filter_map(|k| std::env::var(k).ok())
-        .collect();
-        if let Ok(extra) = std::env::var("RROFLOW_REDACT") {
-            literals.extend(
-                extra
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(String::from),
-            );
-        }
-        literals.retain(|s| s.len() >= 8);
         Self {
-            patterns: pats
-                .iter()
-                .map(|p| Regex::new(p).expect("valid regex"))
-                .collect(),
-            literals,
+            scrubber: Scrubber::new(),
+        }
+    }
+    /// The built-in rules and these values, ignoring the environment.
+    #[cfg(test)]
+    pub(crate) fn with_literals(literals: Vec<String>) -> Self {
+        Self {
+            scrubber: Scrubber::with_literals(literals),
         }
     }
     /// Replace every known secret shape and literal with `[REDACTED]`.
     pub(crate) fn apply(&self, s: &str) -> String {
-        let mut out = s.to_string();
-        for l in &self.literals {
-            out = out.replace(l.as_str(), "[REDACTED]");
-        }
-        for p in &self.patterns {
-            out = p.replace_all(&out, "[REDACTED]").into_owned();
-        }
-        out
+        self.scrubber.redact(s)
     }
 }
 
@@ -73,7 +37,7 @@ pub(crate) fn truncate(s: &str, max: usize) -> String {
 
 /// True when `s` still contains something the redactor would replace.
 pub(crate) fn leaks(r: &Redactor, s: &str) -> bool {
-    r.literals.iter().any(|l| s.contains(l.as_str())) || r.patterns.iter().any(|p| p.is_match(s))
+    r.scrubber.finds(s)
 }
 
 #[cfg(test)]
@@ -81,10 +45,7 @@ mod tests {
     use super::*;
     #[test]
     fn redacts_known_secret_shapes() {
-        let r = Redactor {
-            patterns: Redactor::new().patterns,
-            literals: vec!["25b1106c-d759-49c9".into()],
-        };
+        let r = Redactor::with_literals(vec!["25b1106c-d759-49c9".into()]);
         let s = r.apply(
             "Authorization: Bearer abcdefghijklmnop key=25b1106c-d759-49c9 sk-ABCDEFGHIJKLMNOPQRST",
         );

@@ -1,7 +1,8 @@
 # Raw capture v1
 
-Status: stage 1 (local capture) is implemented in development source and not released.
-Stages 2 to 5 are agreed direction under Shippin ADR 0015 and are not built.
+Status: stage 1 (local capture) and the scrubber from stage 2 are implemented in development source
+and not released. Consent and stages 3 to 5 are agreed direction under Shippin ADR 0015 and are not
+built.
 
 Owner direction, 2026-11-09: capture is raw regardless. Details matter because datasets are
 built from them, and a parser that discards a line today can never recover it. Every source
@@ -12,7 +13,7 @@ line is kept first. Turns, signals and datasets are derived and can be rebuilt.
 | Stage | What happens | Status |
 |---|---|---|
 | 1. Local | Every complete line is kept on the machine, with no account needed | Built |
-| 2. Scrub and consent | One clear yes while joining; a stronger scrubber runs before anything leaves | Not built |
+| 2. Scrub and consent | A stronger scrubber runs before anything leaves; one clear yes while joining | Scrubber built; consent not built |
 | 3. Upload | Compressed segments go straight to object storage | Not built |
 | 4. Parse | A worker writes events to ClickHouse and derives turns and signals | Not built |
 | 5. Projects | Sessions map to a project by git remote, then folder, otherwise General | Not built |
@@ -60,6 +61,7 @@ the collector version. Each later line is one record:
 rroflow raw capture   # keep every line now; needs no account and sends nothing
 rroflow raw status    # what is stored, without reading session files
 rroflow raw verify    # check every kept line against its source; prints counts only
+rroflow raw scrub-check  # test the scrubber on kept lines and planted fake secrets; counts only
 ```
 
 `rroflow sources run` also captures on every pass, offline included.
@@ -77,16 +79,42 @@ rroflow raw verify    # check every kept line against its source; prints counts 
 - Files the agent deleted before capture started cannot be recovered.
 - Grok is not read yet, and token-by-token streams exist only through SDK wrappers.
 
-## Next: scrubbing and consent
+## Scrubber
+
+`crates/rroflow-cli/src/scrub.rs` holds one rule set, named `rroflow.scrub/1`. Change the name
+whenever the rules change: each uploaded segment will record the version that scrubbed it, so older
+data can be found and scrubbed again. Metadata sent today uses the same rules.
+
+It removes provider token formats (Anthropic, OpenAI, xAI, GitHub, GitLab, Slack, AWS, Google,
+Stripe, npm, PyPI, Hugging Face, SendGrid), RROFLOW's own credentials, private keys including ones
+cut off by a tool's output limit, JWTs, passwords in URLs, `Authorization` and `Cookie` headers,
+fields and `.env` assignments with secret names, password flags on commands, and values of the
+secret variables set in the collector's environment or listed in `RROFLOW_REDACT`. Replacements
+name the kind, such as `[REDACTED:jwt]`, and never contain a quote or backslash, so a JSON line stays
+valid JSON.
+
+`rroflow raw scrub-check` is the leak test. It plants a fresh fake secret into each stored JSON line,
+at the start, middle or end of one of its strings, across 41 kinds and contexts. It fails if any
+part of a secret survives, a line stops being valid JSON, or a kind was not exercised. It also
+counts broad secret-like shapes left in scrubbed text, for review; those do not fail it.
+
+Result on real sessions, 2026-11-10: 1,836,289 secrets planted, 0 survived, 0 lines broken, in 157
+seconds. The first run failed with 922 survivors and 10 broken lines, which is how three rule
+defects were found and fixed.
+
+Limits:
+
+- It finds known shapes and names. A password in plain prose, or a random string with no prefix and
+  no secret-like name beside it, passes through.
+- A value containing a quote or backslash is removed only up to that character.
+- Runs of 48 or more hex characters are removed, which also removes SHA-256 digests. Git commit IDs
+  are shorter and stay.
+- Lines that are not valid UTF-8 are not scrubbed, so they must not be uploaded.
+
+## Next: consent
 
 Upload starts only after one explicit yes while joining. It applies to the account and does not
 grant dataset or training use, which keep their own permissions.
-
-Raw lines carry arbitrary tool output, so the current redactor is not enough. Today it misses
-RROFLOW's own `rrok_` keys unless they are in the environment, `sk_live_` style keys, JWTs outside
-a `Bearer` header, Google API keys, database URLs with passwords, and `.env` style assignments.
-Before upload is enabled, a new versioned scrubber must pass a leakage test over real sessions and
-seeded secrets. Each uploaded segment records the scrubber version.
 
 ## Next: upload
 

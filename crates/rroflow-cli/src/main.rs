@@ -30,6 +30,7 @@ mod raw;
 mod record;
 mod redact;
 mod retry;
+mod scrub;
 mod setup;
 mod sources;
 mod transcript;

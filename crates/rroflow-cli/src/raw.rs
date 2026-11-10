@@ -17,6 +17,8 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+mod scrub_check;
+
 const SEGMENT_SCHEMA: &str = "rroflow.raw-segment/v1";
 const CURSOR_SCHEMA: &str = "rroflow.raw-cursors/v1";
 const SEGMENT_BYTES: usize = 8 * 1024 * 1024;
@@ -55,6 +57,14 @@ pub(crate) enum Command {
         claude_root: Option<PathBuf>,
         #[arg(long)]
         codex_root: Option<PathBuf>,
+    },
+    /// Test the scrubber on stored lines and planted fake secrets. Writes and sends nothing.
+    ScrubCheck {
+        #[arg(long)]
+        store: Option<PathBuf>,
+        /// Plant a fake secret in every Nth JSON line.
+        #[arg(long, default_value_t = 1)]
+        every: u64,
     },
 }
 
@@ -579,6 +589,22 @@ fn short(hex: &str) -> Result<u128> {
     Ok(u128::from_str_radix(&hex[..32], 16)?)
 }
 
+/// A sealed segment, positioned at its first record.
+fn open_segment(path: &Path) -> Result<Box<dyn BufRead>> {
+    let file = fs::File::open(path)?;
+    let decoder = ruzstd::decoding::StreamingDecoder::new(BufReader::new(file))
+        .map_err(|e| anyhow::anyhow!("decompress {}: {e}", path.display()))?;
+    let mut reader: Box<dyn BufRead> = Box::new(BufReader::with_capacity(READ_BUFFER, decoder));
+    let mut bytes = Vec::new();
+    reader.read_until(b'\n', &mut bytes)?;
+    let header: Value = serde_json::from_slice(&bytes).context("segment header")?;
+    ensure!(
+        header["schema"] == SEGMENT_SCHEMA,
+        "unknown raw segment version"
+    );
+    Ok(reader)
+}
+
 /// Checks stored records against themselves and against the session files. Counts only.
 pub(crate) fn verify(store: &Path, roots: &Roots) -> Result<Value> {
     let dir = store.join("raw");
@@ -587,17 +613,8 @@ pub(crate) fn verify(store: &Path, roots: &Roots) -> Result<Value> {
     let (mut stored_lines, mut damaged, mut duplicates, mut omitted) = (0u64, 0u64, 0u64, 0u64);
     let segments = segment_paths(&dir)?;
     for path in &segments {
-        let file = fs::File::open(path)?;
-        let decoder = ruzstd::decoding::StreamingDecoder::new(BufReader::new(file))
-            .map_err(|e| anyhow::anyhow!("decompress {}: {e}", path.display()))?;
-        let mut reader = BufReader::with_capacity(READ_BUFFER, decoder);
+        let mut reader = open_segment(path)?;
         let mut bytes = Vec::new();
-        reader.read_until(b'\n', &mut bytes)?;
-        let header: Value = serde_json::from_slice(&bytes).context("segment header")?;
-        ensure!(
-            header["schema"] == SEGMENT_SCHEMA,
-            "unknown raw segment version"
-        );
         loop {
             bytes.clear();
             if reader.read_until(b'\n', &mut bytes)? == 0 {
@@ -753,6 +770,11 @@ pub(crate) fn run(command: Command) -> Result<()> {
             )?;
             println!("{report}");
             ensure!(report["ok"] == true, "raw capture is incomplete or damaged");
+        }
+        Command::ScrubCheck { store, every } => {
+            let report = scrub_check::run(&store_dir(store)?, every)?;
+            println!("{report}");
+            ensure!(report["ok"] == true, "the scrubber failed its leak test");
         }
     }
     Ok(())
