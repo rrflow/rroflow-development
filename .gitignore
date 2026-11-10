@@ -1,3 +1,6 @@
 target/
 *.dump.jsonl
 .env*
+
+# Local credentials stay on the machine; never commit them.
+/.secrets/
