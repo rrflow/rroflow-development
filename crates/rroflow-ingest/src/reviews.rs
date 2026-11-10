@@ -76,7 +76,9 @@ pub(crate) async fn save(
     headers: HeaderMap,
     Json(r): Json<Request>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let caller = st.writer(&headers).await?;
+    let caller = st
+        .allowed(&headers, crate::Permission::ProjectWrite)
+        .await?;
     let reviewer = caller.subject.unwrap_or_else(|| "devspace-key".into());
     // An acknowledged request can be retried even if newer capture has replaced the turn.
     validate_id(&r)?;
@@ -147,7 +149,10 @@ pub(crate) async fn list(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     let reviews = read(&st.store, &ds).await.map_err(internal)?;
     let items: Vec<_> = reviews.iter().map(|r| serde_json::json!({"request":r.request,"recorded_at":r.recorded_at,"reviewer":r.reviewer})).collect();
     Ok(Json(

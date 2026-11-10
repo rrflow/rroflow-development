@@ -363,7 +363,10 @@ async fn complete(st: &AppState, headers: &HeaderMap, q: Callback) -> Option<(St
         "authorization",
         HeaderValue::from_str(&format!("Bearer {}", token.access_token)).ok()?,
     );
-    let caller = st.caller(&auth).await.ok()?;
+    let caller = st
+        .allowed(&auth, crate::Permission::ProjectRead)
+        .await
+        .ok()?;
     let ttl = token.expires_in.min(web.session_ttl);
     if ttl == 0 {
         return None;

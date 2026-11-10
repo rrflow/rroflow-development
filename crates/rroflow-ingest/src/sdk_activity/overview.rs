@@ -5,7 +5,10 @@ pub(crate) async fn get(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     let Store::Postgres(pg) = st.store.as_ref() else {
         return Ok(Json(
             json!({"available":false,"devspace":ds,"reason":"SDK activity indexing is unavailable on this storage backend."}),

@@ -27,6 +27,7 @@ mod web_auth;
 pub use web_auth::BrowserConfig;
 mod capture;
 pub mod nomen;
+pub mod permissions;
 pub mod pg;
 mod provenance;
 mod reviews;
@@ -37,6 +38,7 @@ pub mod tenancy;
 mod test_keys;
 
 pub use nomen::{AuthError, NomenVerifier, Subject};
+pub use permissions::{Grant, Permission};
 pub use pg::PgStore;
 pub use store::{JsonlStore, Store, Summary, TurnFilter, Upserted};
 pub use tenancy::{Membership, Role, TenancyConfig};
@@ -250,6 +252,17 @@ pub struct Caller {
     pub write_only: bool,
 }
 
+impl Caller {
+    /// What this credential carries into [`permissions::require`].
+    pub fn grant(&self) -> Grant {
+        match (self.write_only, self.role) {
+            (true, _) => Grant::SendOnlyKey,
+            (false, Some(role)) => Grant::Role(role),
+            (false, None) => Grant::OperatorKey,
+        }
+    }
+}
+
 /// The project a request names, if any. Malformed or repeated values get the same answer as
 /// a project that does not exist.
 fn requested_project(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
@@ -367,44 +380,22 @@ impl AppState {
         })
     }
 
-    /// Read a project's monitoring data. This is the default a new route gets, so a
-    /// write-only key is refused unless a route explicitly asks for [`Self::sender`].
-    pub async fn caller(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
+    /// The caller, if their credential holds `permission` in the project the request names.
+    /// Project routes start here, with the permission their entry in
+    /// [`permissions::ROUTES`] declares.
+    pub async fn allowed(
+        &self,
+        headers: &HeaderMap,
+        permission: Permission,
+    ) -> Result<Caller, ApiError> {
         let caller = self.authenticate(headers).await?;
-        if caller.write_only {
-            return Err(ApiError::Forbidden(
-                "This project key can send records but not read them.",
-            ));
-        }
+        permissions::require(caller.grant(), permission)?;
         Ok(caller)
-    }
-
-    /// Change a project's settings or reviews: read access, and more than a viewer's role.
-    pub async fn writer(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
-        let caller = self.caller(headers).await?;
-        Self::refuse_viewer(&caller)?;
-        Ok(caller)
-    }
-
-    /// Deliver captured records: the one thing a write-only project key may do.
-    pub async fn sender(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
-        let caller = self.authenticate(headers).await?;
-        Self::refuse_viewer(&caller)?;
-        Ok(caller)
-    }
-
-    fn refuse_viewer(caller: &Caller) -> Result<(), ApiError> {
-        if caller.role.is_some_and(|role| role < Role::Member) {
-            return Err(ApiError::Forbidden(
-                "Your role can view this project but not change it.",
-            ));
-        }
-        Ok(())
     }
 
     /// Identify the caller from `Authorization: Bearer <credential>`: an operator-registered
     /// key first (a hash lookup), then a project key, then a Nomen access token when sign-in
-    /// is configured. Routes use [`Self::caller`], [`Self::writer`] or [`Self::sender`].
+    /// is configured. Routes that act on a project use [`Self::allowed`].
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
         let token = headers
             .get("authorization")
@@ -648,7 +639,7 @@ async fn post_turns(
     headers: HeaderMap,
     Json(mut body): Json<TurnsBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let caller = st.sender(&headers).await?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectSend).await?;
     let devspace = caller.devspace.clone();
     if body.turns.len() > st.max_batch {
         return Err(ApiError::BadRequest(format!(
@@ -710,7 +701,10 @@ async fn get_turns(
     headers: HeaderMap,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.caller(&headers).await?.devspace;
+    let devspace = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     let limit = q.limit.unwrap_or(50).clamp(1, LIST_MAX);
     let search = q.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
@@ -831,12 +825,16 @@ async fn get_signal_settings(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let caller = st.authenticate(&headers).await?;
+    let reader = caller.grant().allows(Permission::ProjectRead);
+    if !reader {
+        permissions::require(caller.grant(), Permission::ProjectSend)?;
+    }
     let mut settings = st
         .store
         .signal_config(&caller.devspace)
         .await
         .map_err(internal)?;
-    if caller.write_only {
+    if !reader {
         settings.custom.clear();
     }
     Ok(Json(
@@ -849,7 +847,10 @@ async fn put_signal_settings(
     headers: HeaderMap,
     Json(mut cfg): Json<SignalConfig>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.writer(&headers).await?.devspace;
+    let devspace = st
+        .allowed(&headers, crate::Permission::ProjectWrite)
+        .await?
+        .devspace;
     cfg.validate().map_err(ApiError::BadRequest)?;
     let old = st.store.signal_config(&devspace).await.map_err(internal)?;
     if old.revision != cfg.revision {
@@ -875,7 +876,10 @@ async fn preview_signal(
     headers: HeaderMap,
     Json(rule): Json<rroflow_core::custom::CustomSignal>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.caller(&headers).await?.devspace;
+    let devspace = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     rule.validate().map_err(ApiError::BadRequest)?;
     let turns = st
         .store
@@ -913,7 +917,10 @@ async fn get_summary(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st.caller(&headers).await?.devspace;
+    let devspace = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     let (summary, settings) = tokio::try_join!(
         st.store.summary(&devspace),
         st.store.signal_config(&devspace)
@@ -966,7 +973,7 @@ async fn research_notes(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    st.caller(&headers).await?;
+    st.allowed(&headers, crate::Permission::ProjectRead).await?;
     Ok((
         [
             ("content-type", "application/json; charset=utf-8"),
@@ -1223,6 +1230,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
             }),
         )
         .route("/assets/research.json", get(research_notes))
+        .layer(axum::middleware::from_fn(permissions::enforce))
         .layer(axum::middleware::from_fn_with_state(
             st.clone(),
             web_auth::browser_session,

@@ -20,6 +20,7 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 
 - [Platform v1](plan/platform-v1.md): the slice sequence for native accounts, tenancy, the member console, turnkey onboarding, automatic capture and provenance.
 - [Tenancy v1](spec/tenancy-v1.md): organizations, projects, roles, write-only project keys, invitations, audit and pooled allowances.
+- [Permissions v1](spec/permissions-v1.md): named permissions, what each role and key holds, declared routes with refusal by default, and append-only audit.
 - [Collector account storage v1](spec/collector-account-storage-v1.md): process-safe credential updates, logout cancellation and durable capture during refresh; under verification.
 - [Native accounts v1](spec/native-accounts-v1.md): verified email registration, password recovery, durable native sessions and encrypted mail delivery; merged in PR50, not deployed.
 - [First-run access v1](spec/first-run-access-v1.md): built-in admin account, one-time setup password, generated replacement, and the planned passkey and Google stages.

@@ -157,7 +157,7 @@ pub(crate) async fn ingest(
     headers: HeaderMap,
     Json(report): Json<SourceReport>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let caller = st.sender(&headers).await?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectSend).await?;
     let ds = caller.devspace.clone();
     report
         .validate()
@@ -192,7 +192,10 @@ pub(crate) async fn list(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let ds = st.caller(&headers).await?.devspace;
+    let ds = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     let mut sources = match st.store.as_ref() {
         Store::Jsonl(s) => s.health_read(&ds),
         Store::Postgres(p) => p.health_read(&ds).await,

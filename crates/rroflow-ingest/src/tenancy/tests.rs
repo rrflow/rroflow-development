@@ -2063,3 +2063,211 @@ async fn management_authorization_is_refreshed_after_waiting_for_organization_lo
     }
     fx.finish().await;
 }
+
+/// Over HTTP, each role gets exactly what its permissions allow, on routes whose declared
+/// permission is the one probed. A refusal is 403; anything else counts as allowed, since an
+/// allowed probe may still find nothing or meet a conflict.
+#[tokio::test]
+async fn each_role_gets_exactly_what_its_permissions_allow() {
+    use crate::permissions::{Access, Declared, declared};
+    use axum::http::Method;
+    let Some(fx) = fixture(TenancyConfig::default()).await else {
+        return;
+    };
+    let team = team(&fx, "Matrix").await;
+    let people = [
+        (Role::Owner, team.owner.clone()),
+        (Role::Admin, join(&fx, &team, "admin").await),
+        (Role::Member, join(&fx, &team, "member").await),
+        (Role::Viewer, join(&fx, &team, "viewer").await),
+    ];
+    let (_, current) = fx
+        .send(
+            "GET",
+            &team.owner,
+            "/v1/signals/settings",
+            None,
+            Some(&team.project),
+        )
+        .await;
+    let settings = current["settings"].clone();
+    let (organization, project) = (&team.organization, &team.project);
+    struct Probe {
+        method: &'static str,
+        pattern: &'static str,
+        body: Option<Value>,
+        permission: Permission,
+        /// Sent with the project header, for routes scoped to the request's project.
+        scoped: bool,
+    }
+    let probe = |method, pattern, body, permission, scoped| Probe {
+        method,
+        pattern,
+        body,
+        permission,
+        scoped,
+    };
+    let probes = [
+        probe(
+            "GET",
+            "/v1/organizations/{organization}/members",
+            None,
+            Permission::OrganizationRead,
+            false,
+        ),
+        probe(
+            "POST",
+            "/v1/organizations/{organization}/projects",
+            Some(json!({"name":"Probe"})),
+            Permission::ProjectsCreate,
+            false,
+        ),
+        probe(
+            "GET",
+            "/v1/organizations/{organization}/invitations",
+            None,
+            Permission::MembersInvite,
+            false,
+        ),
+        probe(
+            "GET",
+            "/v1/organizations/{organization}/audit",
+            None,
+            Permission::AuditRead,
+            false,
+        ),
+        probe(
+            "GET",
+            "/v1/projects/{project}/keys",
+            None,
+            Permission::KeysManage,
+            false,
+        ),
+        probe("GET", "/v1/turns", None, Permission::ProjectRead, true),
+        probe("GET", "/v1/summary", None, Permission::ProjectRead, true),
+        probe(
+            "PUT",
+            "/v1/signals/settings",
+            Some(settings),
+            Permission::ProjectWrite,
+            true,
+        ),
+    ];
+    for (role, token) in &people {
+        let grant = Grant::Role(*role);
+        for Probe {
+            method,
+            pattern,
+            body,
+            permission,
+            scoped,
+        } in &probes
+        {
+            let uri = pattern
+                .replace("{organization}", organization)
+                .replace("{project}", project);
+            assert_eq!(
+                declared(&method.parse::<Method>().unwrap(), pattern),
+                Declared::Yes(Access::Requires(*permission)),
+                "{method} {pattern} must declare {permission:?}"
+            );
+            let (code, answer) = fx
+                .send(
+                    method,
+                    token,
+                    &uri,
+                    body.as_ref(),
+                    scoped.then_some(project.as_str()),
+                )
+                .await;
+            assert_eq!(
+                code != StatusCode::FORBIDDEN,
+                grant.allows(*permission),
+                "{role:?} {method} {uri}: {code} {answer}"
+            );
+        }
+        let id = format!("matrix-{}", role.as_str());
+        let (code, answer) = fx
+            .send(
+                "POST",
+                token,
+                "/v1/turns",
+                Some(&turns_body(&id)),
+                Some(project),
+            )
+            .await;
+        assert_eq!(
+            code != StatusCode::FORBIDDEN,
+            grant.allows(Permission::ProjectSend),
+            "{role:?} sends: {code} {answer}"
+        );
+    }
+    // A project key only sends: it can deliver, read built-in settings and nothing else.
+    let (key, _) = project_key(&fx, &team.owner, project).await;
+    assert_eq!(
+        fx.post(&key, "/v1/turns", turns_body("matrix-key")).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(fx.get(&key, "/v1/turns").await.0, StatusCode::FORBIDDEN);
+    assert_eq!(fx.get(&key, "/v1/signals/settings").await.0, StatusCode::OK);
+    fx.finish().await;
+}
+
+#[tokio::test]
+async fn me_lists_what_each_role_may_do() {
+    let Some(fx) = fixture(TenancyConfig::default()).await else {
+        return;
+    };
+    let team = team(&fx, "Abilities").await;
+    let viewer = join(&fx, &team, "viewer").await;
+    for (token, expected) in [
+        (&team.owner, Grant::Role(Role::Owner)),
+        (&viewer, Grant::Role(Role::Viewer)),
+    ] {
+        let (code, me) = fx.get(token, "/v1/me").await;
+        assert_eq!(code, StatusCode::OK, "{me}");
+        let organization = me["organizations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["id"] == team.organization.as_str())
+            .unwrap();
+        assert_eq!(organization["permissions"], json!(expected.permissions()));
+    }
+    fx.finish().await;
+}
+
+#[tokio::test]
+async fn audit_rows_cannot_be_changed_or_removed() {
+    let Some(fx) = fixture(TenancyConfig::default()).await else {
+        return;
+    };
+    let team = team(&fx, "Evidence").await;
+    let pool = &fx.pg().pool;
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM audit_events")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let before = count().await;
+    assert!(before >= 2, "creating a team writes audit rows");
+    for statement in [
+        "UPDATE audit_events SET action='changed'",
+        "DELETE FROM audit_events",
+        "TRUNCATE audit_events",
+    ] {
+        let refused = sqlx::query(statement)
+            .execute(pool)
+            .await
+            .expect_err(statement);
+        assert!(
+            refused.to_string().contains("append-only"),
+            "{statement}: {refused}"
+        );
+    }
+    assert_eq!(count().await, before);
+    join(&fx, &team, "member").await;
+    assert!(count().await > before, "the service still records changes");
+    fx.finish().await;
+}

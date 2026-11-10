@@ -52,7 +52,10 @@ pub(crate) async fn get(
     headers: HeaderMap,
     Query(q): Query<SignalQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let owner = st.caller(&headers).await?.devspace;
+    let owner = st
+        .allowed(&headers, crate::Permission::ProjectRead)
+        .await?
+        .devspace;
     if q.signal.trim().is_empty() || q.signal.chars().count() > 128 {
         return Err(ApiError::BadRequest("Choose a valid signal".into()));
     }

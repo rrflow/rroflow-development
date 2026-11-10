@@ -150,17 +150,13 @@ fn reference(ds: &str, kind: &str, id: &str) -> String {
     digest(&(ds, kind, id))
 }
 /// Consent and export speak for everyone whose work is in the project, so they need a signed-in
-/// person with an admin's role. In a personal organization that person is its owner.
-fn consent_manager(caller: &Caller) -> Result<(), ApiError> {
+/// person, never a key, whose role holds `permission`. In a personal organization that person is
+/// its owner.
+fn consent_manager(caller: &Caller, permission: crate::Permission) -> Result<(), ApiError> {
     if caller.user.is_none() {
         return Err(ApiError::MemberRequired);
     }
-    if caller.role.is_none_or(|role| role < crate::Role::Admin) {
-        return Err(ApiError::Forbidden(
-            "An organization admin or owner manages dataset consent and exports.",
-        ));
-    }
-    Ok(())
+    crate::permissions::require(caller.grant(), permission)
 }
 fn configured(st: &AppState) -> Result<(&PgStore, &DatasetConfig), ApiError> {
     match (st.store.as_ref(), st.datasets.as_ref()) {
@@ -204,7 +200,7 @@ pub(crate) async fn status(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let caller = st.caller(&headers).await?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectRead).await?;
     let Ok((pg, cfg)) = configured(&st) else {
         return Ok(Json(json!({"mode":"disabled","training_enabled":false})));
     };
@@ -227,8 +223,8 @@ pub(crate) async fn save(
     headers: HeaderMap,
     Json(request): Json<Update>,
 ) -> Result<Json<Value>, ApiError> {
-    let caller = st.caller(&headers).await?;
-    consent_manager(&caller)?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectRead).await?;
+    consent_manager(&caller, crate::Permission::DatasetsManage)?;
     let (pg, _) = configured(&st)?;
     request.policy.validate().map_err(ApiError::BadRequest)?;
     if request.expected_revision >= i64::MAX as u64 {
@@ -254,8 +250,8 @@ pub(crate) async fn artifact(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let caller = st.caller(&headers).await?;
-    consent_manager(&caller)?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectRead).await?;
+    consent_manager(&caller, crate::Permission::DatasetsExport)?;
     let (pg, _) = configured(&st)?;
     // Check current consent and retention on every download, including when the worker is down.
     let value:Option<(SqlJson<Value>,String)>=sqlx::query_as("SELECT j.artifact,j.artifact_digest FROM dataset_jobs j JOIN dataset_policies p ON p.devspace_id=j.devspace_id AND p.purpose=j.purpose AND p.revision=j.policy_revision WHERE j.devspace_id=$1 AND j.id=$2 AND j.status='published' AND j.expires_at>clock_timestamp() AND p.enabled")

@@ -213,7 +213,7 @@ pub(crate) async fn get(
     headers: HeaderMap,
     Query(q): Query<Lookup>,
 ) -> Result<Json<Value>, ApiError> {
-    let caller = st.caller(&headers).await?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectRead).await?;
     if !["turn", "event", "source"].contains(&q.kind.as_str())
         || q.record_id.is_empty()
         || q.record_id.len() > 1024
@@ -244,7 +244,7 @@ pub(crate) async fn coverage(
     State(st): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let caller = st.caller(&headers).await?;
+    let caller = st.allowed(&headers, crate::Permission::ProjectRead).await?;
     let Store::Postgres(pg) = st.store.as_ref() else {
         return Err(ApiError::BadRequest(
             "receipt provenance requires PostgreSQL storage".into(),
