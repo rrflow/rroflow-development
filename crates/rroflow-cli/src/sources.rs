@@ -294,6 +294,24 @@ impl Journal {
         let mut queued = 0;
         let mut seen = 0;
         let mut changed = 0;
+        // Before any parsing, and whatever the content setting is: raw stays on this machine.
+        let mut raw_pass = Value::Null;
+        if !self.binding.sdk_only {
+            let roots = [
+                ("claude", self.binding.claude_root.as_path()),
+                ("codex", self.binding.codex_root.as_path()),
+            ];
+            match crate::raw::capture_pass(&self.store, &roots, crate::raw::PASS_BYTES) {
+                Ok(mut pass) => {
+                    if let Some(errors) = pass["errors"].as_array() {
+                        failures.extend(errors.iter().filter_map(|e| e.as_str().map(String::from)));
+                    }
+                    pass.as_object_mut().map(|m| m.remove("errors"));
+                    raw_pass = pass;
+                }
+                Err(error) => failures.push(format!("raw capture: {error:#}")),
+            }
+        }
         let redactor = Redactor::new();
         for (root, parse) in [
             (
@@ -358,7 +376,7 @@ impl Journal {
         }
         Ok(
             json!({"observed_at":chrono::Utc::now().to_rfc3339(), "source_id":self.binding.source_id,
-            "files_seen":seen,"files_parsed":changed,"queued_revisions":queued,"errors":failures}),
+            "files_seen":seen,"files_parsed":changed,"queued_revisions":queued,"raw":raw_pass,"errors":failures}),
         )
     }
 
@@ -382,7 +400,7 @@ impl Journal {
             json!({"source_id":self.binding.source_id,"devspace":self.binding.devspace,
             "endpoint":self.binding.endpoint,"claude_root":self.binding.claude_root,
             "codex_root":self.binding.codex_root,"content":self.binding.content,"session_capture":!self.binding.sdk_only,"sdk":sdk::inspect(self),
-            "pending_revisions":pending,"journal_bytes":bytes,"distinct_turns":self.latest.len(),"retry":retry::read(&self.store)?,
+            "raw":crate::raw::status(&self.store)?,"pending_revisions":pending,"journal_bytes":bytes,"distinct_turns":self.latest.len(),"retry":retry::read(&self.store)?,
             "pending_bytes":pending_bytes,"oldest_pending_at":oldest.map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()),
             "note":"disk state only; not proof of source liveness. Acknowledged revisions are retained."}),
         )
@@ -843,6 +861,21 @@ mod tests {
         fs::write(dir.path().join("health.json"), b"partial").unwrap();
         assert!(journal.health_report(0, Some(true)).is_err());
         assert_eq!(journal.status().unwrap()["pending_revisions"], 1);
+    }
+
+    #[test]
+    fn raw_lines_are_kept_even_when_the_source_only_uploads_metrics() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = setup(dir.path(), "http://127.0.0.1:1");
+        assert!(!journal.binding.content);
+        claude(&journal.binding.claude_root, 1);
+        let report = journal.scan(true).unwrap();
+        assert_eq!(report["errors"], json!([]), "{report}");
+        assert!(report["raw"]["lines"].as_u64().unwrap() > 0, "{report}");
+        let state = journal.status().unwrap();
+        assert_eq!(state["raw"]["segments"], 1, "{state}");
+        let again = journal.scan(false).unwrap();
+        assert_eq!(again["raw"]["lines"], 0, "a repeat pass adds nothing");
     }
 
     fn setup(root: &Path, endpoint: &str) -> Journal {

@@ -1129,3 +1129,8 @@ dialog form {
 .account-federation > .muted { margin-block:var(--space-3) var(--space-6); }
 .account-divider { padding-top:var(--space-4); border-top:1px solid var(--border); color:var(--muted); }
 .account-password-toggle { justify-self:start; min-height:44px; }
+
+.account-secret { font-family: ui-monospace, monospace; }
+.account-warning { padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px; font-weight: 600; }
+.account-check { display: flex; align-items: center; gap: var(--space-2); }
+.account-check input { width: auto; min-height: 24px; }

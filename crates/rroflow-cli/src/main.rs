@@ -26,6 +26,7 @@ mod codex;
 mod deployment;
 mod doctor;
 mod otlp;
+mod raw;
 mod record;
 mod redact;
 mod retry;
@@ -111,6 +112,11 @@ enum Cmd {
     Sources {
         #[command(subcommand)]
         command: sources::Command,
+    },
+    /// Keep every line of local agent sessions on this machine. Needs no account; sends nothing.
+    Raw {
+        #[command(subcommand)]
+        command: raw::Command,
     },
     /// Durably record SDK events and deliver acknowledged events to your devspace.
     Capture {
@@ -431,6 +437,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Setup(args) => setup::run(args)?,
         Cmd::Sources { command } => sources::run(command)?,
+        Cmd::Raw { command } => raw::run(command)?,
         Cmd::Capture { command } => capture::run(command)?,
         Cmd::Login { deployment } => {
             let selected = deployment.resolve(None)?;

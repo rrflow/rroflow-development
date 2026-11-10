@@ -596,7 +596,8 @@ function App() {
         if (v.enabled && typeof v.member_origin === "string") {
           const u = new URL(v.member_origin);
           if (
-            u.protocol !== "https:" ||
+            (u.protocol !== "https:" &&
+              !(u.protocol === "http:" && u.hostname === "localhost")) ||
             u.username ||
             u.password ||
             u.search ||

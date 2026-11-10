@@ -7,7 +7,7 @@
     const config=await response.json();
     if(config.enabled && config.member_origin){
       const origin=new URL(config.member_origin);
-      if(origin.protocol!=='https:' || origin.username || origin.password || origin.pathname!=='/' || origin.search || origin.hash)throw new Error('invalid origin');
+      if((origin.protocol!=='https:' && !(origin.protocol==='http:' && origin.hostname==='localhost')) || origin.username || origin.password || origin.pathname!=='/' || origin.search || origin.hash)throw new Error('invalid origin');
       for(const link of document.querySelectorAll('[data-member-link]')){
         const target=new URL(link.getAttribute('href'),location.origin);
         link.href=origin.origin+'/app'+target.hash;

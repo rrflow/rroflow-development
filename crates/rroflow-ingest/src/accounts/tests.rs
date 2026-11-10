@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 mod device_tests;
+mod first_run_tests;
 
 const ORIGIN: &str = "https://accounts.example.test";
 const PASSWORD: &str = "a long private test phrase";

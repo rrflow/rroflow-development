@@ -996,6 +996,19 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
                 .route("/auth/native/request", post(accounts::http::request))
                 .route("/auth/native/login", post(accounts::http::login))
                 .route("/auth/native/complete", post(accounts::http::complete))
+                .route("/auth/native/first-run", post(accounts::http::first_run))
+                .route(
+                    "/auth/native/password/status",
+                    post(accounts::http::password_status),
+                )
+                .route(
+                    "/auth/native/password/saved",
+                    post(accounts::http::password_saved),
+                )
+                .route(
+                    "/auth/native/password/replace",
+                    post(accounts::http::password_replace),
+                )
                 .route(
                     "/auth/native/device/config",
                     get(accounts::device_http::config),
