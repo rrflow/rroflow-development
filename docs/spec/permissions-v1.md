@@ -21,6 +21,7 @@ declares nothing is refused.
 | `members.invite` | Organization | Invite people, and see and revoke invitations |
 | `members.manage` | Organization | Change roles and remove members |
 | `audit.read` | Organization | Read the audit log |
+| `instance.settings` | Instance | Change this instance's settings |
 
 A project's scope comes from the request's key, its `{project}` path, or the `x-rroflow-project`
 header checked against membership. An organization's scope comes from its `{organization}` path.
@@ -75,6 +76,6 @@ truncate those rows, whoever asks.
 ## Not built yet
 
 - Instance-wide permissions for staff, updates from the admin panel and impersonation. They arrive
-  with those features under ADR 0016, together with instance-level audit rows.
+  with those features. `instance.settings`, held by instance admins, is the first.
 - Per-project role assignments and custom roles.
 - A console view of what each role can do.

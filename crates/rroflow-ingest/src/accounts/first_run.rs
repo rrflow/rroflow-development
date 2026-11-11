@@ -1,6 +1,6 @@
 //! The built-in admin account. Its first password is assumed exposed, because an installing
 //! AI may paste it into chat. So it works once, expires, and is stored only as a digest.
-//! Claiming it generates the real password, returned only to the browser that claimed it.
+//! Claiming it sets the person's own password, or generates one returned only to that browser.
 use super::*;
 
 pub(crate) const ADMIN_LOGIN: &str = "admin";
@@ -55,7 +55,8 @@ pub async fn issue_setup_password(
 
 pub(crate) struct Claimed {
     pub(crate) session: String,
-    pub(crate) password: Zeroizing<String>,
+    /// The generated password. Absent when the person chose their own.
+    pub(crate) password: Option<Zeroizing<String>>,
     pub(crate) revision: i64,
     pub(crate) active_keys: i64,
 }
@@ -101,7 +102,11 @@ impl Accounts {
             .bind(&self.context).bind(ADMIN_LOGIN).fetch_one(&self.pool).await?)
     }
 
-    pub(crate) async fn claim_setup(&self, setup: &str) -> Result<Option<Claimed>> {
+    pub(crate) async fn claim_setup(
+        &self,
+        setup: &str,
+        chosen: Option<String>,
+    ) -> Result<Option<Claimed>> {
         if !valid_setup(setup) {
             return Ok(None);
         }
@@ -112,9 +117,14 @@ impl Accounts {
         if !live {
             return Ok(None);
         }
-        let password = generated();
+        let generated_password = chosen.is_none().then(generated);
+        let secret_text = match (&chosen, &generated_password) {
+            (Some(chosen), _) => chosen.clone(),
+            (None, Some(made)) => made.to_string(),
+            (None, None) => unreachable!("generated when none was chosen"),
+        };
         let phc = self
-            .password_work(password.to_string(), None)
+            .password_work(secret_text, None)
             .await?
             .expect("hash operation");
         let mut tx = self.pool.begin().await?;
@@ -172,11 +182,14 @@ impl Accounts {
                 .fetch_one(&mut *tx)
                 .await?;
         let session = self.open_session(&mut tx, &user, epoch).await?;
-        sqlx::query("UPDATE native_credentials SET unsaved_session_sha256=$2 WHERE user_id=$1")
-            .bind(&user)
-            .bind(hash_key(&session))
-            .execute(&mut *tx)
-            .await?;
+        // A password the person chose needs no "did you save it" step.
+        if generated_password.is_some() {
+            sqlx::query("UPDATE native_credentials SET unsaved_session_sha256=$2 WHERE user_id=$1")
+                .bind(&user)
+                .bind(hash_key(&session))
+                .execute(&mut *tx)
+                .await?;
+        }
         // A reset ends sessions, not keys: collectors must keep working after a lost
         // password. The person is told, in case someone else made these.
         let active_keys: i64 = sqlx::query_scalar(
@@ -188,7 +201,7 @@ impl Accounts {
         tx.commit().await?;
         Ok(Some(Claimed {
             session,
-            password,
+            password: generated_password,
             revision: epoch,
             active_keys,
         }))

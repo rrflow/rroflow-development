@@ -540,9 +540,19 @@ fn native_inputs_preserve_email_identity_and_reject_unbounded_passwords() {
     ] {
         assert!(normalize_email(invalid).is_none());
     }
-    assert!(!valid_password("Welcome1"));
-    assert!(valid_password(PASSWORD));
-    assert!(!valid_password(&"a".repeat(129)));
+    let policy = PasswordPolicy {
+        min: 8,
+        max: 128,
+        recommended_min: 15,
+        recommended_max: 18,
+    };
+    assert!(!policy.accepts("seven77"));
+    assert!(policy.accepts("Welcome1"));
+    assert!(!policy.accepts(&"a".repeat(129)));
+    let strict = PasswordPolicy { min: 15, ..policy };
+    assert!(!strict.accepts("Welcome1"));
+    assert!(strict.accepts(PASSWORD));
+    assert!(within_limits("x"), "signing in never applies the minimum");
     assert!(!AccountConfig::default().signup_enabled);
 }
 

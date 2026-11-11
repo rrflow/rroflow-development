@@ -17,6 +17,7 @@ import { Dialog, FlowArt, Icon } from "./ui";
 import "./styles.css";
 import { AccountPage } from "./account";
 import { DevicePage } from "./device";
+import { SettingsPage } from "./settings";
 import { ProjectOverview } from "./project-overview";
 import { SignalLibrary } from "./signal-library";
 
@@ -718,6 +719,7 @@ function App() {
               <div className="account">
                 <span>{data.user.name || "Your account"}</span>
                 <a href="/app/device">Collectors</a>
+                {data.instance_admin && <a href="/app/settings">Settings</a>}
                 <button
                   className="text-button"
                   disabled={outBusy}
@@ -1009,6 +1011,8 @@ createRoot(document.getElementById("root")!).render(
       <AccountPage name={identity.name} />
     ) : location.pathname === "/app/device" ? (
       <DevicePage name={identity.name} />
+    ) : location.pathname === "/app/settings" ? (
+      <SettingsPage name={identity.name} />
     ) : (
       <App />
     )}

@@ -408,7 +408,7 @@ pub(crate) async fn attach_claimed(
 
 /// The signed-in person behind a management request. Project keys and operator keys are not
 /// people, and neither exists without Postgres.
-async fn signed_in<'a>(
+pub(crate) async fn signed_in<'a>(
     st: &'a AppState,
     headers: &HeaderMap,
 ) -> Result<(&'a PgStore, String), ApiError> {
@@ -508,8 +508,12 @@ pub(crate) async fn me(
         .bind(&user).fetch_optional(&pg.pool).await.map_err(db)?;
     let organizations: Vec<SqlJson<Value>> = sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'slug',o.slug,'name',o.name,'personal',o.personal,'role',m.role,'projects',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',d.id,'slug',d.slug,'name',d.name) ORDER BY d.created_at,d.id) FROM devspaces d WHERE d.organization_id=o.id),'[]'::jsonb)) FROM organization_members m JOIN organizations o ON o.id=m.organization_id WHERE m.user_id=$1 ORDER BY o.personal DESC,o.created_at,o.id")
         .bind(&user).fetch_all(&pg.pool).await.map_err(db)?;
+    let instance_admin = crate::settings::is_instance_admin(&pg.pool, &user)
+        .await
+        .map_err(db)?;
     Ok(Json(json!({
         "user": {"id": user, "name": name},
+        "instance_admin": instance_admin,
         "default_project": default_project,
         "organizations": organizations.into_iter().map(|o| with_permissions(o.0)).collect::<Vec<_>>(),
     })))

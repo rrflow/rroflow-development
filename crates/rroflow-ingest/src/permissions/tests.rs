@@ -100,7 +100,9 @@ fn each_permission_in_a_route_has_the_scope_its_path_names() {
             Access::AnyOf(permissions) => permissions,
             Access::Public | Access::SignIn | Access::Own => continue,
         };
-        let scope = if path.contains("{organization}") {
+        let scope = if path.starts_with("/v1/instance") {
+            Scope::Instance
+        } else if path.contains("{organization}") {
             Scope::Organization
         } else {
             Scope::Project
@@ -114,19 +116,25 @@ fn each_permission_in_a_route_has_the_scope_its_path_names() {
 #[test]
 fn role_bundles_allow_and_deny_exactly_this() {
     use Permission::*;
-    let expected: [(Grant, &[Permission]); 6] = [
+    let organization_admin: Vec<Permission> = Permission::ALL
+        .into_iter()
+        .filter(|p| *p != InstanceSettings)
+        .collect();
+    let expected: [(Grant, &[Permission]); 8] = [
         (Grant::Role(Role::Viewer), &[ProjectRead, OrganizationRead]),
         (
             Grant::Role(Role::Member),
             &[ProjectRead, ProjectSend, ProjectWrite, OrganizationRead],
         ),
-        (Grant::Role(Role::Admin), &Permission::ALL),
-        (Grant::Role(Role::Owner), &Permission::ALL),
+        (Grant::Role(Role::Admin), &organization_admin),
+        (Grant::Role(Role::Owner), &organization_admin),
         (
             Grant::OperatorKey,
             &[ProjectRead, ProjectSend, ProjectWrite],
         ),
         (Grant::SendOnlyKey, &[ProjectSend]),
+        (Grant::InstanceAdmin, &[InstanceSettings]),
+        (Grant::InstanceMember, &[]),
     ];
     for (grant, allowed) in expected {
         for permission in Permission::ALL {
@@ -208,6 +216,7 @@ fn permission_names_are_stable() {
             "members.invite",
             "members.manage",
             "audit.read",
+            "instance.settings",
         ]
     );
 }

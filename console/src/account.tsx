@@ -14,6 +14,13 @@ type Options = {
   federation_label: string;
   first_run: boolean;
   builtin_admin: boolean;
+  password_policy: PasswordPolicy;
+};
+type PasswordPolicy = {
+  min: number;
+  max: number;
+  recommended_min: number;
+  recommended_max: number;
 };
 type Mode =
   | "login"
@@ -33,6 +40,11 @@ const postHeaders = {
   "Content-Type": "application/json",
   "X-Rroflow-Request": "dashboard",
 };
+
+function passwordRule(policy?: PasswordPolicy) {
+  if (!policy) return "";
+  return `Use at least ${policy.min} characters. ${policy.recommended_min}–${policy.recommended_max} is recommended.`;
+}
 
 function SavePassword({
   created,
@@ -132,6 +144,8 @@ export function AccountPage({ name }: { name: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [chosen, setChosen] = useState("");
+  const [generate, setGenerate] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -294,7 +308,9 @@ export function AccountPage({ name }: { name: string }) {
         : endpoint === "complete"
           ? { token, password }
           : endpoint === "first-run"
-            ? { password }
+            ? generate
+              ? { password }
+              : { password, new_password: chosen }
             : { email, password };
     try {
       const response = await fetch(`/auth/native/${endpoint}`, {
@@ -319,7 +335,12 @@ export function AccountPage({ name }: { name: string }) {
       }
       if (mode === "first-run") {
         setPassword("");
+        setChosen("");
         setShowPassword(false);
+        if (!(data as NewPassword).password) {
+          enterWorkspace();
+          return;
+        }
         setCreated(data as NewPassword);
         return;
       }
@@ -432,13 +453,13 @@ export function AccountPage({ name }: { name: string }) {
           <>
             <p className="muted">
               {mode === "first-run"
-                ? "Paste the one-time setup password from your install. It works once, then we give you a new one to keep."
+                ? "Paste the setup password from your install, then choose your own password or have one made for you."
                 : mode === "register"
                 ? "Start with your email. We will send a link to verify it before you choose a password."
                 : mode === "reset"
                   ? "Enter your account email. We will send a recovery link if it is eligible."
                   : mode === "complete"
-                    ? "Use at least 15 characters. A long phrase works well."
+                    ? passwordRule(options?.password_policy)
                     : "Sign in to see your organizations and projects."}
             </p>
             <form onSubmit={submit}>
@@ -486,8 +507,12 @@ export function AccountPage({ name }: { name: string }) {
                     }
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    minLength={15}
-                    maxLength={256}
+                    minLength={
+                      mode === "complete"
+                        ? options?.password_policy.min
+                        : undefined
+                    }
+                    maxLength={options?.password_policy.max}
                     required
                     disabled={busy}
                     aria-describedby="password-help"
@@ -505,10 +530,54 @@ export function AccountPage({ name }: { name: string }) {
                   <p id="password-help" className="muted">
                     {mode === "first-run"
                       ? "It starts with rrsetup- and is safe to paste from your AI chat."
-                      : "15–128 characters. Spaces and password managers are welcome."}
+                      : mode === "complete"
+                        ? passwordRule(options?.password_policy)
+                        : "Spaces and password managers are welcome."}
                   </p>
                 </>
               )}
+              {mode === "first-run" &&
+                (generate ? (
+                  <p className="muted">
+                    We will make a strong password for you to save.{" "}
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() => setGenerate(false)}
+                    >
+                      Choose my own instead
+                    </button>
+                  </p>
+                ) : (
+                  <>
+                    <label htmlFor="account-chosen">Choose a password</label>
+                    <input
+                      id="account-chosen"
+                      name="new-password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      value={chosen}
+                      onChange={(e) => setChosen(e.target.value)}
+                      minLength={options?.password_policy.min}
+                      maxLength={options?.password_policy.max}
+                      required
+                      disabled={busy}
+                      aria-describedby="chosen-help"
+                    />
+                    <p id="chosen-help" className="muted">
+                      {passwordRule(options?.password_policy)}
+                    </p>
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() => setGenerate(true)}
+                    >
+                      Generate one for me instead
+                    </button>
+                  </>
+                ))}
               <button
                 type="submit"
                 className={federationAvailable ? "secondary" : undefined}
