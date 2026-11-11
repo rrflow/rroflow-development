@@ -26,7 +26,7 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 - [First-run access v1](spec/first-run-access-v1.md): built-in admin account, one-time setup password, generated replacement, and the planned passkey and Google stages.
 - [Browser sessions v1](spec/browser-sessions-v1.md): encrypted PostgreSQL sessions, configuration, rotation and remaining native-account work.
 - [Receipt provenance v1](spec/provenance-v1.md): server receipts, record ownership and honest unknown states; initial receipt ownership merged in PR47.
-- [Raw capture v1](spec/raw-capture-v1.md): every source line kept locally before parsing; scrubbing, upload, ClickHouse parsing and project mapping are agreed and not built.
+- [Raw capture v1](spec/raw-capture-v1.md): every source line kept locally before parsing, and the versioned scrubber with its leak test; consent, upload, ClickHouse parsing and project mapping are agreed and not built.
 - [Texas application VM readiness](plan/texas-readiness.md): verified placement, deployment guards, recovery and release gates.
 - [Project access tooling](plan/project-access-tooling.md): private credential references, Cloudflare/Nomen verification and strict read-only SSH inventory.
 - [Subscription support](plan/subscription-support.md): capture, sign-in, history and inference capability status per surface.

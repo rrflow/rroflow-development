@@ -607,10 +607,7 @@ mod tests {
             .with_timezone(&Utc)
     }
     fn red() -> Redactor {
-        Redactor {
-            patterns: Redactor::new().patterns,
-            literals: vec![],
-        }
+        Redactor::with_literals(vec![])
     }
     fn event(input: &str, tools: usize) -> Value {
         json!({
