@@ -4,7 +4,6 @@ members = ["crates/rroflow-core", "crates/rroflow-cli", "crates/rroflow-ingest"]
 
 [workspace.package]
 edition = "2024"
-license = "Apache-2.0"
 repository = "https://github.com/rrflow/rroflow-development"
 
 # The profile that 'dist' will build with. Fat LTO and one codegen unit let the

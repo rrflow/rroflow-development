@@ -3,7 +3,6 @@ name = "rroflow-core"
 version = "0.1.0"
 description = "rroflow.ai turn record (rroflow.turn/v1) and deterministic behaviour signals"
 edition.workspace = true
-license.workspace = true
 repository.workspace = true
 
 [dependencies]
