@@ -55,6 +55,9 @@ pub enum Permission {
     /// Read an organization's audit log.
     #[serde(rename = "audit.read")]
     AuditRead,
+    /// Change this instance's settings.
+    #[serde(rename = "instance.settings")]
+    InstanceSettings,
 }
 
 /// Where a permission applies.
@@ -65,10 +68,12 @@ pub enum Scope {
     Project,
     /// The organization in the request's path.
     Organization,
+    /// The whole instance.
+    Instance,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 11] = [
+    pub const ALL: [Permission; 12] = [
         Permission::ProjectRead,
         Permission::ProjectSend,
         Permission::ProjectWrite,
@@ -80,6 +85,7 @@ impl Permission {
         Permission::MembersInvite,
         Permission::MembersManage,
         Permission::AuditRead,
+        Permission::InstanceSettings,
     ];
 
     pub fn scope(self) -> Scope {
@@ -95,6 +101,7 @@ impl Permission {
             | Permission::MembersInvite
             | Permission::MembersManage
             | Permission::AuditRead => Scope::Organization,
+            Permission::InstanceSettings => Scope::Instance,
         }
     }
 }
@@ -109,6 +116,10 @@ pub enum Grant {
     OperatorKey,
     /// A project key: it can deliver records and nothing else.
     SendOnlyKey,
+    /// A person who administers this instance.
+    InstanceAdmin,
+    /// A person with an account here and no instance role.
+    InstanceMember,
 }
 
 const VIEWER: &[Permission] = &[Permission::ProjectRead, Permission::OrganizationRead];
@@ -120,7 +131,20 @@ const MEMBER: &[Permission] = &[
 ];
 /// Owners hold the same permissions as admins. What sets them apart is rank: only an owner
 /// grants or removes an owner, and the last owner cannot leave.
-const ADMIN: &[Permission] = &Permission::ALL;
+const ADMIN: &[Permission] = &[
+    Permission::ProjectRead,
+    Permission::ProjectSend,
+    Permission::ProjectWrite,
+    Permission::KeysManage,
+    Permission::DatasetsManage,
+    Permission::DatasetsExport,
+    Permission::OrganizationRead,
+    Permission::ProjectsCreate,
+    Permission::MembersInvite,
+    Permission::MembersManage,
+    Permission::AuditRead,
+];
+const INSTANCE_ADMIN: &[Permission] = &[Permission::InstanceSettings];
 const OPERATOR_KEY: &[Permission] = &[
     Permission::ProjectRead,
     Permission::ProjectSend,
@@ -136,6 +160,8 @@ impl Grant {
             Grant::Role(Role::Admin | Role::Owner) => ADMIN,
             Grant::OperatorKey => OPERATOR_KEY,
             Grant::SendOnlyKey => SEND_ONLY_KEY,
+            Grant::InstanceAdmin => INSTANCE_ADMIN,
+            Grant::InstanceMember => &[],
         }
     }
 
@@ -157,6 +183,7 @@ pub fn require(grant: Grant, permission: Permission) -> Result<(), ApiError> {
         (_, Permission::DatasetsManage | Permission::DatasetsExport) => {
             "An organization admin or owner manages dataset consent and exports."
         }
+        (_, Permission::InstanceSettings) => "An instance admin must do this.",
         _ => "An organization admin or owner must do this.",
     }))
 }
@@ -244,6 +271,8 @@ pub const ROUTES: &[(&str, &str, Access)] = &[
     ("GET", "/assets/research.json", Requires(ProjectRead)),
     // Accounts, organizations and projects.
     ("GET", "/v1/me", Own),
+    ("GET", "/v1/instance/settings", Requires(InstanceSettings)),
+    ("PUT", "/v1/instance/settings", Requires(InstanceSettings)),
     ("POST", "/v1/organizations", Own),
     ("POST", "/v1/invitations/accept", Own),
     (
@@ -304,6 +333,7 @@ pub const ROUTES: &[(&str, &str, Access)] = &[
     ("GET", "/app/manage", Public),
     ("GET", "/app/account", Public),
     ("GET", "/app/device", Public),
+    ("GET", "/app/settings", Public),
     ("GET", "/assets/dashboard-datasets.js", Public),
     ("GET", "/assets/dashboard-sdk.js", Public),
     ("GET", "/assets/member-console/app.js", Public),

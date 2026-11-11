@@ -156,6 +156,7 @@ test('first run replaces an exposed setup password and shows the new one once',a
     await fixture.connect(page);await page.goto(fixture.origin+'/app/account');
     await expect(page.getByRole('heading',{name:'Finish setting up'})).toBeVisible();
     await page.getByLabel('Setup password',{exact:true}).fill(setup);
+    await page.getByRole('button',{name:'Generate one for me instead',exact:true}).click();
     await page.getByRole('button',{name:'Continue',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Save your new password'})).toBeVisible();
     const first=await page.getByLabel('New password',{exact:true}).inputValue();
@@ -197,12 +198,14 @@ test('a live reset password is not hidden behind an earlier unsaved password',as
     const setup=await fixture.setupPassword();
     await page.reload();
     await page.getByLabel('Setup password',{exact:true}).fill(setup);
+    await page.getByRole('button',{name:'Generate one for me instead',exact:true}).click();
     await page.getByRole('button',{name:'Continue',exact:true}).click();
     await expect(page.getByLabel('New password',{exact:true})).toBeVisible();
     const reset=await fixture.setupPassword('--reset');
     await page.reload();
     await expect(page.getByRole('heading',{name:'Finish setting up'})).toBeVisible();
     await page.getByLabel('Setup password',{exact:true}).fill(reset);
+    await page.getByRole('button',{name:'Generate one for me instead',exact:true}).click();
     await page.getByRole('button',{name:'Continue',exact:true}).click();
     await expect(page.getByLabel('New password',{exact:true})).toBeVisible();
   } finally { await fixture.close(); }
@@ -215,6 +218,7 @@ test('a local install works on plain localhost, including after signing out',asy
     const setup=await fixture.setupPassword();
     await page.goto(fixture.origin+'/app/account');
     await page.getByLabel('Setup password',{exact:true}).fill(setup);
+    await page.getByRole('button',{name:'Generate one for me instead',exact:true}).click();
     await page.getByRole('button',{name:'Continue',exact:true}).click();
     await page.getByLabel('I saved this password',{exact:true}).check();
     await page.getByRole('button',{name:'Go to my workspace',exact:true}).click();
@@ -225,5 +229,35 @@ test('a local install works on plain localhost, including after signing out',asy
     await expect(page.getByText('Sign-in configuration is invalid.')).toHaveCount(0);
     await page.goto(fixture.origin+'/');
     await expect(page.locator('#member-status')).toContainText('Continue to account sign-in');
+  } finally { await fixture.close(); }
+});
+
+test('an admin chooses their own password at first run and sets the minimum in Settings',async({page})=>{
+  test.skip(!process.env.RROFLOW_DATASET_UI_DATABASE_URL,'Requires disposable Postgres');
+  const fixture=await nativeFixture(process.env.RROFLOW_DATASET_UI_DATABASE_URL);
+  try {
+    const setup=await fixture.setupPassword();
+    await fixture.connect(page);await page.goto(fixture.origin+'/app/account');
+    await expect(page.getByText('Use at least 8 characters. 15–18 is recommended.')).toBeVisible();
+    await page.getByLabel('Setup password',{exact:true}).fill(setup);
+    await page.getByLabel('Choose a password',{exact:true}).fill('eight888');
+    await page.getByRole('button',{name:'Continue',exact:true}).click();
+    await expect(page).toHaveURL(fixture.origin+'/app/manage');
+
+    await page.getByRole('link',{name:'Settings',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'Settings',exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'8',exact:true})).toHaveAttribute('aria-pressed','true');
+    await page.getByRole('button',{name:'15 (recommended)',exact:true}).click();
+    await page.getByRole('button',{name:'Save changes',exact:true}).click();
+    await expect(page.getByRole('status')).toContainText('Settings saved');
+    expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([]);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+
+    // A raised minimum applies to new passwords and never locks out an existing one.
+    await page.context().clearCookies();await page.goto(fixture.origin+'/app/account');
+    await page.getByLabel('Email or admin name',{exact:true}).fill('admin');
+    await page.getByLabel('Password',{exact:true}).fill('eight888');
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();
+    await expect(page).toHaveURL(fixture.origin+'/app/manage');
   } finally { await fixture.close(); }
 });

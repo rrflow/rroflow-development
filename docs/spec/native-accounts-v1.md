@@ -36,7 +36,7 @@ outbox, session digests and durable attempt windows. Emails are trimmed ASCII
 addresses, case-insensitive by application policy. Plus tags and dots are preserved;
 internationalized addresses are not supported in this version.
 
-Passwords accept 15–128 Unicode characters (at most 512 UTF-8 bytes), without
+New passwords must meet the minimum an instance admin sets in Settings (8 to 18 characters, default 8, with 15 to 18 recommended) and accept up to 128 Unicode characters (at most 512 UTF-8 bytes), without
 normalization or composition rules. Argon2id v19 uses 19 MiB, two iterations and
 one lane, with a random salt. Password work runs on bounded blocking workers;
 saturation refuses more work. Verification checks the encoded profile before
