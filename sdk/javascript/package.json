@@ -8,6 +8,5 @@
   "exports": { ".": { "types": "./index.d.ts", "import": "./index.mjs" } },
   "files": ["index.mjs", "index.d.ts", "README.md"],
   "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test test.mjs" },
-  "license": "Apache-2.0"
+  "scripts": { "test": "node --test test.mjs" }
 }

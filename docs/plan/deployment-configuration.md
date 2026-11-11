@@ -121,15 +121,7 @@ configuration does not implement those features or prove live tenant isolation.
 
 ## Licensing status
 
-Rust workspace and JavaScript package metadata currently declare Apache-2.0.
-This increment changes neither those declarations nor existing grants. A root
-license text and contribution/third-party notice review still need reconciliation.
-
-The owner requested public customizable source with BSL terms. Business Source
-License 1.1 is source-available until its specified change date, rather than an
-OSI open-source license ([the license text](https://mariadb.com/bsl11/)). The
-pending choice is an Apache-2.0 core with separately scoped BSL additions, or
-BSL for future app versions. A BSL release needs its exact licensed work, licensor,
-additional use grant, change date and change license recorded. No values or
-restrictions are invented here. Historical Apache-licensed versions retain their
-existing grants.
+The repository declares no license. The owner is withholding one until a real alpha is running
+on rroflow.ai and they have seen it working (Shippin ADR 0017). Releases through v0.4.0 were
+published declaring Apache-2.0, and those grants are unchanged. Outside contributions are not
+accepted before the license is set.

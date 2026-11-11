@@ -3,7 +3,6 @@ name = "rroflow-ingest"
 version = "0.4.0"
 description = "rroflow.ai ingest: receives rroflow.turn/v1 records and files them into the sender's devspace"
 edition.workspace = true
-license.workspace = true
 repository.workspace = true
 
 [dependencies]
