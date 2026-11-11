@@ -258,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
             };
             let setup = rroflow_ingest::accounts::issue_setup_password(&pg, options, reset).await?;
             println!(
-                "One-time setup password (works once, expires in {} minutes):\n\n    {}\n\nOpen {}/app/account and paste it. You will get a new password to save.\n\nFor AI agents: you may show this setup password to the user in chat. Signing in\nreplaces it. Do not sign in for them, and never ask them to share the new password.",
+                "One-time setup password (works once, expires in {} minutes):\n\n    {}\n\nOpen {}/app/account and paste it. Then choose your own password, or have one made for you.\n\nFor AI agents: you may show this setup password to the user in chat. Signing in\nreplaces it. Do not sign in for them, and never ask them to share the new password.",
                 rroflow_ingest::accounts::SETUP_TTL_MINUTES,
                 setup.password.as_str(),
                 setup.origin,

@@ -54,8 +54,12 @@ pub(crate) async fn config(State(st): State<AppState>) -> Json<serde_json::Value
         Some(a) => a.first_run_state().await.unwrap_or((false, false)),
         None => (false, false),
     };
+    let policy = match &st.accounts {
+        Some(a) => a.password_policy().await.ok(),
+        None => None,
+    };
     Json(
-        json!({"enabled":st.accounts.is_some(),"first_run":first_run,"builtin_admin":builtin_admin,"signup_enabled":st.accounts.as_ref().is_some_and(|a|a.cfg.signup_enabled),
+        json!({"enabled":st.accounts.is_some(),"password_policy":policy,"first_run":first_run,"builtin_admin":builtin_admin,"signup_enabled":st.accounts.as_ref().is_some_and(|a|a.cfg.signup_enabled),
         "recovery_enabled":st.accounts.as_ref().is_some_and(|a|a.cfg.smtp.is_some()),"federation_enabled":st.web.is_some(),
         "federation_label":st.brand.federation_label}),
     )
@@ -112,7 +116,7 @@ pub(crate) async fn login(
     let Some(email) = normalize_login(&input.email) else {
         return invalid();
     };
-    if !valid_password(&input.password) {
+    if !within_limits(&input.password) {
         return invalid();
     }
     match a.allow("login", &email).await {
@@ -159,8 +163,11 @@ pub(crate) async fn complete(
         Ok(a) => a,
         Err(r) => return *r,
     };
-    if !valid_secret(&input.token, ACTION_PREFIX) || !valid_password(&input.password) {
+    if !valid_secret(&input.token, ACTION_PREFIX) {
         return invalid();
+    }
+    if let Err(refused) = check_new_password(a, &input.password).await {
+        return *refused;
     }
     match a.allow("complete", &hash_key(&input.token)).await {
         Ok(true) => {}
@@ -189,10 +196,30 @@ fn setup_refused() -> Response {
         "That setup password has expired or was already used. Run the setup command for a new one.",
     )
 }
+/// Refuses a new password the instance's rule does not accept, and says what the rule is.
+async fn check_new_password(a: &Accounts, password: &str) -> Result<(), Box<Response>> {
+    let policy = a
+        .password_policy()
+        .await
+        .map_err(|_| Box::new(unavailable()))?;
+    if policy.accepts(password) {
+        return Ok(());
+    }
+    Err(Box::new(message(
+        StatusCode::BAD_REQUEST,
+        &format!(
+            "Use between {} and {} characters for your new password.",
+            policy.min, policy.max
+        ),
+    )))
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ClaimSetup {
     password: String,
+    /// The password the person chose. Without one, a password is generated for them.
+    #[serde(default)]
+    new_password: Option<String>,
 }
 /// Returns the only copy of the new password, to the browser that used the setup password.
 pub(crate) async fn first_run(
@@ -205,9 +232,14 @@ pub(crate) async fn first_run(
         Err(r) => return *r,
     };
     let supplied = input.password.trim();
+    if let Some(chosen) = &input.new_password
+        && let Err(refused) = check_new_password(a, chosen).await
+    {
+        return *refused;
+    }
     // No attempt limit: a guess costs one digest lookup, and a shared limit would let
     // anonymous guesses lock the real password out.
-    match a.claim_setup(supplied).await {
+    match a.claim_setup(supplied, input.new_password).await {
         Ok(Some(claimed)) => {
             // Best effort. The claim has committed and this response is the only copy of
             // the new password, so a failed cleanup must not lose it.
@@ -219,7 +251,7 @@ pub(crate) async fn first_run(
             }
             let mut r = private(json!({
                 "signin": first_run::ADMIN_LOGIN,
-                "password": claimed.password.as_str(),
+                "password": claimed.password.as_ref().map(|p| p.as_str()),
                 "revision": claimed.revision,
                 "active_keys": claimed.active_keys,
             }));

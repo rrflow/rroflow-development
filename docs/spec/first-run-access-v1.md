@@ -14,7 +14,7 @@ agreement.
 | Stage | What happens | Who sees the secret | Status |
 |---|---|---|---|
 | Install | `rroflow-ingest first-run` prints a one-time setup password | The person and any AI running the install | Built |
-| First sign-in | The setup password is consumed and a new password is generated | Only the browser that signed in | Built |
+| First sign-in | The setup password is consumed; the person chooses a password or has one generated | Only the browser that signed in | Built |
 | Save | The person confirms they saved it; a page closed first can make another | Only that browser | Built |
 | Passkey | Offered for this computer or phone, never required | Nobody; the private key stays on the device | Not built |
 | Google | Optional sign-in after an explicit agreement | Google identifies the person to RROFLOW | Not built |

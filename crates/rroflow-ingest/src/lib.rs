@@ -31,6 +31,7 @@ pub mod permissions;
 pub mod pg;
 mod provenance;
 mod reviews;
+mod settings;
 mod source_health;
 pub mod store;
 pub mod tenancy;
@@ -1063,6 +1064,10 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/v1/provenance", get(provenance::get))
         .route("/v1/provenance/coverage", get(provenance::coverage))
         .route("/v1/me", get(tenancy::me))
+        .route(
+            "/v1/instance/settings",
+            get(settings::get).put(settings::update),
+        )
         .route("/v1/organizations", post(tenancy::create_organization))
         .route(
             "/v1/organizations/{organization}/projects",
@@ -1151,6 +1156,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/app/manage", get(member_console::page))
         .route("/app/account", get(member_console::page))
         .route("/app/device", get(member_console::page))
+        .route("/app/settings", get(member_console::page))
         .route("/assets/member-console/app.js", get(member_console::script))
         .route(
             "/assets/member-console/index.css",

@@ -118,8 +118,30 @@ pub(crate) fn normalize_login(login: &str) -> Option<String> {
     }
     normalize_email(login)
 }
-pub(crate) fn valid_password(password: &str) -> bool {
-    (15..=128).contains(&password.chars().count()) && password.len() <= 512
+/// What any password may be at most, so hashing work stays bounded. Not a preference.
+const MAX_PASSWORD_CHARS: usize = 128;
+const MAX_PASSWORD_BYTES: usize = 512;
+
+/// A submitted password worth checking. Length rules apply only when one is set, so changing
+/// the minimum never locks anyone out.
+pub(crate) fn within_limits(password: &str) -> bool {
+    (1..=MAX_PASSWORD_CHARS).contains(&password.chars().count())
+        && password.len() <= MAX_PASSWORD_BYTES
+}
+
+/// The rule for a new password, as the instance admin set it.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+pub(crate) struct PasswordPolicy {
+    pub(crate) min: usize,
+    pub(crate) max: usize,
+    pub(crate) recommended_min: usize,
+    pub(crate) recommended_max: usize,
+}
+
+impl PasswordPolicy {
+    pub(crate) fn accepts(&self, password: &str) -> bool {
+        within_limits(password) && password.chars().count() >= self.min
+    }
 }
 
 async fn audit(tx: &mut Transaction<'_, Postgres>, user: &str, action: &str) -> Result<()> {
@@ -355,8 +377,20 @@ impl Accounts {
         Ok(())
     }
 
+    pub(crate) async fn password_policy(&self) -> Result<PasswordPolicy> {
+        let key = crate::settings::PASSWORD_MIN_LENGTH;
+        let min = crate::settings::integer(&self.pool, key).await? as usize;
+        let (low, high) = crate::settings::recommended_range(key).unwrap_or((0, 0));
+        Ok(PasswordPolicy {
+            min,
+            max: MAX_PASSWORD_CHARS,
+            recommended_min: low as usize,
+            recommended_max: high as usize,
+        })
+    }
+
     pub(crate) async fn complete(&self, token: &str, password: String) -> Result<bool> {
-        if !valid_secret(token, ACTION_PREFIX) || !valid_password(&password) {
+        if !valid_secret(token, ACTION_PREFIX) || !within_limits(&password) {
             return Ok(false);
         }
         let digest = hash_key(token);

@@ -117,7 +117,7 @@ async fn only_one_concurrent_claim_wins_and_an_expired_password_is_refused() {
     };
     let a = f.accounts();
     let setup = a.issue_setup(false).await.unwrap();
-    let (first, second) = tokio::join!(a.claim_setup(&setup), a.claim_setup(&setup));
+    let (first, second) = tokio::join!(a.claim_setup(&setup, None), a.claim_setup(&setup, None));
     let wins = [first.unwrap(), second.unwrap()]
         .iter()
         .filter(|c| c.is_some())
@@ -134,7 +134,7 @@ async fn only_one_concurrent_claim_wins_and_an_expired_password_is_refused() {
         .execute(&f.pool)
         .await
         .unwrap();
-    assert!(a.claim_setup(&setup).await.unwrap().is_none());
+    assert!(a.claim_setup(&setup, None).await.unwrap().is_none());
     assert!(!a.first_run_state().await.unwrap().0);
     drop(a);
     f.close().await;
@@ -149,7 +149,7 @@ async fn issuing_replaces_an_unused_password_and_reset_recovers_a_lost_admin() {
     let app = f.app().await;
     let stale = a.issue_setup(false).await.unwrap();
     let setup = a.issue_setup(false).await.unwrap();
-    assert!(a.claim_setup(&stale).await.unwrap().is_none());
+    assert!(a.claim_setup(&stale, None).await.unwrap().is_none());
     let (_, body, cookie) = claim(&app, &setup).await;
     let lost = body["password"].as_str().unwrap().to_string();
     let cookie = session(&cookie);
@@ -421,4 +421,126 @@ async fn anonymous_guesses_cannot_use_up_first_run_sign_in() {
     assert_eq!(claim(&app, &setup).await.0, StatusCode::OK);
     drop((a, app));
     f.close().await;
+}
+
+const SETTINGS: &str = "/v1/instance/settings";
+
+async fn claim_with(
+    app: &Router,
+    setup: &str,
+    chosen: &str,
+) -> (StatusCode, Value, Option<String>) {
+    rpc(
+        app,
+        CLAIM,
+        Some(json!({"password":setup,"new_password":chosen})),
+        None,
+        Some(ORIGIN),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn first_run_accepts_a_password_the_person_chose() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let a = f.accounts();
+    let app = f.app().await;
+    let config = rpc(&app, CONFIG, None, None, None).await.1;
+    assert_eq!(config["password_policy"]["min"], 8);
+    assert_eq!(config["password_policy"]["recommended_min"], 15);
+    assert_eq!(config["password_policy"]["recommended_max"], 18);
+
+    let setup = a.issue_setup(false).await.unwrap();
+    // Too short is refused without using up the setup password.
+    assert_eq!(
+        claim_with(&app, &setup, "seven77").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    let (code, body, cookie) = claim_with(&app, &setup, "eight888").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(
+        body["password"].is_null(),
+        "a chosen password is never echoed"
+    );
+    assert!(cookie.is_some());
+    let unsaved: Option<String> = sqlx::query_scalar(
+        "SELECT unsaved_session_sha256 FROM native_credentials WHERE email='admin'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(
+        unsaved.is_none(),
+        "nothing to save when the person chose it"
+    );
+    assert_eq!(sign_in(&app, "eight888").await.0, StatusCode::OK);
+    assert_eq!(
+        claim(&app, &setup).await.0,
+        StatusCode::UNAUTHORIZED,
+        "works once"
+    );
+}
+
+#[tokio::test]
+async fn only_an_instance_admin_changes_settings_and_a_raised_minimum_locks_nobody_out() {
+    let Some(f) = Fixture::new().await else {
+        return;
+    };
+    let a = f.accounts();
+    let app = f.app().await;
+    assert_eq!(
+        rpc(&app, SETTINGS, None, None, None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let setup = a.issue_setup(false).await.unwrap();
+    let (_, _, cookie) = claim_with(&app, &setup, "eight888").await;
+    let cookie = session(&cookie);
+    let (code, current, _) = rpc(&app, SETTINGS, None, Some(&cookie), Some(ORIGIN)).await;
+    assert_eq!(code, StatusCode::OK, "{current}");
+    let setting = &current["groups"][0]["settings"][0];
+    assert_eq!(setting["key"], "password_min_length");
+    assert_eq!(setting["value"], 8);
+
+    let revision = current["revision"].as_i64().unwrap();
+    let put = |value: i64, revision: i64| {
+        let body = json!({"revision":revision,"values":{"password_min_length":value}});
+        let cookie = cookie.clone();
+        let app = app.clone();
+        async move {
+            let request = Request::put(SETTINGS)
+                .header("cookie", cookie)
+                .header("origin", ORIGIN)
+                .header("x-rroflow-request", "dashboard")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            app.oneshot(request).await.unwrap().status()
+        }
+    };
+    assert_eq!(put(7, revision).await, StatusCode::BAD_REQUEST);
+    assert_eq!(put(15, revision).await, StatusCode::OK);
+    assert_eq!(
+        put(12, revision).await,
+        StatusCode::CONFLICT,
+        "stale revision"
+    );
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_events WHERE action='instance.settings_changed'",
+    )
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+    assert_eq!(
+        rpc(&app, CONFIG, None, None, None).await.1["password_policy"]["min"],
+        15
+    );
+    assert_eq!(
+        sign_in(&app, "eight888").await.0,
+        StatusCode::OK,
+        "existing password still works"
+    );
 }

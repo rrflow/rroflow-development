@@ -11,6 +11,7 @@ export type Organization = {
 };
 export type Overview = {
   user: { id: string; name: string | null };
+  instance_admin: boolean;
   default_project: string | null;
   organizations: Organization[];
 };
@@ -51,6 +52,7 @@ export function overview(value: unknown): Overview {
     u = object(v.user);
   return {
     user: { id: text(u.id), name: optionalText(u.name) },
+    instance_admin: v.instance_admin === true,
     default_project: optionalText(v.default_project),
     organizations: list(v.organizations).map((raw) => {
       const o = object(raw),
