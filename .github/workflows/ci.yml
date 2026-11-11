@@ -116,7 +116,19 @@ jobs:
         run: node scripts/test-ingest-artifact.mjs "target/hosted/rroflow-ingest-$RROFLOW_BUILD_REVISION-x86_64-unknown-linux-gnu.tar.gz" "$RROFLOW_BUILD_REVISION"
       - name: Install pinned UI test tooling
         working-directory: scripts/dashboard-ui
-        run: npm ci --ignore-scripts && npx --no-install playwright install --with-deps chromium
+        # Ubuntu's package mirror is sometimes unreachable from hosted runners. Hosted images
+        # already ship Chrome's system libraries, and the browser itself comes from Playwright's
+        # own download servers, so after retries only the browser is installed. Missing
+        # libraries would still fail the tests below.
+        run: |
+          npm ci --ignore-scripts
+          for attempt in 1 2 3; do
+            if npx --no-install playwright install --with-deps chromium; then exit 0; fi
+            echo "::warning::Browser system packages failed to install (attempt $attempt of 3)."
+            sleep $((attempt * 20))
+          done
+          echo "::warning::Using the runner's preinstalled system libraries."
+          npx --no-install playwright install chromium
       - name: Verify desktop and phone dashboard flows
         working-directory: scripts/dashboard-ui
         env:
