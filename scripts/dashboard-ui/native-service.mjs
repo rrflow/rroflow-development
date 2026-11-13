@@ -9,7 +9,7 @@ import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import pg from 'pg';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-export async function nativeFixture(database,{device=false,resourceLoopback=false,native=true,federation=false,providerLabel="Nomen",local=false}={}) {
+export async function nativeFixture(database,{device=false,resourceLoopback=false,native=true,federation=false,providerLabel="Nomen",local=false,attempt=1}={}) {
   const schema='native_ui_'+randomBytes(12).toString('hex');
   const admin=new pg.Client({connectionString:database});await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -66,10 +66,19 @@ federation_label = ${JSON.stringify(providerLabel)}
   const env={...process.env,RROFLOW_DATABASE_URL:url.toString()};delete env.RROFLOW_INGEST_CONFIG;
   const child=spawn(resolve(process.env.RROFLOW_UI_BINARY),['serve','--config',config],{env,windowsHide:true,stdio:['ignore','ignore','pipe']});
   let stderr='';child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-4000);});
-  const exited=new Promise(r=>child.once('exit',r));
-  const close=async()=>{child.kill();await Promise.race([exited,sleep(5000)]);await sql.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();};
+  // A fixture server that stops on its own mid-test would otherwise surface only as a refused
+  // connection. Print what it said so the cause is visible in the CI log.
+  let closing=false;
+  const exited=new Promise(r=>child.once('exit',(code,signal)=>{if(!closing)console.error(`Fixture server on port ${port} exited unexpectedly (${signal||code}): ${stderr}`);r();}));
+  const close=async()=>{closing=true;child.kill();await Promise.race([exited,sleep(5000)]);await sql.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();};
   try {
-    let ready=false;for(let i=0;i<200;i++){try{if((await fetch(base+'/readyz')).ok){ready=true;break;}}catch{}await sleep(50);}if(!ready)throw new Error('Native fixture did not become ready: '+stderr);
+    // The port was free when chosen, but another process can take it before this server binds.
+    // Ready means this child printed that it is listening on the port and still runs, not just that
+    // something answered /readyz there.
+    const listening=`listening on 127.0.0.1:${port} `;
+    let ready=false;for(let i=0;i<200;i++){if(child.exitCode!==null||child.signalCode!==null)break;if(stderr.includes(listening)){try{if((await fetch(base+'/readyz')).ok){ready=true;break;}}catch{}}await sleep(50);}
+    if(ready&&(child.exitCode!==null||child.signalCode!==null))ready=false;
+    if(!ready){const error=new Error('Native fixture did not become ready: '+stderr);error.bindFailed=/bind 127\.0\.0\.1:\d+/.test(stderr);throw error;}
     return {origin,base,close,sql,issuer,
       async setupPassword(...args){
         const {stdout}=await promisify(execFile)(resolve(process.env.RROFLOW_UI_BINARY),['first-run','--config',config,...args],{env,windowsHide:true});
@@ -96,5 +105,9 @@ federation_label = ${JSON.stringify(providerLabel)}
         return origin+'/app/account#'+token;
       }
     };
-  } catch(e){await close();throw e;}
+  } catch(e){
+    await close();
+    if(e.bindFailed&&attempt<3)return nativeFixture(database,{device,resourceLoopback,native,federation,providerLabel,local,attempt:attempt+1});
+    throw e;
+  }
 }
