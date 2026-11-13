@@ -2,5 +2,60 @@
   "branch": "main",
   "ci_workflow": "ci.yml",
   "release_workflow": "release.yml",
-  "required_jobs": ["rust", "release-versions", "test (windows-x64)", "test (windows-arm64)", "test (linux-arm64)", "hosted-artifact"]
+  "required_jobs": [
+    "rust",
+    "release-versions",
+    "test (windows-x64)",
+    "test (windows-arm64)",
+    "test (linux-arm64)",
+    "hosted-artifact"
+  ],
+  "gates": [
+    {
+      "id": "structure",
+      "kind": "ci_job",
+      "job": "structure",
+      "from": "0.5.0",
+      "check": "Features follow the feature-module convention and new files stay within the size budget."
+    },
+    {
+      "id": "install-compose",
+      "kind": "ci_job",
+      "job": "self-host install (compose)",
+      "from": "0.5.0",
+      "check": "A fresh install from the container image and Compose file reaches first-run, sign-in and a delivered collector record."
+    },
+    {
+      "id": "install-binary",
+      "kind": "ci_job",
+      "job": "self-host install (binary)",
+      "from": "0.5.0",
+      "check": "A fresh install from the binary bundle under systemd reaches first-run, sign-in and a delivered collector record."
+    },
+    {
+      "id": "upgrade-restore",
+      "kind": "ci_job",
+      "job": "self-host upgrade and restore",
+      "from": "0.5.0",
+      "check": "Upgrading from each upgrades_from version keeps data; a forced migration failure restores automatically; a backup restores to a working instance."
+    },
+    {
+      "id": "security-review",
+      "kind": "record",
+      "from": "0.5.0",
+      "check": "An adversarial security review of upload, parsing, the updater and permissions, with every finding fixed behind a failing test."
+    },
+    {
+      "id": "clean-vm-install",
+      "kind": "record",
+      "from": "0.5.0",
+      "check": "A person installed this release on a clean VM using only the published install guide."
+    },
+    {
+      "id": "minimum-specs",
+      "kind": "record",
+      "from": "0.5.0",
+      "check": "Minimum VM specs are published from a load test of this release."
+    }
+  ]
 }

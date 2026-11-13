@@ -255,6 +255,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"
+    permissions:
+      "actions": "read"
+      "attestations": "write"
+      "contents": "write"
+      "id-token": "write"
     outputs:
       val: ${{ steps.host.outputs.manifest }}
     steps:
@@ -306,6 +311,15 @@ jobs:
           HOSTED_ARTIFACT_ID: ${{ needs.plan.outputs.hosted-artifact-id }}
           HOSTED_ARTIFACT_DIGEST: ${{ needs.plan.outputs.hosted-artifact-digest }}
         run: node scripts/promote-hosted-artifact.mjs artifacts
+      - name: Write the release manifest installers and the updater read
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          QUALIFIED_CI_RUN: ${{ needs.plan.outputs.qualified-ci }}
+        run: node scripts/release-manifest.mjs artifacts "${{ needs.plan.outputs.tag }}"
+      - name: Attest the release manifest
+        uses: actions/attest@v4
+        with:
+          subject-path: "artifacts/rroflow-release.json"
       - name: Create GitHub Release
         env:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
