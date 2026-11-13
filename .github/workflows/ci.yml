@@ -53,7 +53,7 @@ jobs:
       - name: Dashboard navigation, evidence and authentication states
         run: node --test scripts/test-dashboard.mjs
       - name: Release publication refuses unqualified or mutable sources
-        run: node --test scripts/test-release-gate.mjs
+        run: node --test scripts/test-release-gate.mjs scripts/test-release-manifest.mjs
       - name: Hosted promotion verifies exact bytes and archive membership
         run: python3 scripts/test-hosted-promotion.py
       - name: Migration bytes survive Git checkout policies

@@ -21,6 +21,8 @@ Start with [STATUS.md](STATUS.md). Everything that guides rroflow.ai and the RRF
 - [Platform v1](plan/platform-v1.md): the slice sequence for native accounts, tenancy, the member console, turnkey onboarding, automatic capture and provenance.
 - [Tenancy v1](spec/tenancy-v1.md): organizations, projects, roles, write-only project keys, invitations, audit and pooled allowances.
 - [Instance settings v1](spec/instance-settings-v1.md): settings driven by the console, the password minimum, and the grouped list of what moves there next.
+- [Release gate v1](spec/release-gate-v1.md): the one list a release must pass, with self-host checks from 0.5.0 and person-recorded checks committed before the tag.
+- [Release manifest v1](spec/release-manifest-v1.md): `rroflow-release.json`, the attested description of a release that installers and the updater read.
 - [Code structure v1](spec/code-structure-v1.md): the feature-module convention every feature follows, enforced by the `structure` CI job with a shrink-only baseline.
 - [Permissions v1](spec/permissions-v1.md): named permissions, what each role and key holds, declared routes with refusal by default, and append-only audit.
 - [Collector account storage v1](spec/collector-account-storage-v1.md): process-safe credential updates, logout cancellation and durable capture during refresh; under verification.
