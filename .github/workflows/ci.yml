@@ -83,6 +83,20 @@ jobs:
       - name: Parse a fixture transcript (no network)
         run: cargo run --locked -p rroflow -- ingest-claude crates/rroflow-cli/tests/fixtures --dry-run && cargo run --locked -p rroflow -- signals --agent claude crates/rroflow-cli/tests/fixtures
 
+  structure:
+    # Feature-module convention and file-size budget (docs/spec/code-structure-v1.md).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Structure checker refuses planted violations
+        run: node --test scripts/test-structure.mjs
+      - name: Feature-module convention, size budget and shrink-only baseline
+        env:
+          STRUCTURE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/check-structure.mjs
   hosted-artifact:
     # Build on glibc 2.35; the host must be a compatible x86_64 Linux application VM.
     # No deploy credentials or host access. PR artifacts are review artifacts only.
