@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gate,versionTag} from './release-gate.mjs';
+import {gate,versionTag,requiredJobs,applicableGates,verifyRecords} from './release-gate.mjs';
 import {download} from './promote-hosted-artifact.mjs';
 const repo='owner/app',sha='a'.repeat(40),tag='v1.2.3',now=1000;
 const policy=JSON.parse(readFileSync(new URL('../.github/release-policy.json',import.meta.url),'utf8'));
 function fixture(){
   const run={id:12,workflow_id:4,head_sha:sha,head_branch:'main',event:'push',repository:{full_name:repo},head_repository:{full_name:repo},status:'completed',conclusion:'success',run_attempt:2};
-  const jobs=policy.required_jobs.map((name,id)=>({name,id,status:'completed',conclusion:'success'}));
+  const jobs=requiredJobs(policy,tag).map((name,id)=>({name,id,status:'completed',conclusion:'success'}));
   const artifact={id:8,name:`rroflow-ingest-${sha}-x86_64-linux`,size_in_bytes:100,digest:'sha256:'+'b'.repeat(64),expired:false,expires_at:'2030-01-01T00:00:00Z',workflow_run:{id:12,head_sha:sha}};
   const f={run,jobs,artifact,tag:null,release:null,calls:[]};
   f.api=async(path,options={})=>{f.calls.push({path,...options});
@@ -22,7 +22,8 @@ function fixture(){
     throw Error('Unexpected API: '+path);
   };return f;
 }
-const options=f=>({api:f.api,repo,sha,tag,policy,mode:'dispatch',ref:'refs/heads/main',now});
+const record=(version='1.2.3')=>({schema:'rroflow.release-checks/1',version,upgrades_from:['0.4.0'],checks:applicableGates(policy,'v'+version).filter(g=>g.kind==='record').map(g=>({id:g.id,evidence:'https://github.com/rrflow/rroflow-development/issues/1',recorded_on:'2026-11-12'}))});
+const options=f=>({api:f.api,repo,sha,tag,policy,mode:'dispatch',ref:'refs/heads/main',record:record(),now});
 test('package versions are explicit, matching and not shell input',()=>{
   const manifest=v=>'[package]\nname = "test"\nversion = "'+v+'"\n\n[dependencies]\n';
   assert.equal(versionTag(manifest('1.2.3-rc.1'),manifest('1.2.3-rc.1')),'v1.2.3-rc.1');
@@ -64,4 +65,25 @@ test('artifact storage redirect never receives the GitHub token',async()=>{
   assert.equal((await download({origin:'https://api.github.com',repo,id:'8',token:'fixture',request})).toString(),'zip bytes');
   assert.equal(requests[0].options.headers.authorization,'Bearer fixture');assert.equal(requests[1].options.headers,undefined);assert.equal(requests[1].options.redirect,'error');
   await assert.rejects(download({origin:'https://api.github.com',repo,id:'8',token:'fixture',request:async()=>new Response(null,{status:302,headers:{location:'http://unsafe.example.test/'}})}));
+});
+
+test('self-host gates apply from their version, release candidates included',()=>{
+  const base=policy.required_jobs.length;
+  assert.equal(requiredJobs(policy,'v0.4.9').length,base);
+  for(const v of ['v0.5.0','v0.5.0-rc.1','v0.6.0','v1.0.0'])assert(requiredJobs(policy,v).length>base,v);
+  for(const g of applicableGates(policy,'v0.5.0'))assert(g.check.length>20,'Each gate says what it checks: '+g.id);
+  assert(applicableGates(policy,'v0.5.0').some(g=>g.kind==='record')&&applicableGates(policy,'v0.5.0').some(g=>g.kind==='ci_job'));
+});
+test('a gated release without its CI jobs or recorded checks never mutates GitHub',async()=>{
+  const missingJob=fixture();missingJob.jobs=missingJob.jobs.filter(j=>policy.required_jobs.includes(j.name));
+  await assert.rejects(gate(options(missingJob)),/Required CI job/);
+  const noRecord=fixture();await assert.rejects(gate({...options(noRecord),record:null}),/record is missing/);
+  for(const f of [missingJob,noRecord])assert.equal(f.calls.filter(c=>c.method==='POST').length,0);
+  const receipt=await gate(options(fixture()));assert.deepEqual(receipt.upgrades_from,['0.4.0']);assert(receipt.recorded_checks.includes('security-review'));
+});
+test('recorded checks must be complete, known, linked and for this version',()=>{
+  const ok=record('0.5.0');assert.doesNotThrow(()=>verifyRecords(policy,'v0.5.0',ok));
+  const bad=[r=>r.version='0.5.1',r=>r.schema='other',r=>r.checks.pop(),r=>r.checks.push({...r.checks[0]}),r=>r.checks.push({id:'made-up',evidence:'https://example.test',recorded_on:'2026-11-12'}),r=>r.checks[0].evidence='http://example.test',r=>r.checks[0].evidence='https://user:pw@example.test',r=>r.checks[0].evidence='not a url',r=>delete r.checks[0].recorded_on,r=>r.upgrades_from=['latest'],r=>r.upgrades_from='0.4.0'];
+  for(const mutate of bad){const r=structuredClone(ok);mutate(r);assert.throws(()=>verifyRecords(policy,'v0.5.0',r));}
+  assert.deepEqual(verifyRecords(policy,'v0.4.1',null),{checks:[],upgrades_from:[]});
 });
