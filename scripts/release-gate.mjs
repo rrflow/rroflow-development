@@ -1,5 +1,5 @@
 // Publication is authorized by exact main-push CI, not a branch name or PR badge.
-import {readFileSync,appendFileSync,writeFileSync} from 'node:fs';
+import {readFileSync,appendFileSync,writeFileSync,existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -20,11 +20,45 @@ export function githubApi(token,origin='https://api.github.com'){
     const text=await response.text();assert(Buffer.byteLength(text)<=4*1024*1024,'GitHub response exceeds bound');return JSON.parse(text);
   };
 }
+// Self-host release checks: gates apply from their `from` version, compared on major.minor.patch
+// so a release candidate needs the same checks as its release.
+const core=tag=>tag.replace(/^v/,'').split(/[-+]/)[0].split('.').map(Number);
+const atLeast=(tag,from)=>{const a=core(tag),b=core(from);for(let i=0;i<3;i++){if(a[i]!==b[i])return a[i]>b[i];}return true;};
+export function applicableGates(policy,tag){
+  const gates=policy.gates||[];
+  for(const g of gates)assert(/^[a-z0-9-]+$/.test(g.id)&&['ci_job','record'].includes(g.kind)&&/^\d+\.\d+\.\d+$/.test(g.from)&&typeof g.check==='string'&&g.check.length>0&&(g.kind!=='ci_job'||typeof g.job==='string'),`Malformed release gate: ${g.id}`);
+  assert(new Set(gates.map(g=>g.id)).size===gates.length,'Duplicate release gate');
+  return gates.filter(g=>atLeast(tag,g.from));
+}
+export function requiredJobs(policy,tag){
+  return [...new Set([...policy.required_jobs,...applicableGates(policy,tag).filter(g=>g.kind==='ci_job').map(g=>g.job)])];
+}
+export const recordPath=tag=>`release/checks/${tag}.json`;
+// Checks a person performs (security review, clean install, measured specs) are recorded in the
+// tagged commit, so the record is reviewed like code and cannot change after the tag.
+export function verifyRecords(policy,tag,record){
+  const needed=applicableGates(policy,tag).filter(g=>g.kind==='record').map(g=>g.id);
+  if(needed.length===0)return {checks:[],upgrades_from:record?.upgrades_from||[]};
+  assert(record,`Release checks record is missing: ${recordPath(tag)}`);
+  assert(record.schema==='rroflow.release-checks/1'&&record.version===tag.replace(/^v/,''),'Release checks record does not match this version');
+  assert(Array.isArray(record.checks)&&Array.isArray(record.upgrades_from),'Release checks record is malformed');
+  const ids=record.checks.map(c=>c.id);assert(new Set(ids).size===ids.length,'Release check recorded twice');
+  for(const c of record.checks){
+    assert(needed.includes(c.id),`Unknown release check: ${c.id}`);
+    let url;try{url=new URL(c.evidence);}catch{url=null;}
+    assert(url&&url.protocol==='https:'&&!url.username&&!url.password,`Release check needs an https evidence link: ${c.id}`);
+    assert(/^\d{4}-\d{2}-\d{2}$/.test(c.recorded_on||''),`Release check needs a recorded_on date: ${c.id}`);
+  }
+  for(const id of needed)assert(ids.includes(id),`Release check not recorded: ${id}`);
+  for(const v of record.upgrades_from)assert(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v),'Invalid upgrades_from version');
+  return {checks:needed,upgrades_from:record.upgrades_from};
+}
 async function optional(api,path){try{return await api(path);}catch(e){if(e.status===404)return null;throw e;}}
-export async function qualify({api,repo,sha,tag,policy,now=Date.now()}){
+export async function qualify({api,repo,sha,tag,policy,record=null,now=Date.now()}){
   assert(/^[\w.-]+\/[\w.-]+$/.test(repo)&&/^[a-f0-9]{40}$/.test(sha),'Invalid repository or commit');
   assert(/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(tag),'Invalid release tag');
   assert(policy.required_jobs.length>0&&policy.required_jobs.every(x=>typeof x==='string'),'Required CI jobs missing');
+  const records=verifyRecords(policy,tag,record),jobNames=requiredJobs(policy,tag);
   const base=`repos/${repo}`,workflow=await api(`${base}/actions/workflows/${encodeURIComponent(policy.ci_workflow)}`);
   const q=new URLSearchParams({head_sha:sha,event:'push',branch:policy.branch,per_page:'100'});
   const listed=await api(`${base}/actions/workflows/${workflow.id}/runs?${q}`);
@@ -32,19 +66,19 @@ export async function qualify({api,repo,sha,tag,policy,now=Date.now()}){
   const run=runs[0];assert(run&&run.status==='completed'&&run.conclusion==='success','Exact main-push CI has not passed');
   const jobs=await api(`${base}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`);
   assert(jobs.total_count<=100,'CI job inventory exceeds bound');
-  for(const name of policy.required_jobs){const matches=jobs.jobs.filter(j=>j.name===name);assert(matches.length===1&&matches[0].status==='completed'&&matches[0].conclusion==='success',`Required CI job did not pass: ${name}`);}
+  for(const name of jobNames){const matches=jobs.jobs.filter(j=>j.name===name);assert(matches.length===1&&matches[0].status==='completed'&&matches[0].conclusion==='success',`Required CI job did not pass: ${name}`);}
   const inventory=await api(`${base}/actions/runs/${run.id}/artifacts?per_page=100`);
   assert(inventory.total_count<=100,'Artifact inventory exceeds bound');
   const artifacts=inventory.artifacts.filter(a=>a.name===`rroflow-ingest-${sha}-x86_64-linux`);
   assert(artifacts.length===1,'Exact hosted artifact is missing or ambiguous');
   const artifact=artifacts[0];assert(!artifact.expired&&Date.parse(artifact.expires_at)>now&&/^sha256:[a-f0-9]{64}$/.test(artifact.digest)&&artifact.size_in_bytes>0&&artifact.size_in_bytes<=256*1024*1024&&artifact.workflow_run?.head_sha===sha&&artifact.workflow_run?.id===run.id,'Hosted artifact identity, digest or lifetime is invalid');
-  return {schema:'rroflow.release-qualification/v1',repository:repo,commit:sha,tag,ci_run_id:run.id,ci_attempt:run.run_attempt,hosted_artifact:artifact,required_jobs:policy.required_jobs};
+  return {schema:'rroflow.release-qualification/v1',repository:repo,commit:sha,tag,ci_run_id:run.id,ci_attempt:run.run_attempt,hosted_artifact:artifact,required_jobs:jobNames,recorded_checks:records.checks,upgrades_from:records.upgrades_from};
 }
-export async function gate({api,repo,sha,tag,policy,mode,ref,now}){
+export async function gate({api,repo,sha,tag,policy,mode,ref,record=null,now}){
   assert(['dispatch','verify'].includes(mode),'Unknown release gate mode');
   if(mode==='verify')assert(ref===`refs/tags/${tag}`,'Publishing must run from its pinned version tag');
   else assert(ref===`refs/heads/${policy.branch}`,'Automatic release must originate on the release branch');
-  const receipt=await qualify({api,repo,sha,tag,policy,now});
+  const receipt=await qualify({api,repo,sha,tag,policy,record,now});
   const base=`repos/${repo}`,tagPath=`${base}/git/ref/tags/${encodeURIComponent(tag)}`;
   const published=await optional(api,`${base}/releases/tags/${encodeURIComponent(tag)}`);
   if(published){assert(mode==='dispatch','This version already has a release; assets are not overwritten');return {...receipt,action:'already_released'};}
@@ -64,7 +98,8 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   assert(sha===head,'Checked-out source differs from requested release commit');
   const tag=versionTag(readFileSync('crates/rroflow-cli/Cargo.toml','utf8'),readFileSync('crates/rroflow-ingest/Cargo.toml','utf8'));
   if(mode==='verify')assert(process.env.RELEASE_TAG===tag,'Requested tag differs from package versions');
-  const result=await gate({api:githubApi(process.env.GH_TOKEN,process.env.GITHUB_API_URL),repo:process.env.GITHUB_REPOSITORY,sha,tag,policy,mode,ref:process.env.RELEASE_SOURCE_REF});
+  const record=existsSync(recordPath(tag))?JSON.parse(readFileSync(recordPath(tag),'utf8')):null;
+  const result=await gate({api:githubApi(process.env.GH_TOKEN,process.env.GITHUB_API_URL),repo:process.env.GITHUB_REPOSITORY,sha,tag,policy,mode,ref:process.env.RELEASE_SOURCE_REF,record});
   writeFileSync('release-qualification.json',JSON.stringify(result,null,2)+'\n');
   if(process.env.GITHUB_OUTPUT)appendFileSync(process.env.GITHUB_OUTPUT,`ci_run_id=${result.ci_run_id}\nhosted_artifact_id=${result.hosted_artifact.id}\nhosted_artifact_digest=${result.hosted_artifact.digest}\n`);
   console.log(JSON.stringify({action:result.action,commit:sha,tag,ci_run_id:result.ci_run_id}));
