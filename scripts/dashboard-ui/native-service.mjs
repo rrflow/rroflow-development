@@ -91,8 +91,12 @@ federation_label = ${JSON.stringify(providerLabel)}
         await page.route('**/*',async route=>{
           const u=new URL(route.request().url());
           if(u.origin!==origin)return route.abort();
-          const response=await route.fetch({url:base+u.pathname+u.search,maxRedirects:0});
-          await route.fulfill({response});
+          // A page can still be loading in the background when its test ends. Once the fixture is
+          // closing, those late requests are dropped instead of failing the finished test.
+          let response;
+          try{response=await route.fetch({url:base+u.pathname+u.search,maxRedirects:0});}
+          catch(e){if(closing)return route.abort().catch(()=>{});throw e;}
+          await route.fulfill({response}).catch(e=>{if(!closing)throw e;});
         });
       },
       async mailLink(email){
