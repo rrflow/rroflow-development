@@ -26,6 +26,7 @@ mod secret_box;
 mod web_auth;
 pub use web_auth::BrowserConfig;
 mod capture;
+mod health;
 pub mod nomen;
 pub mod permissions;
 pub mod pg;
@@ -39,6 +40,7 @@ pub mod tenancy;
 #[cfg(test)]
 mod test_keys;
 
+pub use health::{BuildInfo, build_info};
 pub use nomen::{AuthError, NomenVerifier, Subject};
 pub use permissions::{Grant, Permission};
 pub use pg::PgStore;
@@ -50,36 +52,13 @@ pub use store::{JsonlStore, Store, Summary, TurnFilter, Upserted};
 pub use tenancy::{Membership, Role, TenancyConfig};
 
 use axum::extract::{DefaultBodyLimit, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use rroflow_core::signals::{CATALOGUE, Category, SignalConfig};
 use rroflow_core::{SCHEMA, TurnRecord};
-use serde::{Deserialize, Serialize};
-
-/// Embedded at build time, independent of the serving host's checkout or environment.
-#[derive(Serialize)]
-pub struct BuildInfo {
-    pub revision: &'static str,
-    pub target: &'static str,
-    pub migrations: &'static str,
-}
-
-pub fn build_info() -> BuildInfo {
-    BuildInfo {
-        revision: env!("RROFLOW_RELEASE_REVISION"),
-        target: env!("RROFLOW_RELEASE_TARGET"),
-        migrations: env!("RROFLOW_MIGRATIONS_SHA256"),
-    }
-}
-
-async fn ready(State(st): State<AppState>) -> impl IntoResponse {
-    match tokio::time::timeout(std::time::Duration::from_secs(2), st.store.ready()).await {
-        Ok(Ok(())) => (StatusCode::OK, "ready"),
-        _ => (StatusCode::SERVICE_UNAVAILABLE, "store unavailable"),
-    }
-}
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -609,7 +588,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
             get(get_signal_settings).put(put_signal_settings),
         )
         .route("/healthz", get(|| async { "ok" }))
-        .route("/readyz", get(ready))
+        .route("/readyz", get(health::routes::ready))
         .route("/build-info", get(|| async { Json(build_info()) }))
         .route("/", get(public_site))
         .route("/app", get(dashboard))
