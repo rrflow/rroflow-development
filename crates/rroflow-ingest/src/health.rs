@@ -19,3 +19,6 @@ pub fn build_info() -> BuildInfo {
         migrations: env!("RROFLOW_MIGRATIONS_SHA256"),
     }
 }
+
+#[cfg(test)]
+mod tests;

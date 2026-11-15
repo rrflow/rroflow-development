@@ -247,3 +247,6 @@ async fn write(store: &Store, ds: &str, r: &Review) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

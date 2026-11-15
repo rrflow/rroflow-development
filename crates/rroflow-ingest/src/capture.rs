@@ -98,3 +98,6 @@ impl std::fmt::Display for Conflict {
     }
 }
 impl std::error::Error for Conflict {}
+
+#[cfg(test)]
+mod tests;

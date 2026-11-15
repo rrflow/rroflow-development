@@ -212,3 +212,6 @@ pub(crate) async fn list(
         json!({"devspace":ds,"sources":sources,"as_of":chrono::Utc::now().to_rfc3339(),"recent_for_seconds":120}),
     ))
 }
+
+#[cfg(test)]
+mod tests;

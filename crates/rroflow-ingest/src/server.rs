@@ -13,3 +13,6 @@ pub use config::{Config, Devspace, NomenConfig, hash_key, valid_devspace_id};
 pub use error::ApiError;
 pub(crate) use error::internal;
 pub use state::AppState;
+
+#[cfg(test)]
+mod tests;

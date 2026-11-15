@@ -3,3 +3,6 @@
 mod assets;
 mod routes;
 pub(crate) use routes::routes;
+
+#[cfg(test)]
+mod tests;

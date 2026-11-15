@@ -7,3 +7,6 @@ pub(crate) mod stats;
 
 pub use model::SIGNALS_SCHEMA;
 pub(crate) use model::catalogue;
+
+#[cfg(test)]
+mod tests;

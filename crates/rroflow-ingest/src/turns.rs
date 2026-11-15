@@ -5,3 +5,6 @@ mod routes;
 pub(crate) use routes::routes;
 
 pub use model::{ListQuery, TurnsBody};
+
+#[cfg(test)]
+mod tests;
