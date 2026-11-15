@@ -14,7 +14,6 @@
 //!   evaluating.
 
 pub mod allowances;
-mod analytics;
 mod brand;
 pub mod datasets;
 mod member_console;
@@ -34,6 +33,7 @@ mod provenance;
 mod reviews;
 mod server;
 mod settings;
+mod signals;
 mod source_health;
 pub mod store;
 pub mod tenancy;
@@ -48,6 +48,7 @@ pub(crate) use server::internal;
 pub use server::{
     ApiError, AppState, Caller, Config, Devspace, NomenConfig, hash_key, valid_devspace_id,
 };
+pub use signals::SIGNALS_SCHEMA;
 pub use store::{JsonlStore, Store, Summary, TurnFilter, Upserted};
 pub use tenancy::{Membership, Role, TenancyConfig};
 
@@ -56,9 +57,9 @@ use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use rroflow_core::signals::{CATALOGUE, Category, SignalConfig};
 use rroflow_core::{SCHEMA, TurnRecord};
 use serde::Deserialize;
+use signals::catalogue;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -240,125 +241,6 @@ async fn get_turns(
     };
     Ok(Json(
         serde_json::json!({ "devspace": devspace, "next_cursor": next_cursor, "revisions":turns.iter().map(|t| (t.event_id.clone(), reviews::digest(t))).collect::<std::collections::BTreeMap<_,_>>(), "turns": turns }),
-    ))
-}
-
-/// Schema id of the signal catalogue document.
-pub const SIGNALS_SCHEMA: &str = "rroflow.signals/v1";
-
-/// The signal catalogue, grouped: every category with its signals in catalogue order.
-fn catalogue() -> serde_json::Value {
-    serde_json::json!({
-        "schema": SIGNALS_SCHEMA,
-        "categories": Category::ALL
-            .iter()
-            .map(|c| serde_json::json!({
-                "id": c,
-                "label": c.label(),
-                "meaning": c.meaning(),
-                "signals": CATALOGUE.iter().filter(|s| s.category == *c).map(|s| s.id).collect::<Vec<_>>(),
-            }))
-            .collect::<Vec<_>>(),
-        "signals": CATALOGUE,
-    })
-}
-
-async fn get_signals() -> Json<serde_json::Value> {
-    Json(catalogue())
-}
-
-/// Collectors read this before evaluating, including with a write-only key. Custom rules run
-/// on the server and can describe private work, so that key does not receive them.
-async fn get_signal_settings(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let caller = st.authenticate(&headers).await?;
-    let reader = caller.grant().allows(Permission::ProjectRead);
-    if !reader {
-        permissions::require(caller.grant(), Permission::ProjectSend)?;
-    }
-    let mut settings = st
-        .store
-        .signal_config(&caller.devspace)
-        .await
-        .map_err(internal)?;
-    if !reader {
-        settings.custom.clear();
-    }
-    Ok(Json(
-        serde_json::json!({ "devspace": caller.devspace, "settings": settings }),
-    ))
-}
-
-async fn put_signal_settings(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-    Json(mut cfg): Json<SignalConfig>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st
-        .allowed(&headers, crate::Permission::ProjectWrite)
-        .await?
-        .devspace;
-    cfg.validate().map_err(ApiError::BadRequest)?;
-    let old = st.store.signal_config(&devspace).await.map_err(internal)?;
-    if old.revision != cfg.revision {
-        return Err(ApiError::SettingsConflict);
-    }
-    cfg.validate_update(&old).map_err(ApiError::BadRequest)?;
-    let saved = st
-        .store
-        .set_signal_config(&devspace, &cfg)
-        .await
-        .map_err(internal)?;
-    if !saved {
-        return Err(ApiError::SettingsConflict);
-    }
-    cfg.revision += 1;
-    Ok(Json(
-        serde_json::json!({ "devspace": devspace, "settings": cfg }),
-    ))
-}
-
-async fn preview_signal(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-    Json(rule): Json<rroflow_core::custom::CustomSignal>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let devspace = st
-        .allowed(&headers, crate::Permission::ProjectRead)
-        .await?
-        .devspace;
-    rule.validate().map_err(ApiError::BadRequest)?;
-    let turns = st
-        .store
-        .list(
-            &devspace,
-            101,
-            &store::TurnFilter {
-                agent: rule.agent.as_deref(),
-                project: rule.project.as_deref(),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(internal)?;
-    let mut matches = vec![];
-    let mut evaluated = 0;
-    let mut unavailable = 0;
-    for turn in turns.iter().take(100) {
-        match rule.evaluate(turn) {
-            rroflow_core::custom::Evaluation::Match(hit) => {
-                evaluated += 1;
-                matches.push(serde_json::json!({"event_id":turn.event_id,"hit":hit}));
-            }
-            rroflow_core::custom::Evaluation::NoMatch => evaluated += 1,
-            rroflow_core::custom::Evaluation::Unavailable => unavailable += 1,
-            rroflow_core::custom::Evaluation::OutOfScope => {}
-        }
-    }
-    Ok(Json(
-        serde_json::json!({"devspace":devspace,"scanned":turns.len().min(100),"evaluated":evaluated,"unavailable":unavailable,"more_history":turns.len()>100,"matches":matches}),
     ))
 }
 
@@ -576,16 +458,16 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
                 )
             }),
         )
-        .route("/v1/signals", get(get_signals))
-        .route("/v1/signals/stats", get(analytics::get))
-        .route("/v1/signals/preview", post(preview_signal))
+        .route("/v1/signals", get(signals::routes::get_signals))
+        .route("/v1/signals/stats", get(signals::stats::get))
+        .route("/v1/signals/preview", post(signals::routes::preview_signal))
         .route(
             "/v1/sources/health",
             get(source_health::list).post(source_health::ingest),
         )
         .route(
             "/v1/signals/settings",
-            get(get_signal_settings).put(put_signal_settings),
+            get(signals::routes::get_signal_settings).put(signals::routes::put_signal_settings),
         )
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(health::routes::ready))

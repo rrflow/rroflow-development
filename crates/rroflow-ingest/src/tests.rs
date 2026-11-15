@@ -5,6 +5,7 @@ use super::*;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use rroflow_core::signals::CATALOGUE;
 use rroflow_core::{Termination, Usage};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -101,7 +102,8 @@ async fn signal_dashboard_counts_full_cohorts_and_preserves_evidence_scope() {
         let path = "/v1/signals/stats?signal=blocked_handoff";
         let (code, body) = call(&app, get("key-jesse", path)).await;
         assert_eq!(code, StatusCode::OK);
-        let stats: analytics::SignalStats = serde_json::from_value(body["stats"].clone()).unwrap();
+        let stats: signals::stats::SignalStats =
+            serde_json::from_value(body["stats"].clone()).unwrap();
         assert_eq!(
             (
                 stats.received_turns,
