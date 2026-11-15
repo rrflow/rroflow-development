@@ -1,6 +1,8 @@
 //! React-owned member management; generated assets originate in console/src.
+mod routes;
 use crate::AppState;
 use axum::{extract::State, response::IntoResponse};
+pub(crate) use routes::routes;
 
 pub(crate) async fn page(State(st): State<AppState>) -> impl IntoResponse {
     (

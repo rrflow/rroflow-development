@@ -1,7 +1,9 @@
 //! Database-owned account allowances. This is the enforcement seam, not billing.
+mod routes;
 use crate::{ApiError, AppState, PgStore, Store, internal};
 use axum::{Json, extract::State, http::HeaderMap};
 use chrono::{DateTime, Datelike, TimeZone, Utc};
+pub(crate) use routes::routes;
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Transaction, types::Json as SqlJson};
 

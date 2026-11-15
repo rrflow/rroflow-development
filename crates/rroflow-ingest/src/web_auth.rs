@@ -1,5 +1,6 @@
 //! Browser login. The browser gets an opaque, host-only, HttpOnly cookie.
 //! A configured key ring enables encrypted PostgreSQL sessions across restarts.
+mod routes;
 use crate::{AppState, Config};
 use axum::Json;
 use axum::extract::{Query, Request, State};
@@ -7,6 +8,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+pub(crate) use routes::routes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

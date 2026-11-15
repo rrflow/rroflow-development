@@ -1,4 +1,5 @@
 //! Native identities are separate from federation. Matching emails never link accounts.
+mod routes;
 use crate::{hash_key, nomen::Subject, secret_box::SecretBox};
 use anyhow::{Result, ensure};
 use argon2::{
@@ -6,6 +7,7 @@ use argon2::{
     password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
 use chrono::{DateTime, Utc};
+pub(crate) use routes::routes;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::{path::PathBuf, sync::Arc};

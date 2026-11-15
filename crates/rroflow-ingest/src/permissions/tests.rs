@@ -1,19 +1,41 @@
 use super::*;
 use std::collections::BTreeSet;
 
-/// Every `.route(path, method(..).method(..))` in `router()`, read from its source. A route added
-/// any other way would not be found here, so `router()` must keep registering them this way.
+/// Every `routes.rs` in the crate. Routes are registered only there (code-structure-v1), and the
+/// structure check refuses a `.route(` anywhere else.
+fn route_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read the crate's source directory") {
+        let path = entry.expect("source directory entry").path();
+        if path.is_dir() {
+            route_files(&path, out);
+        } else if path.file_name().is_some_and(|name| name == "routes.rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Every `.route(path, method(..).method(..))` in the features' `routes.rs` files, read from
+/// their source. A route added any other way would not be found here, so features must keep
+/// registering them this way, with each path written in full.
 fn served_routes() -> BTreeSet<(String, String)> {
-    let source = include_str!("../lib.rs");
-    let start = source.find("pub fn router(").expect("router() in lib.rs");
-    let body = &source[start..];
-    // The checkout may use CRLF line endings.
-    let end = body
-        .find("\n}\n")
-        .or_else(|| body.find("\n}\r\n"))
-        .expect("end of router()");
-    let body = &body[..end];
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let lib = std::fs::read_to_string(src.join("lib.rs")).expect("read lib.rs");
+    assert!(
+        !lib.contains(".route("),
+        "lib.rs registers a route; it belongs in its feature's routes.rs"
+    );
+    let mut files = vec![];
+    route_files(&src, &mut files);
+    assert!(files.len() > 10, "found too few routes.rs files: {files:?}");
     let mut out = BTreeSet::new();
+    for file in files {
+        let source = std::fs::read_to_string(&file).expect("read routes.rs");
+        collect_routes(&source, &mut out);
+    }
+    out
+}
+
+fn collect_routes(body: &str, out: &mut BTreeSet<(String, String)>) {
     let mut rest = body;
     while let Some(at) = rest.find(".route(") {
         rest = &rest[at + ".route(".len()..];
@@ -54,7 +76,6 @@ fn served_routes() -> BTreeSet<(String, String)> {
         }
         rest = &args[end.expect("closing parenthesis of .route(")..];
     }
-    out
 }
 
 #[test]

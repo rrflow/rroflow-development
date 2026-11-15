@@ -1,10 +1,12 @@
 //! Server receipts, never evidence that the claimed provider performed an action.
+mod routes;
 use crate::{ApiError, AppState, Caller, Store, internal};
 use axum::{
     Json,
     extract::{Query, State},
     http::HeaderMap,
 };
+pub(crate) use routes::routes;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

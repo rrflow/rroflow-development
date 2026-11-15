@@ -1,6 +1,8 @@
 //! Human verdicts are immutable evidence, never an instruction to train or promote.
+mod routes;
 use crate::{ApiError, AppState, Store, internal};
 use axum::{Json, extract::State, http::HeaderMap};
+pub(crate) use routes::routes;
 use rroflow_core::TurnRecord;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -245,3 +247,6 @@ async fn write(store: &Store, ds: &str, r: &Review) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

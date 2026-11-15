@@ -16,18 +16,13 @@
     "crates/rroflow-ingest/src/accounts/tests/device_tests.rs": 637,
     "crates/rroflow-ingest/src/dashboard.js": 701,
     "crates/rroflow-ingest/src/datasets/tests.rs": 717,
-    "crates/rroflow-ingest/src/lib.rs": 1249,
-    "crates/rroflow-ingest/src/tenancy.rs": 1073,
-    "crates/rroflow-ingest/src/tenancy/tests.rs": 2273,
-    "crates/rroflow-ingest/src/tests.rs": 1732
+    "crates/rroflow-ingest/src/tenancy.rs": 1039,
+    "crates/rroflow-ingest/src/tenancy/tests.rs": 2273
   },
-  "route_files": {
-    "crates/rroflow-ingest/src/lib.rs": 73
-  },
+  "route_files": {},
   "legacy_ingest_modules": [
     "accounts",
     "allowances",
-    "analytics",
     "brand",
     "capture",
     "datasets",
