@@ -34,6 +34,7 @@ mod reviews;
 mod server;
 mod settings;
 mod signals;
+mod site;
 mod source_health;
 pub mod store;
 pub mod tenancy;
@@ -55,60 +56,8 @@ pub use tenancy::{Membership, Role, TenancyConfig};
 pub use turns::{ListQuery, TurnsBody};
 
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::HeaderMap;
-use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-
-/// Static public product page; no third-party scripts or client-side provider credentials.
-async fn public_site(State(st): State<AppState>) -> impl IntoResponse {
-    (
-        [
-            ("content-type", "text/html; charset=utf-8"),
-            (
-                "content-security-policy",
-                "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-            ),
-            ("x-content-type-options", "nosniff"),
-            ("referrer-policy", "no-referrer"),
-            ("cache-control", "no-store"),
-        ],
-        st.brand.public.clone(),
-    )
-}
-
-/// Same-origin dashboard assets; no third-party scripts or client-side provider credentials.
-async fn dashboard(State(st): State<AppState>) -> impl IntoResponse {
-    (
-        [
-            ("content-type", "text/html; charset=utf-8"),
-            (
-                "content-security-policy",
-                "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-            ),
-            ("x-content-type-options", "nosniff"),
-            ("referrer-policy", "no-referrer"),
-            ("cache-control", "no-store"),
-        ],
-        st.brand.dashboard.clone(),
-    )
-}
-
-/// Source notes are visible only after workspace authentication.
-async fn research_notes(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, ApiError> {
-    st.allowed(&headers, crate::Permission::ProjectRead).await?;
-    Ok((
-        [
-            ("content-type", "application/json; charset=utf-8"),
-            ("cache-control", "no-store"),
-            ("x-content-type-options", "nosniff"),
-        ],
-        include_str!("research.json"),
-    ))
-}
 
 /// The HTTP surface: `GET /` (public), `GET /app` (dashboard), `POST|GET /v1/turns`, `GET /v1/summary`,
 /// `GET /v1/signals`, `GET|PUT /v1/signals/settings`, `GET /v1/whoami`, `GET /healthz`, and the
@@ -270,9 +219,9 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(health::routes::ready))
         .route("/build-info", get(|| async { Json(build_info()) }))
-        .route("/", get(public_site))
-        .route("/app", get(dashboard))
-        .route("/app/", get(dashboard))
+        .route("/", get(site::routes::public_site))
+        .route("/app", get(site::routes::dashboard))
+        .route("/app/", get(site::routes::dashboard))
         .route("/app/manage", get(member_console::page))
         .route("/app/account", get(member_console::page))
         .route("/app/device", get(member_console::page))
@@ -355,7 +304,7 @@ pub fn router(st: AppState, max_body_bytes: usize) -> Router {
                 )
             }),
         )
-        .route("/assets/research.json", get(research_notes))
+        .route("/assets/research.json", get(site::routes::research_notes))
         .layer(axum::middleware::from_fn(permissions::enforce))
         .layer(axum::middleware::from_fn_with_state(
             st.clone(),
