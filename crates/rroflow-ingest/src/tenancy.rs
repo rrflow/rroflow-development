@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Postgres, Transaction, types::Json as SqlJson};
 
+mod routes;
+pub(crate) use routes::routes;
+
 /// Project keys start with this, so a mistyped one is never sent to the identity provider.
 pub(crate) const KEY_PREFIX: &str = "rrop_";
 const INVITATION_PREFIX: &str = "rroi_";
@@ -492,43 +495,6 @@ fn may_change(actor: Role, current: Role, new: Option<Role>) -> bool {
 const PERSONAL_ONE_MEMBER: ApiError = ApiError::Refused(
     "A personal organization has one member. Create a team organization to work with others.",
 );
-
-/// The account, its organizations and their projects: what a console needs to start.
-pub(crate) async fn me(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
-    let (pg, user) = signed_in(&st, &headers).await?;
-    let name: Option<String> = sqlx::query_scalar("SELECT display_name FROM users WHERE id=$1")
-        .bind(&user)
-        .fetch_one(&pg.pool)
-        .await
-        .map_err(db)?;
-    let default_project: Option<String> = sqlx::query_scalar("SELECT d.id FROM devspaces d JOIN user_identities i ON i.issuer=d.owner_issuer AND i.subject=d.owner_subject WHERE i.user_id=$1 ORDER BY d.created_at,d.id LIMIT 1")
-        .bind(&user).fetch_optional(&pg.pool).await.map_err(db)?;
-    let organizations: Vec<SqlJson<Value>> = sqlx::query_scalar("SELECT jsonb_build_object('id',o.id,'slug',o.slug,'name',o.name,'personal',o.personal,'role',m.role,'projects',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',d.id,'slug',d.slug,'name',d.name) ORDER BY d.created_at,d.id) FROM devspaces d WHERE d.organization_id=o.id),'[]'::jsonb)) FROM organization_members m JOIN organizations o ON o.id=m.organization_id WHERE m.user_id=$1 ORDER BY o.personal DESC,o.created_at,o.id")
-        .bind(&user).fetch_all(&pg.pool).await.map_err(db)?;
-    let instance_admin = crate::settings::is_instance_admin(&pg.pool, &user)
-        .await
-        .map_err(db)?;
-    Ok(Json(json!({
-        "user": {"id": user, "name": name},
-        "instance_admin": instance_admin,
-        "default_project": default_project,
-        "organizations": organizations.into_iter().map(|o| with_permissions(o.0)).collect::<Vec<_>>(),
-    })))
-}
-
-/// Adds what the member's role allows there, so a console offers only what will work.
-fn with_permissions(mut organization: Value) -> Value {
-    let permissions = organization["role"]
-        .as_str()
-        .and_then(|role| Role::parse(role).ok())
-        .map(|role| Grant::Role(role).permissions().to_vec())
-        .unwrap_or_default();
-    organization["permissions"] = json!(permissions);
-    organization
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

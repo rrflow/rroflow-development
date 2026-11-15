@@ -1,8 +1,21 @@
-//! Signal handlers.
+//! Signal routes and handlers.
 use super::model::catalogue;
 use crate::{ApiError, AppState, Permission, internal, permissions, store};
+use axum::Router;
+use axum::routing::{get, post};
 use axum::{Json, extract::State, http::HeaderMap};
 use rroflow_core::signals::SignalConfig;
+
+pub(crate) fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/v1/signals", get(get_signals))
+        .route("/v1/signals/stats", get(super::stats::get))
+        .route("/v1/signals/preview", post(preview_signal))
+        .route(
+            "/v1/signals/settings",
+            get(get_signal_settings).put(put_signal_settings),
+        )
+}
 
 pub(crate) async fn get_signals() -> Json<serde_json::Value> {
     Json(catalogue())

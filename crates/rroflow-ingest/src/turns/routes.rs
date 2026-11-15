@@ -1,12 +1,20 @@
-//! Turn handlers.
+//! Turn routes and handlers.
 use super::model::{LIST_MAX, ListQuery, TurnsBody, check_record};
 use crate::signals::catalogue;
 use crate::{ApiError, AppState, Store, TurnFilter, internal, pg, provenance, reviews};
+use axum::Router;
+use axum::routing::{get, post};
 use axum::{
     Json,
     extract::{Query, State},
     http::HeaderMap,
 };
+
+pub(crate) fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/v1/turns", post(post_turns).get(get_turns))
+        .route("/v1/summary", get(get_summary))
+}
 
 pub(crate) async fn post_turns(
     State(st): State<AppState>,

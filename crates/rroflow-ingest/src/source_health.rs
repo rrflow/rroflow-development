@@ -1,6 +1,8 @@
 //! Bounded latest-only source reports. Replay cannot manufacture fresh liveness.
+mod routes;
 use crate::{ApiError, AppState, JsonlStore, PgStore, Store, internal};
 use axum::{Json, extract::State, http::HeaderMap};
+pub(crate) use routes::routes;
 use rroflow_core::source_health::{SourceObservation, SourceReport};
 use serde_json::json;
 use sqlx::types::Json as PgJson;

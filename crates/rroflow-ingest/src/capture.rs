@@ -1,10 +1,12 @@
 //! Immutable event ingest. Identical replay succeeds; conflicting reuse is refused.
+mod routes;
 use crate::{ApiError, AppState, Store, internal};
 use axum::{
     Json,
     extract::{Query, State},
     http::HeaderMap,
 };
+pub(crate) use routes::routes;
 use rroflow_core::capture::CaptureEvent;
 use serde::Deserialize;
 

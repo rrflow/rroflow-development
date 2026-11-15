@@ -1,5 +1,6 @@
 //! Liveness, readiness and the build identity. See `docs/spec/health-v1.md`.
-pub(crate) mod routes;
+mod routes;
+pub(crate) use routes::routes;
 
 use serde::Serialize;
 

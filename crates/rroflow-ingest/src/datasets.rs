@@ -1,4 +1,6 @@
 //! Consented metadata datasets. Collection grants no training or publication rights.
+mod routes;
+pub(crate) use routes::routes;
 mod projection;
 mod sdk;
 #[cfg(test)]
