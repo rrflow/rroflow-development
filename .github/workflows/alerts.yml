@@ -1,0 +1,67 @@
+name: alerts
+# Make failures loud. A failed check on a pull request, auto-merge switched off (usually a
+# conflict) and a failed deploy each notify the owner directly instead of waiting to be noticed.
+# Runs from the default branch only and never checks out pull request code.
+on:
+  workflow_run:
+    workflows: [ci, Release, deploy-main]
+    types: [completed]
+  pull_request_target:
+    types: [auto_merge_disabled]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+env:
+  OWNER: EonsofStupid
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+jobs:
+  failed-check:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Comment on the pull request with the failed jobs
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty')
+          [ -n "$pr" ] || { echo "No pull request for $HEAD_SHA"; exit 0; }
+          jobs=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.conclusion == "failure") | "- [\(.name)](\(.html_url))"')
+          printf '@%s **%s failed** on `%s`. Auto-merge waits until it is green.\n\n%s\n\nRun: %s\n' \
+            "$OWNER" "$WORKFLOW" "${HEAD_SHA:0:7}" "$jobs" "$RUN_URL" > body.md
+          gh pr comment "$pr" --body-file body.md
+  failed-deploy:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'deploy-main' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Open or update the deploy failure issue
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          jobs=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.conclusion == "failure") | "- [\(.name)](\(.html_url))"')
+          printf '@%s **deploy-main failed** for `%s`. Texas keeps the release it had.\n\n%s\n\nRun: %s\n' \
+            "$OWNER" "${HEAD_SHA:0:7}" "$jobs" "$RUN_URL" > body.md
+          title='deploy-main is failing'
+          issue=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then gh issue comment "$issue" --body-file body.md; else gh issue create --title "$title" --body-file body.md; fi
+  auto-merge-disabled:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Say why the pull request stopped
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          REASON: ${{ github.event.reason }}
+        run: |
+          set -euo pipefail
+          printf '@%s **Auto-merge was turned off** (%s). Resolve it, then turn auto-merge back on.\n' "$OWNER" "${REASON:-no reason given}" > body.md
+          gh pr comment "$PR" --body-file body.md
