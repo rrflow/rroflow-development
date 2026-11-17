@@ -61,12 +61,29 @@ output.
 
 `.github/structure-baseline.json` records the code that predates this convention:
 - the files over budget, with their line counts as ceilings;
-- the route registrations in `lib.rs`;
+- route registrations outside a `routes.rs`;
 - the existing server modules;
 - the existing top-level console files.
 
 In CI the check compares the baseline with the one on the base commit. Any entry that is added or
 raised fails. The baseline can only shrink as old code is moved into features.
 
-Splitting `lib.rs` and `main.tsx` into features is the next change (self-host release 1, TASK-004
-and TASK-005). It removes their entries from the baseline.
+## Emptying the baseline
+
+The refactor plan in self-host release 1 empties the baseline in six pull requests, each a move
+with no change in behavior:
+
+| Step | Moves | State |
+|---|---|---|
+| R1 | `lib.rs` and `tests.rs` into `server`, `health`, `turns`, `signals` and `site`, and every module's routes into its `routes.rs` | Done |
+| R2 | The console: `main.tsx`, `signal-library.tsx`, `account.tsx` and `styles.css` | Next |
+| R3 | `tenancy.rs` and its tests | Planned |
+| R4 | `accounts/device.rs` and the accounts and datasets tests | Planned |
+| R5 | The collector's `sources.rs`, `raw.rs`, `account.rs` and `doctor.rs` | Planned |
+| R6 | `rroflow-core`'s `signals.rs` | Planned |
+
+The original dashboard's `dashboard.js` is not split: it is retired when the member console
+replaces it.
+
+Shared test helpers live in `crates/rroflow-ingest/src/tests.rs`. A feature's tests start with
+`use crate::tests::*;`.

@@ -1,4 +1,6 @@
 //! Durable, account-scoped SDK monitoring. Raw events remain the source of truth.
+mod routes;
+pub(crate) use routes::routes;
 mod overview;
 mod worker;
 use crate::{ApiError, AppState, PgStore, Store, internal};

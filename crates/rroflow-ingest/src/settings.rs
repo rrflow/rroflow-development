@@ -4,6 +4,8 @@
 //! a setting added here appears in the console with its range, default and recommendations, and
 //! nothing else needs to know its numbers. The file configuration keeps only what must exist
 //! before the service can start, such as the database address.
+mod routes;
+pub(crate) use routes::routes;
 
 use crate::permissions::{self, Grant, Permission};
 use crate::tenancy::signed_in;
