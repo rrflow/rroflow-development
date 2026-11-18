@@ -33,42 +33,37 @@ export type Source = {
 };
 export type Sources = { rows: Source[]; asOf: string; recentFor: number };
 function object(v: unknown): Record<string, unknown> {
-  if (!v || typeof v !== "object" || Array.isArray(v))
-    throw new Error("The monitoring response could not be read.");
+  if (!v || typeof v !== 'object' || Array.isArray(v))
+    throw new Error('The monitoring response could not be read.');
   return v as Record<string, unknown>;
 }
 function text(v: unknown): string {
-  if (typeof v !== "string")
-    throw new Error("The monitoring response is incomplete.");
+  if (typeof v !== 'string') throw new Error('The monitoring response is incomplete.');
   return v;
 }
 function list(v: unknown): unknown[] {
-  if (!Array.isArray(v)) throw new Error("The monitoring list is incomplete.");
+  if (!Array.isArray(v)) throw new Error('The monitoring list is incomplete.');
   return v;
 }
 function count(v: unknown): number {
-  if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0)
-    throw new Error("A monitoring count is unavailable.");
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0)
+    throw new Error('A monitoring count is unavailable.');
   return v;
 }
 function timestamp(v: unknown): string {
   const s = text(v);
-  if (!Number.isFinite(Date.parse(s)))
-    throw new Error("A report time could not be read.");
+  if (!Number.isFinite(Date.parse(s))) throw new Error('A report time could not be read.');
   return s;
 }
 function optionalBoolean(v: unknown): boolean | null {
   if (v === null || v === undefined) return null;
-  if (typeof v !== "boolean")
-    throw new Error("A collector status could not be read.");
+  if (typeof v !== 'boolean') throw new Error('A collector status could not be read.');
   return v;
 }
 function project(v: unknown, id: string) {
   const value = object(v);
   if (value.devspace !== id)
-    throw new Error(
-      "Monitoring returned a different project. Refresh your project list.",
-    );
+    throw new Error('Monitoring returned a different project. Refresh your project list.');
   return value;
 }
 function buckets(v: unknown): Bucket[] {
@@ -97,10 +92,8 @@ export function turns(v: unknown, id: string): Turns {
 }
 export function sdk(v: unknown, id: string): Sdk {
   const s = project(v, id);
-  if (s.available === false)
-    return { available: false, reason: text(s.reason) };
-  if (s.available !== true)
-    throw new Error("SDK activity status could not be read.");
+  if (s.available === false) return { available: false, reason: text(s.reason) };
+  if (s.available !== true) throw new Error('SDK activity status could not be read.');
   const c = object(s.coverage);
   const read = (v: unknown, key: string) =>
     list(v).map((raw) => {
@@ -111,9 +104,9 @@ export function sdk(v: unknown, id: string): Sdk {
     available: true,
     count: count(s.activities),
     withFindings: count(s.activities_with_findings),
-    agents: read(s.by_agent, "agent"),
+    agents: read(s.by_agent, 'agent'),
     otherAgents: count(s.other_agent_activities),
-    signals: read(s.top_signals, "signal"),
+    signals: read(s.top_signals, 'signal'),
     pending: count(c.pending_captures),
     errors: count(c.error_captures),
     asOf: timestamp(s.as_of),

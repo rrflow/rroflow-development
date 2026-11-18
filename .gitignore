@@ -4,3 +4,4 @@ target/
 
 # Local credentials stay on the machine; never commit them.
 /.secrets/
+node_modules/

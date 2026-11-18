@@ -1,53 +1,50 @@
-import { StrictMode, useEffect, useRef, useState, type FormEvent } from "react";
-import { createRoot } from "react-dom/client";
+import { type FormEvent, StrictMode, useEffect, useEffectEvent, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import {
-  api,
   ApiError,
+  api,
   createdId,
   createdKey,
   keys,
   monitorLink,
-  overview,
-  type Overview,
   type Organization,
+  type Overview,
+  overview,
   type Project,
   type ProjectKey,
-} from "./api";
-import { Dialog, FlowArt, Icon } from "./ui";
-import "./styles.css";
-import { AccountPage } from "./account";
-import { DevicePage } from "./device";
-import { SettingsPage } from "./settings";
-import { ProjectOverview } from "./project-overview";
-import { SignalLibrary } from "./signal-library";
+} from './api';
+import { Dialog, FlowArt, Icon } from './ui';
+import './styles.css';
+import { AccountPage } from './account';
+import { DevicePage } from './device';
+import { ProjectOverview } from './project-overview';
+import { SettingsPage } from './settings';
+import { SignalLibrary } from './signal-library';
 
-const brand = (name: string) =>
-  document.querySelector(`[data-brand="${name}"]`)?.textContent || "";
+const brand = (name: string) => document.querySelector(`[data-brand="${name}"]`)?.textContent || '';
 const identity = {
-  name: brand("name"),
-  wordmark: brand("wordmark"),
-  mark: brand("mark"),
-  tagline: brand("tagline"),
+  name: brand('name'),
+  wordmark: brand('wordmark'),
+  mark: brand('mark'),
+  tagline: brand('tagline'),
 };
-const canManage = (o: Organization) => o.role === "owner" || o.role === "admin";
+const canManage = (o: Organization) => o.role === 'owner' || o.role === 'admin';
 const message = (e: unknown) =>
-  e instanceof Error ? e.message : "Something went wrong. Please try again.";
-const cancelled = (e: unknown) => e instanceof Error && e.name === "AbortError";
+  e instanceof Error ? e.message : 'Something went wrong. Please try again.';
+const cancelled = (e: unknown) => e instanceof Error && e.name === 'AbortError';
 function route() {
   return new URLSearchParams(location.hash.slice(1));
 }
 function destination(org: string, project?: string, view?: string) {
   const q = new URLSearchParams({ org });
-  if (project) q.set("project", project);
-  if (view) q.set("view", view);
-  return "#" + q;
+  if (project) q.set('project', project);
+  if (view) q.set('view', view);
+  return '#' + q;
 }
 function when(value: string | null) {
-  if (!value) return "Not used yet";
+  if (!value) return 'Not used yet';
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "Time not reported"
-    : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? 'Time not reported' : date.toLocaleString();
 }
 
 function NameDialog({
@@ -56,14 +53,14 @@ function NameDialog({
   onCreate,
   onExpired,
 }: {
-  kind: "organization" | "project";
+  kind: 'organization' | 'project';
   onClose: () => void;
   onCreate: (name: string, signal: AbortSignal) => Promise<void>;
   onExpired: () => void;
 }) {
-  const [name, setName] = useState(""),
+  const [name, setName] = useState(''),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState('');
   const controller = useRef(new AbortController()),
     pending = useRef(false);
   useEffect(() => {
@@ -75,7 +72,7 @@ function NameDialog({
     if (pending.current || !name.trim()) return;
     pending.current = true;
     setBusy(true);
-    setError("");
+    setError('');
     try {
       await onCreate(name.trim(), controller.current.signal);
     } catch (e) {
@@ -88,20 +85,18 @@ function NameDialog({
   }
   return (
     <Dialog
-      title={
-        kind === "organization" ? "Create an organization" : "Create a project"
-      }
+      title={kind === 'organization' ? 'Create an organization' : 'Create a project'}
       onClose={onClose}
       busy={busy}
     >
       <p className="muted">
-        {kind === "organization"
-          ? "Keep a team or a separate area of work together. You will be its owner."
-          : "Give this work a home. Its activity, signals and connection keys stay together."}
+        {kind === 'organization'
+          ? 'Keep a team or a separate area of work together. You will be its owner.'
+          : 'Give this work a home. Its activity, signals and connection keys stay together.'}
       </p>
       <form onSubmit={submit}>
         <label htmlFor="new-name">
-          {kind === "organization" ? "Organization name" : "Project name"}
+          {kind === 'organization' ? 'Organization name' : 'Project name'}
         </label>
         <input
           id="new-name"
@@ -112,11 +107,7 @@ function NameDialog({
           disabled={busy}
           onChange={(e) => setName(e.target.value)}
           autoComplete="off"
-          placeholder={
-            kind === "organization"
-              ? "e.g. Studio North"
-              : "e.g. Customer website"
-          }
+          placeholder={kind === 'organization' ? 'e.g. Studio North' : 'e.g. Customer website'}
         />
         {error && (
           <p className="error" role="alert">
@@ -124,16 +115,11 @@ function NameDialog({
           </p>
         )}
         <div className="dialog-actions">
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy}
-            onClick={onClose}
-          >
+          <button type="button" className="secondary" disabled={busy} onClick={onClose}>
             Cancel
           </button>
-          <button disabled={busy || !name.trim()}>
-            {busy ? "Creating…" : `Create ${kind}`}
+          <button type="submit" disabled={busy || !name.trim()}>
+            {busy ? 'Creating…' : `Create ${kind}`}
           </button>
         </div>
       </form>
@@ -152,11 +138,11 @@ function KeyDialog({
   onCreated: () => void;
   onExpired: () => void;
 }) {
-  const [label, setLabel] = useState(""),
+  const [label, setLabel] = useState(''),
     [busy, setBusy] = useState(false),
-    [secret, setSecret] = useState(""),
-    [error, setError] = useState(""),
-    [copy, setCopy] = useState("");
+    [secret, setSecret] = useState(''),
+    [error, setError] = useState(''),
+    [copy, setCopy] = useState('');
   const controller = useRef(new AbortController()),
     pending = useRef(false),
     secretField = useRef<HTMLTextAreaElement>(null);
@@ -169,13 +155,13 @@ function KeyDialog({
     if (pending.current || !label.trim()) return;
     pending.current = true;
     setBusy(true);
-    setError("");
+    setError('');
     try {
       const value = createdKey(
         await api(
           `/v1/projects/${encodeURIComponent(project.id)}/keys`,
           controller.current.signal,
-          "POST",
+          'POST',
           { label: label.trim() },
         ),
       );
@@ -194,24 +180,23 @@ function KeyDialog({
   async function copyKey() {
     try {
       await navigator.clipboard.writeText(secret);
-      if (!controller.current.signal.aborted)
-        setCopy("Copied. Store it somewhere private.");
+      if (!controller.current.signal.aborted) setCopy('Copied. Store it somewhere private.');
     } catch {
       secretField.current?.focus();
       secretField.current?.select();
-      setCopy("Copy was unavailable. Select the key and copy it manually.");
+      setCopy('Copy was unavailable. Select the key and copy it manually.');
     }
   }
   return (
     <Dialog
-      title={secret ? "Save your connection key" : "Create a connection key"}
+      title={secret ? 'Save your connection key' : 'Create a connection key'}
       onClose={onClose}
       busy={busy}
     >
       {secret ? (
         <>
           <p>
-            This is the only time the full key is shown. It sends records to{" "}
+            This is the only time the full key is shown. It sends records to{' '}
             <strong>{project.name}</strong> and cannot read your activity.
           </p>
           <label htmlFor="one-time-key">One-time connection key</label>
@@ -224,22 +209,24 @@ function KeyDialog({
             spellCheck={false}
           />
           <p className="muted">
-            Keep it out of source code and shared notes. Closing this dialog
-            clears the key from this page.
+            Keep it out of source code and shared notes. Closing this dialog clears the key from
+            this page.
           </p>
           <p role="status">{copy}</p>
           <div className="dialog-actions">
-            <button className="secondary" onClick={copyKey}>
+            <button type="button" className="secondary" onClick={copyKey}>
               Copy key
             </button>
-            <button onClick={onClose}>I've saved this key</button>
+            <button type="button" onClick={onClose}>
+              I've saved this key
+            </button>
           </div>
         </>
       ) : (
         <form onSubmit={submit}>
           <p className="muted">
-            For a collector, server or CI job that sends to this project. A key
-            is a credential, not a person.
+            For a collector, server or CI job that sends to this project. A key is a credential, not
+            a person.
           </p>
           <label htmlFor="key-label">A name you will recognize</label>
           <input
@@ -259,16 +246,11 @@ function KeyDialog({
             </p>
           )}
           <div className="dialog-actions">
-            <button
-              type="button"
-              className="secondary"
-              disabled={busy}
-              onClick={onClose}
-            >
+            <button type="button" className="secondary" disabled={busy} onClick={onClose}>
               Cancel
             </button>
-            <button disabled={busy || !label.trim()}>
-              {busy ? "Creating…" : "Create key"}
+            <button type="submit" disabled={busy || !label.trim()}>
+              {busy ? 'Creating…' : 'Create key'}
             </button>
           </div>
         </form>
@@ -289,7 +271,7 @@ function ProjectDetail({
   onExpired: () => void;
 }) {
   const [items, setItems] = useState<ProjectKey[] | null>(null),
-    [error, setError] = useState(""),
+    [error, setError] = useState(''),
     [refresh, setRefresh] = useState(0),
     [create, setCreate] = useState(false),
     [revoke, setRevoke] = useState<ProjectKey | null>(null),
@@ -304,31 +286,34 @@ function ProjectDetail({
       controller.current.abort();
     };
   }, []);
+  const manage = canManage(organization);
+  const expiredKeys = useEffectEvent(() => onExpired());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is a reload trigger; changing it re-runs this request.
   useEffect(() => {
     const c = new AbortController();
     setItems(null);
-    setError("");
-    if (canManage(organization))
+    setError('');
+    if (manage)
       api(`/v1/projects/${encodeURIComponent(project.id)}/keys`, c.signal)
         .then(keys)
         .then((v) => {
           if (!c.signal.aborted) setItems(v);
         })
         .catch((e) => {
-          if (e instanceof ApiError && e.status === 401) onExpired();
+          if (e instanceof ApiError && e.status === 401) expiredKeys();
           else if (!cancelled(e)) setError(message(e));
         });
     return () => c.abort();
-  }, [project.id, organization.role, refresh]);
+  }, [project.id, manage, refresh]);
   async function revokeKey() {
     if (!revoke || busy) return;
     setBusy(true);
-    setError("");
+    setError('');
     try {
       await api(
         `/v1/projects/${encodeURIComponent(project.id)}/keys/${encodeURIComponent(revoke.id)}`,
         controller.current.signal,
-        "DELETE",
+        'DELETE',
       );
       if (alive.current) {
         setRevoke(null);
@@ -341,13 +326,10 @@ function ProjectDetail({
       if (alive.current) setBusy(false);
     }
   }
-  if (view === "signals")
+  if (view === 'signals')
     return (
       <>
-        <a
-          className="back-link"
-          href={destination(organization.id, project.id)}
-        >
+        <a className="back-link" href={destination(organization.id, project.id)}>
           Back to project overview
         </a>
         <header className="page-title">
@@ -361,7 +343,7 @@ function ProjectDetail({
         </header>
         <SignalLibrary
           project={project.id}
-          canWrite={organization.role !== "viewer"}
+          canWrite={organization.role !== 'viewer'}
           onExpired={onExpired}
         />
       </>
@@ -375,9 +357,7 @@ function ProjectDetail({
         <div>
           <p className="eyebrow">{organization.name} / Project</p>
           <h1>{project.name}</h1>
-          <p className="muted">
-            One place for this project's AI activity and evidence.
-          </p>
+          <p className="muted">One place for this project's AI activity and evidence.</p>
         </div>
         <a className="button" href={monitorLink(project.id)}>
           Open monitoring <Icon name="arrow" />
@@ -385,10 +365,10 @@ function ProjectDetail({
       </header>
       <div className="quick-links">
         {[
-          ["activity", "Activity", "See the turns that arrived."],
-          ["signals", "Findings", "Follow a signal to its evidence."],
-          ["sources", "Sources", "Check delivery and waiting records."],
-          ["datasets", "Datasets", "Review consent and collected examples."],
+          ['activity', 'Activity', 'See the turns that arrived.'],
+          ['signals', 'Findings', 'Follow a signal to its evidence.'],
+          ['sources', 'Sources', 'Check delivery and waiting records.'],
+          ['datasets', 'Datasets', 'Review consent and collected examples.'],
         ].map(([view, label, detail]) => (
           <a href={monitorLink(project.id, view)} key={view}>
             <Icon name="pulse" />
@@ -400,7 +380,7 @@ function ProjectDetail({
       </div>
       <ProjectOverview
         project={project.id}
-        signalLibraryHref={destination(organization.id, project.id, "signals")}
+        signalLibraryHref={destination(organization.id, project.id, 'signals')}
         onExpired={onExpired}
       />
       <section className="panel">
@@ -410,31 +390,28 @@ function ProjectDetail({
             <h2>Connection keys</h2>
           </div>
           {canManage(organization) && (
-            <button onClick={() => setCreate(true)}>
+            <button type="button" onClick={() => setCreate(true)}>
               <Icon name="plus" /> Create key
             </button>
           )}
         </div>
         <p className="muted">
-          Keys can send records to this project. They cannot read your activity.
-          Never put one in a public repository.
+          Keys can send records to this project. They cannot read your activity. Never put one in a
+          public repository.
         </p>
         {!canManage(organization) ? (
           <div className="empty">
             <Icon name="key" />
             <h3>An admin manages connections</h3>
             <p>
-              Your {organization.role} role can open monitoring. Ask an
-              organization admin to manage keys.
+              Your {organization.role} role can open monitoring. Ask an organization admin to manage
+              keys.
             </p>
           </div>
         ) : error && !revoke ? (
           <div className="error" role="alert">
-            {error}{" "}
-            <button
-              className="text-button"
-              onClick={() => setRefresh((n) => n + 1)}
-            >
+            {error}{' '}
+            <button type="button" className="text-button" onClick={() => setRefresh((n) => n + 1)}>
               Try again
             </button>
           </div>
@@ -444,9 +421,7 @@ function ProjectDetail({
           <div className="empty">
             <Icon name="key" />
             <h3>No connection keys yet</h3>
-            <p>
-              Create one when you are ready to connect a collector or server.
-            </p>
+            <p>Create one when you are ready to connect a collector or server.</p>
           </div>
         ) : (
           <ul className="key-list">
@@ -460,19 +435,20 @@ function ProjectDetail({
                   <code>{k.prefix}…</code>
                   <span className="muted">
                     {k.revoked_at
-                      ? "Revoked " + when(k.revoked_at)
-                      : "Last used: " + when(k.last_used_at)}
+                      ? 'Revoked ' + when(k.revoked_at)
+                      : 'Last used: ' + when(k.last_used_at)}
                   </span>
                 </div>
-                <span className={"badge " + (k.revoked_at ? "" : "positive")}>
-                  {k.revoked_at ? "Revoked" : "Active"}
+                <span className={'badge ' + (k.revoked_at ? '' : 'positive')}>
+                  {k.revoked_at ? 'Revoked' : 'Active'}
                 </span>
                 {!k.revoked_at && (
                   <button
+                    type="button"
                     className="text-button danger"
                     aria-label={`Revoke ${k.label}`}
                     onClick={() => {
-                      setError("");
+                      setError('');
                       setRevoke(k);
                     }}
                   >
@@ -486,8 +462,8 @@ function ProjectDetail({
         <details>
           <summary>Advanced: project identity</summary>
           <p className="muted">
-            Use this non-secret ID when selecting the project's account-scoped
-            API. The server still checks membership.
+            Use this non-secret ID when selecting the project's account-scoped API. The server still
+            checks membership.
           </p>
           <code className="identifier">{project.id}</code>
         </details>
@@ -502,19 +478,19 @@ function ProjectDetail({
           onCreated={() => setRefresh((n) => n + 1)}
           onExpired={onExpired}
         />
-      )}{" "}
+      )}{' '}
       {revoke && canManage(organization) && (
         <Dialog
           title={`Revoke ${revoke.label}?`}
           busy={busy}
           onClose={() => {
             setRevoke(null);
-            setError("");
+            setError('');
           }}
         >
           <p>
-            Uploads using this key will stop. Existing records stay. Waiting
-            uploads need an authorized connection before they can resume.
+            Uploads using this key will stop. Existing records stay. Waiting uploads need an
+            authorized connection before they can resume.
           </p>
           {error && (
             <p role="alert" className="error">
@@ -523,21 +499,18 @@ function ProjectDetail({
           )}
           <div className="dialog-actions">
             <button
+              type="button"
               className="secondary"
               disabled={busy}
               onClick={() => {
                 setRevoke(null);
-                setError("");
+                setError('');
               }}
             >
               Keep key
             </button>
-            <button
-              className="danger-button"
-              disabled={busy}
-              onClick={revokeKey}
-            >
-              {busy ? "Revoking…" : "Revoke key"}
+            <button type="button" className="danger-button" disabled={busy} onClick={revokeKey}>
+              {busy ? 'Revoking…' : 'Revoke key'}
             </button>
           </div>
         </Dialog>
@@ -548,13 +521,13 @@ function ProjectDetail({
 
 function App() {
   const [data, setData] = useState<Overview | null>(null),
-    [error, setError] = useState(""),
+    [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
     [signedOut, setSignedOut] = useState(false),
     [signIn, setSignIn] = useState<string | null>(null),
-    [configError, setConfigError] = useState(""),
+    [configError, setConfigError] = useState(''),
     [locationState, setLocationState] = useState(route()),
-    [dialog, setDialog] = useState<"organization" | "project" | null>(null),
+    [dialog, setDialog] = useState<'organization' | 'project' | null>(null),
     [help, setHelp] = useState(false),
     [outBusy, setOutBusy] = useState(false);
   const controller = useRef(new AbortController());
@@ -566,14 +539,14 @@ function App() {
     setHelp(false);
     setSignedOut(true);
     setLoading(false);
-    setError("Your session has ended. Sign in again.");
+    setError('Your session has ended. Sign in again.');
   }
   async function reload() {
     const signal = controller.current.signal;
-    setError("");
+    setError('');
     setLoading(true);
     try {
-      const value = overview(await api("/v1/me", signal));
+      const value = overview(await api('/v1/me', signal));
       if (!signal.aborted) {
         setData(value);
         setSignedOut(false);
@@ -585,32 +558,29 @@ function App() {
       if (!signal.aborted) setLoading(false);
     }
   }
+  const reloadOnMount = useEffectEvent(() => reload());
   useEffect(() => {
     controller.current = new AbortController();
-    void reload();
+    void reloadOnMount();
     const c = new AbortController();
-    fetch("/auth/config", { credentials: "same-origin", signal: c.signal })
+    fetch('/auth/config', { credentials: 'same-origin', signal: c.signal })
       .then(async (r) => {
-        if (!r.ok) throw new Error("Sign-in settings are unavailable.");
+        if (!r.ok) throw new Error('Sign-in settings are unavailable.');
         const v = await r.json();
         if (c.signal.aborted) return;
-        if (v.enabled && typeof v.member_origin === "string") {
+        if (v.enabled && typeof v.member_origin === 'string') {
           const u = new URL(v.member_origin);
           if (
-            (u.protocol !== "https:" &&
-              !(u.protocol === "http:" && u.hostname === "localhost")) ||
+            (u.protocol !== 'https:' && !(u.protocol === 'http:' && u.hostname === 'localhost')) ||
             u.username ||
             u.password ||
             u.search ||
             u.hash ||
-            u.pathname !== "/"
+            u.pathname !== '/'
           )
-            throw new Error("Sign-in configuration is invalid.");
-          setSignIn(u.origin + "/auth/login");
-        } else
-          setConfigError(
-            "Account sign-in is not configured on this deployment yet.",
-          );
+            throw new Error('Sign-in configuration is invalid.');
+          setSignIn(u.origin + '/auth/login');
+        } else setConfigError('Account sign-in is not configured on this deployment yet.');
       })
       .catch((e) => {
         if (!cancelled(e)) setConfigError(message(e));
@@ -619,52 +589,46 @@ function App() {
       setLocationState(route());
       setDialog(null);
     };
-    window.addEventListener("hashchange", change);
+    window.addEventListener('hashchange', change);
     return () => {
       c.abort();
       controller.current.abort();
-      window.removeEventListener("hashchange", change);
+      window.removeEventListener('hashchange', change);
     };
   }, []);
   const organization =
-    data?.organizations.find((o) => o.id === locationState.get("org")) ||
-    (!locationState.has("org") ? data?.organizations[0] : undefined);
-  const project = organization?.projects.find(
-    (p) => p.id === locationState.get("project"),
-  );
+    data?.organizations.find((o) => o.id === locationState.get('org')) ||
+    (!locationState.has('org') ? data?.organizations[0] : undefined);
+  const project = organization?.projects.find((p) => p.id === locationState.get('project'));
   async function create(name: string, signal: AbortSignal) {
     const path =
-      dialog === "organization"
-        ? "/v1/organizations"
+      dialog === 'organization'
+        ? '/v1/organizations'
         : `/v1/organizations/${encodeURIComponent(organization!.id)}/projects`;
-    const id = createdId(await api(path, signal, "POST", { name }));
+    const id = createdId(await api(path, signal, 'POST', { name }));
     if (signal.aborted) return;
     const kind = dialog;
     setDialog(null);
     await reload();
-    location.hash =
-      kind === "organization"
-        ? destination(id)
-        : destination(organization!.id, id);
+    location.hash = kind === 'organization' ? destination(id) : destination(organization!.id, id);
   }
   async function logout() {
     if (outBusy) return;
     setOutBusy(true);
     try {
-      const r = await fetch("/auth/logout", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "X-Rroflow-Request": "dashboard" },
+      const r = await fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-Rroflow-Request': 'dashboard' },
       });
-      if (!r.ok)
-        throw new Error("Sign-out could not be confirmed. Please try again.");
+      if (!r.ok) throw new Error('Sign-out could not be confirmed. Please try again.');
       controller.current.abort();
       setData(null);
       setDialog(null);
       setHelp(false);
       setSignedOut(true);
       setLoading(false);
-      setError("");
+      setError('');
     } catch (e) {
       setError(message(e));
     } finally {
@@ -673,16 +637,13 @@ function App() {
   }
   return (
     <>
-      <a
+      <button
+        type="button"
         className="skip"
-        href="#main"
-        onClick={(e) => {
-          e.preventDefault();
-          document.getElementById("main")?.focus();
-        }}
+        onClick={() => document.getElementById('main')?.focus()}
       >
         Skip to content
-      </a>
+      </button>
       <div className="app-frame">
         <aside className="sidebar">
           <a className="brand" href="/">
@@ -693,7 +654,7 @@ function App() {
           <a className="nav-active" href="/app/manage">
             <Icon name="grid" /> Organizations
           </a>
-          <a href={project ? monitorLink(project.id) : "/app"}>
+          <a href={project ? monitorLink(project.id) : '/app'}>
             <Icon name="pulse" /> Monitoring
           </a>
           <div className="sidebar-note">
@@ -704,7 +665,7 @@ function App() {
               <strong>a place for your work.</strong>
             </p>
           </div>
-          <button className="help-button" onClick={() => setHelp(true)}>
+          <button type="button" className="help-button" onClick={() => setHelp(true)}>
             <Icon name="help" /> How it fits together
           </button>
           <p className="tagline">{identity.tagline}</p>
@@ -712,20 +673,15 @@ function App() {
         <div className="workspace">
           <header className="topbar">
             <span className="breadcrumb">
-              Workspace <span aria-hidden="true">/</span> Organization &
-              projects
+              Workspace <span aria-hidden="true">/</span> Organization & projects
             </span>
             {data && (
               <div className="account">
-                <span>{data.user.name || "Your account"}</span>
+                <span>{data.user.name || 'Your account'}</span>
                 <a href="/app/device">Collectors</a>
                 {data.instance_admin && <a href="/app/settings">Settings</a>}
-                <button
-                  className="text-button"
-                  disabled={outBusy}
-                  onClick={logout}
-                >
-                  {outBusy ? "Signing out…" : "Sign out"}
+                <button type="button" className="text-button" disabled={outBusy} onClick={logout}>
+                  {outBusy ? 'Signing out…' : 'Sign out'}
                 </button>
               </div>
             )}
@@ -737,14 +693,14 @@ function App() {
                 <p className="eyebrow">Your AI, organized</p>
                 <h1>
                   {loading
-                    ? "Opening your workspace…"
+                    ? 'Opening your workspace…'
                     : signedOut
-                      ? "Your workspace starts here"
-                      : "We could not open your workspace"}
+                      ? 'Your workspace starts here'
+                      : 'We could not open your workspace'}
                 </h1>
                 <p className="muted">
-                  Keep your projects, monitoring and connections together. Sign
-                  in with your account to continue.
+                  Keep your projects, monitoring and connections together. Sign in with your account
+                  to continue.
                 </p>
                 {loading ? (
                   <p role="status">Checking your membership…</p>
@@ -760,11 +716,10 @@ function App() {
                         Sign in with your account <Icon name="arrow" />
                       </a>
                     ) : (
-                      <p role="status">
-                        {configError || "Checking sign-in settings…"}
-                      </p>
+                      <p role="status">{configError || 'Checking sign-in settings…'}</p>
                     )}
                     <button
+                      type="button"
                       className="text-button"
                       onClick={() => {
                         controller.current = new AbortController();
@@ -780,11 +735,8 @@ function App() {
               <>
                 {error && (
                   <div className="error" role="alert">
-                    {error}{" "}
-                    <button
-                      className="text-button"
-                      onClick={() => void reload()}
-                    >
+                    {error}{' '}
+                    <button type="button" className="text-button" onClick={() => void reload()}>
                       Refresh
                     </button>
                   </div>
@@ -793,7 +745,7 @@ function App() {
                   <label htmlFor="organization">Organization</label>
                   <select
                     id="organization"
-                    value={organization?.id || ""}
+                    value={organization?.id || ''}
                     onChange={(e) => {
                       location.hash = destination(e.target.value);
                     }}
@@ -810,8 +762,9 @@ function App() {
                     ))}
                   </select>
                   <button
+                    type="button"
                     className="secondary"
-                    onClick={() => setDialog("organization")}
+                    onClick={() => setDialog('organization')}
                   >
                     <Icon name="plus" /> New organization
                   </button>
@@ -819,12 +772,9 @@ function App() {
                 {!organization ? (
                   <div className="empty panel">
                     <h1>This organization is unavailable</h1>
-                    <p>
-                      Select an organization you belong to. Your permissions may
-                      have changed.
-                    </p>
+                    <p>Select an organization you belong to. Your permissions may have changed.</p>
                   </div>
-                ) : locationState.has("project") && !project ? (
+                ) : locationState.has('project') && !project ? (
                   <div className="empty panel">
                     <h1>This project is unavailable</h1>
                     <a href={destination(organization.id)}>Back to projects</a>
@@ -834,7 +784,7 @@ function App() {
                     key={project.id}
                     project={project}
                     organization={organization}
-                    view={locationState.get("view")}
+                    view={locationState.get('view')}
                     onExpired={expired}
                   />
                 ) : (
@@ -848,19 +798,14 @@ function App() {
                           <em>organized.</em>
                         </h1>
                         <p className="hero-description">
-                          A project brings your AI activity, signals and
-                          evidence into one place. Choose where you want to go
-                          next.
+                          A project brings your AI activity, signals and evidence into one place.
+                          Choose where you want to go next.
                         </p>
                         <div className="chips">
                           <span className="badge">
-                            {organization.personal
-                              ? "Personal organization"
-                              : "Team organization"}
+                            {organization.personal ? 'Personal organization' : 'Team organization'}
                           </span>
-                          <span className="badge">
-                            Your role: {organization.role}
-                          </span>
+                          <span className="badge">Your role: {organization.role}</span>
                         </div>
                       </div>
                       <FlowArt />
@@ -870,14 +815,11 @@ function App() {
                         <div>
                           <p className="eyebrow">{organization.name}</p>
                           <h2 id="projects-heading">
-                            Projects{" "}
-                            <span className="count">
-                              {organization.projects.length}
-                            </span>
+                            Projects <span className="count">{organization.projects.length}</span>
                           </h2>
                         </div>
                         {canManage(organization) && (
-                          <button onClick={() => setDialog("project")}>
+                          <button type="button" onClick={() => setDialog('project')}>
                             <Icon name="plus" /> New project
                           </button>
                         )}
@@ -888,8 +830,8 @@ function App() {
                           <h3>A fresh space for your next project</h3>
                           <p>
                             {canManage(organization)
-                              ? "Create a project, then connect a source to start receiving activity."
-                              : "An organization admin can create the first project."}
+                              ? 'Create a project, then connect a source to start receiving activity.'
+                              : 'An organization admin can create the first project.'}
                           </p>
                         </div>
                       ) : (
@@ -905,9 +847,7 @@ function App() {
                                 )}
                               </div>
                               <h3>
-                                <a href={destination(organization.id, p.id)}>
-                                  {p.name}
-                                </a>
+                                <a href={destination(organization.id, p.id)}>{p.name}</a>
                               </h3>
                               <p>
                                 Activity, signals and evidence
@@ -923,8 +863,8 @@ function App() {
                                   href={destination(organization.id, p.id)}
                                 >
                                   {canManage(organization)
-                                    ? "Manage connections"
-                                    : "Project details"}
+                                    ? 'Manage connections'
+                                    : 'Project details'}
                                 </a>
                               </div>
                             </article>
@@ -939,15 +879,11 @@ function App() {
                       <div>
                         <h3>Connect first. See what actually arrives.</h3>
                         <p>
-                          A project is a place to collect work. Creating one
-                          does not install a collector or prove your AI is
-                          reporting.
+                          A project is a place to collect work. Creating one does not install a
+                          collector or prove your AI is reporting.
                         </p>
                       </div>
-                      <button
-                        className="text-button"
-                        onClick={() => setHelp(true)}
-                      >
+                      <button type="button" className="text-button" onClick={() => setHelp(true)}>
                         How it works <Icon name="arrow" />
                       </button>
                     </section>
@@ -957,8 +893,8 @@ function App() {
             )}
             <footer className="page-footer">
               {data
-                ? "Source: your signed-in membership and project records."
-                : "Private project data is shown only after sign-in."}
+                ? 'Source: your signed-in membership and project records.'
+                : 'Private project data is shown only after sign-in.'}
             </footer>
           </main>
         </div>
@@ -970,48 +906,46 @@ function App() {
           onCreate={create}
           onExpired={expired}
         />
-      )}{" "}
+      )}{' '}
       {help && (
         <Dialog title="A home for your AI work" onClose={() => setHelp(false)}>
           <ol className="help-steps">
             <li>
               <strong>Organization</strong>
-              <p>
-                The people who can work together, and the role each person has.
-              </p>
+              <p>The people who can work together, and the role each person has.</p>
             </li>
             <li>
               <strong>Project</strong>
-              <p>
-                A separate space for received activity, signals and evidence.
-              </p>
+              <p>A separate space for received activity, signals and evidence.</p>
             </li>
             <li>
               <strong>Connection</strong>
               <p>
-                A collector or SDK sends to that project. A connection key can
-                send records, but cannot read your activity.
+                A collector or SDK sends to that project. A connection key can send records, but
+                cannot read your activity.
               </p>
             </li>
           </ol>
           <p className="muted">
-            Creating a project or key does not install anything, connect a
-            provider subscription, grant a paid plan or start training.
+            Creating a project or key does not install anything, connect a provider subscription,
+            grant a paid plan or start training.
           </p>
-          <button onClick={() => setHelp(false)}>Got it</button>
+          <button type="button" onClick={() => setHelp(false)}>
+            Got it
+          </button>
         </Dialog>
       )}
     </>
   );
 }
 
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {location.pathname === "/app/account" ? (
+    {location.pathname === '/app/account' ? (
       <AccountPage name={identity.name} />
-    ) : location.pathname === "/app/device" ? (
+    ) : location.pathname === '/app/device' ? (
       <DevicePage name={identity.name} />
-    ) : location.pathname === "/app/settings" ? (
+    ) : location.pathname === '/app/settings' ? (
       <SettingsPage name={identity.name} />
     ) : (
       <App />

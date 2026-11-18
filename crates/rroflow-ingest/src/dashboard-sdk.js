@@ -29,7 +29,7 @@ window.RroflowSdkActivity = ({$,esc,fmt,date,api,link,onUnauthorized}) => {
     $('sdk-filters').onsubmit=e=>{e.preventDefault();const next=new URLSearchParams(params);next.delete('cursor');next.delete('id');for(const [k,v] of new FormData(e.currentTarget))v?next.set(k,v):next.delete(k);location.hash=route(next);};
     $('sdk-next').onclick=()=>{const next=new URLSearchParams(params);next.set('cursor',data.next_cursor);next.delete('id');previous.set(route(next),route(params));location.hash=route(next);};
     $('sdk-previous').onclick=()=>{const p=previous.get(route(params));if(p)location.hash=p;};
-    root.querySelectorAll('[data-sdk-open]').forEach(b=>b.onclick=()=>open(b.dataset.sdkOpen));
+    root.querySelectorAll('[data-sdk-open]').forEach(b=>{ b.onclick=()=>open(b.dataset.sdkOpen); });
     if(params.get('id'))await open(params.get('id'));
   }
   async function open(id){
@@ -40,7 +40,7 @@ window.RroflowSdkActivity = ({$,esc,fmt,date,api,link,onUnauthorized}) => {
       renderDetail(row,false);
       const history=await api('/v1/sdk/reviews?'+new URLSearchParams({activity_id:id}));if(g!==detailEpoch||page!==epoch)return;
       $('sdk-saved-reviews').innerHTML=history.reviews.length?history.reviews.map(r=>`<p><button class="button subtle" data-sdk-review="${esc(r.request.review_id)}">${r.request.verdict==='match'?'Matches':'Does not match'}: ${esc(signals[r.request.signal]||r.request.signal)}</button> <span class="small muted">${esc(date(r.recorded_at))}${r.request.revision!==row.revision?' &middot; Earlier evidence revision':''}</span></p>`).join(''):'<p class="muted">No saved reviews for this operation.</p>';
-      $('sdk-saved-reviews').querySelectorAll('[data-sdk-review]').forEach(b=>b.onclick=()=>openReview(b.dataset.sdkReview));
+      $('sdk-saved-reviews').querySelectorAll('[data-sdk-review]').forEach(b=>{ b.onclick=()=>openReview(b.dataset.sdkReview); });
     }catch(e){if(g!==detailEpoch||page!==epoch||e.name==='AbortError')return;$('sdk-review-status').textContent=error(e);}
   }
   function renderDetail(row,historical){
@@ -56,18 +56,18 @@ window.RroflowSdkActivity = ({$,esc,fmt,date,api,link,onUnauthorized}) => {
     $('sdk-show-projection').onclick=()=>{const pre=$('sdk-full-projection');pre.hidden=false;pre.textContent=JSON.stringify(a,null,2);$('sdk-show-projection').hidden=true;};
     let shown=0;const more=()=>{const end=Math.min(shown+50,a.events.length);$('sdk-event-list').insertAdjacentHTML('beforeend',a.events.slice(shown,end).map(e=>`<p>${fmt(e.sequence)} &middot; ${esc(e.native_type||e.kind)} ${sourceButton(e.event_id)}</p>`).join(''));shown=end;$('sdk-more-events').hidden=shown>=a.events.length;bindSources();};more();$('sdk-more-events').onclick=more;
     if(a.parent_activity_id)$('sdk-parent').onclick=()=>open(a.parent_activity_id);
-    $('sdk-detail').querySelectorAll('[data-sdk-verdict]').forEach(b=>b.onclick=()=>review(Number(b.dataset.finding),b.dataset.sdkVerdict));
+    $('sdk-detail').querySelectorAll('[data-sdk-verdict]').forEach(b=>{ b.onclick=()=>review(Number(b.dataset.finding),b.dataset.sdkVerdict); });
     bindSources();
   }
   const sourceButton=id=>`<button class="button subtle" data-sdk-event="${esc(id)}">View original event</button>`;
-  function bindSources(){$('sdk-detail').querySelectorAll('[data-sdk-event]').forEach(b=>b.onclick=async()=>{const g=detailEpoch,page=epoch;try{const result=await api('/v1/events?'+new URLSearchParams({event_id:b.dataset.sdkEvent,limit:'1'}));if(g!==detailEpoch||page!==epoch)return;const raw=$('sdk-raw-event');raw.hidden=false;raw.textContent=result.events?.length?JSON.stringify(result.events[0],null,2):'Original event is not available in this workspace.';raw.focus();}catch(e){if(g===detailEpoch&&page===epoch&&e.name!=='AbortError')$('sdk-review-status').textContent=error(e);}});}
+  function bindSources(){$('sdk-detail').querySelectorAll('[data-sdk-event]').forEach(b=>{ b.onclick=async()=>{const g=detailEpoch,page=epoch;try{const result=await api('/v1/events?'+new URLSearchParams({event_id:b.dataset.sdkEvent,limit:'1'}));if(g!==detailEpoch||page!==epoch)return;const raw=$('sdk-raw-event');raw.hidden=false;raw.textContent=result.events?.length?JSON.stringify(result.events[0],null,2):'Original event is not available in this workspace.';raw.focus();}catch(e){if(g===detailEpoch&&page===epoch&&e.name!=='AbortError')$('sdk-review-status').textContent=error(e);}}; });}
   async function review(index,verdict){
     if(!current)return;const row=current,f=row.activity.findings[index],g=detailEpoch,page=epoch;
     const identity=[row.activity.activity_id,row.revision,f.signal,verdict].join(':');if(!pending.has(identity))pending.set(identity,crypto.randomUUID());
-    const buttons=[...$('sdk-detail').querySelectorAll('[data-sdk-verdict]')];buttons.forEach(b=>b.disabled=true);
+    const buttons=[...$('sdk-detail').querySelectorAll('[data-sdk-verdict]')];buttons.forEach(b=>{ b.disabled=true; });
     try{await api('/v1/sdk/reviews',{method:'POST',body:JSON.stringify({review_id:pending.get(identity),activity_id:row.activity.activity_id,revision:row.revision,signal:f.signal,rule_version:f.rule_version,verdict})});if(g!==detailEpoch||page!==epoch)return;$('sdk-review-status').textContent='Review saved with this exact evidence revision. No training was started.';}
     catch(e){if(g===detailEpoch&&page===epoch&&e.name!=='AbortError')$('sdk-review-status').textContent=error(e);}
-    finally{if(g===detailEpoch&&page===epoch)buttons.forEach(b=>b.disabled=false);}
+    finally{if(g===detailEpoch&&page===epoch)buttons.forEach(b=>{ b.disabled=false; });}
   }
   async function openReview(id){const g=++detailEpoch,page=epoch;try{const result=await api('/v1/sdk/reviews?'+new URLSearchParams({review_id:id}));if(g!==detailEpoch||page!==epoch)return;const r=result.reviews?.[0];if(!r){$('sdk-review-status').textContent='Saved review unavailable.';return;}renderDetail({activity:r.snapshot,revision:r.request.revision},true);}catch(e){if(g===detailEpoch&&page===epoch&&e.name!=='AbortError')$('sdk-review-status').textContent=error(e);}}
   return {load,clear};

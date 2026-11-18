@@ -1,8 +1,8 @@
 // Rust owns these contracts. Reject incomplete or cross-project data at the UI boundary.
 export type Condition =
-  | { kind: "tool_errors"; at_least: number }
-  | { kind: "tool_named"; name: string }
-  | { kind: "prompt_contains" | "response_contains"; text: string };
+  | { kind: 'tool_errors'; at_least: number }
+  | { kind: 'tool_named'; name: string }
+  | { kind: 'prompt_contains' | 'response_contains'; text: string };
 export type Rule = {
   id: string;
   name: string;
@@ -45,16 +45,13 @@ export type Preview = {
   moreHistory: boolean;
   matches: { id: string; summary: string }[];
 };
-const bad = () =>
-  new Error(
-    "The signal response is incomplete. Refresh before making changes.",
-  );
+const bad = () => new Error('The signal response is incomplete. Refresh before making changes.');
 function object(v: unknown): Record<string, unknown> {
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw bad();
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw bad();
   return v as Record<string, unknown>;
 }
 function text(v: unknown): string {
-  if (typeof v !== "string") throw bad();
+  if (typeof v !== 'string') throw bad();
   return v;
 }
 function list(v: unknown): unknown[] {
@@ -62,11 +59,11 @@ function list(v: unknown): unknown[] {
   return v;
 }
 function bool(v: unknown): boolean {
-  if (typeof v !== "boolean") throw bad();
+  if (typeof v !== 'boolean') throw bad();
   return v;
 }
 function number(v: unknown): number {
-  if (typeof v !== "number" || !Number.isFinite(v)) throw bad();
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw bad();
   return v;
 }
 function count(v: unknown): number {
@@ -80,9 +77,7 @@ function nullable(v: unknown) {
 function scoped(v: unknown, id: string) {
   const r = object(v);
   if (r.devspace !== id)
-    throw new Error(
-      "The signal response belongs to another project. Refresh your project list.",
-    );
+    throw new Error('The signal response belongs to another project. Refresh your project list.');
   return r;
 }
 function rule(v: unknown): Rule {
@@ -90,9 +85,9 @@ function rule(v: unknown): Rule {
     c = object(r.condition),
     kind = text(c.kind);
   let condition: Condition;
-  if (kind === "tool_errors") condition = { kind, at_least: count(c.at_least) };
-  else if (kind === "tool_named") condition = { kind, name: text(c.name) };
-  else if (kind === "prompt_contains" || kind === "response_contains")
+  if (kind === 'tool_errors') condition = { kind, at_least: count(c.at_least) };
+  else if (kind === 'tool_named') condition = { kind, name: text(c.name) };
+  else if (kind === 'prompt_contains' || kind === 'response_contains')
     condition = { kind, text: text(c.text) };
   else throw bad();
   return {
@@ -115,10 +110,7 @@ function config(v: unknown): Settings {
       Object.entries(object(s.options)).map(([id, raw]) => [
         id,
         Object.fromEntries(
-          Object.entries(object(raw)).map(([name, value]) => [
-            name,
-            number(value),
-          ]),
+          Object.entries(object(raw)).map(([name, value]) => [name, number(value)]),
         ),
       ]),
     ),
@@ -179,22 +171,22 @@ export function preview(v: unknown, id: string): Preview {
   return result;
 }
 const titles: Record<string, string> = {
-  blocked_handoff: "Blocked handoff",
-  false_done: "Possible false completion",
-  tool_error_streak: "Repeated tool failures",
-  usage_limit_hit: "Usage limit reached",
-  context_loss: "Context compaction",
-  correction_spiral: "Possible correction spiral",
-  aborted_turn: "Interrupted turn",
-  mood: "Mood shift",
+  blocked_handoff: 'Blocked handoff',
+  false_done: 'Possible false completion',
+  tool_error_streak: 'Repeated tool failures',
+  usage_limit_hit: 'Usage limit reached',
+  context_loss: 'Context compaction',
+  correction_spiral: 'Possible correction spiral',
+  aborted_turn: 'Interrupted turn',
+  mood: 'Mood shift',
 };
 export const title = (id: string) =>
-  Object.hasOwn(titles, id) ? titles[id] : id.replaceAll("_", " ");
+  Object.hasOwn(titles, id) ? titles[id] : id.replaceAll('_', ' ');
 export function description(rule: Rule) {
   const c = rule.condition;
-  return c.kind === "tool_errors"
+  return c.kind === 'tool_errors'
     ? `At least ${c.at_least} tool calls fail in one turn.`
-    : c.kind === "tool_named"
+    : c.kind === 'tool_named'
       ? `A completed tool call is named "${c.name}".`
-      : `${c.kind === "prompt_contains" ? "The message sent to the AI" : "The AI response"} contains "${c.text}" (ignoring letter case).`;
+      : `${c.kind === 'prompt_contains' ? 'The message sent to the AI' : 'The AI response'} contains "${c.text}" (ignoring letter case).`;
 }

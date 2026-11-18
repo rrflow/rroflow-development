@@ -1,39 +1,39 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, monitorLink } from "./api";
-import { Dialog, Icon } from "./ui";
+import { type FormEvent, useEffect, useEffectEvent, useRef, useState } from 'react';
+import { ApiError, api, monitorLink } from './api';
 import {
-  library,
-  saved,
-  preview,
-  title,
+  type Check,
+  type Condition,
   description,
   type Library,
+  library,
+  type Preview,
+  preview,
   type Rule,
   type Settings,
-  type Check,
-  type Preview,
-  type Condition,
-} from "./signal-api";
+  saved,
+  title,
+} from './signal-api';
+import { Dialog, Icon } from './ui';
+
 const message = (e: unknown) =>
   e instanceof ApiError && e.status === 409
-    ? "Someone changed the signal settings. Reload current settings before saving again."
+    ? 'Someone changed the signal settings. Reload current settings before saving again.'
     : e instanceof Error
       ? e.message
-      : "Signals are unavailable. Try again.";
+      : 'Signals are unavailable. Try again.';
 const groupNames: Record<string, string> = {
-  failure: "Quality",
-  friction: "Working together",
-  cost: "Usage and interruptions",
-  context: "Context",
+  failure: 'Quality',
+  friction: 'Working together',
+  cost: 'Usage and interruptions',
+  context: 'Context',
 };
-const groupName = (id: string) =>
-  Object.hasOwn(groupNames, id) ? groupNames[id] : id;
+const groupName = (id: string) => (Object.hasOwn(groupNames, id) ? groupNames[id] : id);
 const findings = (project: string, signal: string) =>
-  monitorLink(project, "signals?" + new URLSearchParams({ signal }));
+  monitorLink(project, 'signals?' + new URLSearchParams({ signal }));
 type Draft = {
   name: string;
   group: string;
-  kind: Condition["kind"];
+  kind: Condition['kind'];
   number: string;
   text: string;
   agent: string;
@@ -54,22 +54,22 @@ function CreateSignal({
   onClose: () => void;
   onExpired: () => void;
 }) {
-  const [id] = useState(() => "custom_" + crypto.randomUUID());
+  const [id] = useState(() => 'custom_' + crypto.randomUUID());
   const [draft, setDraft] = useState<Draft>({
-    name: "",
-    group: "My signals",
-    kind: "tool_errors",
-    number: "3",
-    text: "",
-    agent: "",
-    sourceProject: "",
+    name: '',
+    group: 'My signals',
+    kind: 'tool_errors',
+    number: '3',
+    text: '',
+    agent: '',
+    sourceProject: '',
   });
   const [result, setResult] = useState<{
       signature: string;
       value: Preview;
     } | null>(null),
-    [busy, setBusy] = useState(""),
-    [error, setError] = useState(""),
+    [busy, setBusy] = useState(''),
+    [error, setError] = useState(''),
     [conflict, setConflict] = useState(false);
   const c = useRef(new AbortController()),
     version = useRef(0);
@@ -81,9 +81,9 @@ function CreateSignal({
     };
   }, []);
   const condition: Condition =
-    draft.kind === "tool_errors"
+    draft.kind === 'tool_errors'
       ? { kind: draft.kind, at_least: Number(draft.number) }
-      : draft.kind === "tool_named"
+      : draft.kind === 'tool_named'
         ? { kind: draft.kind, name: draft.text.trim() }
         : { kind: draft.kind, text: draft.text.trim() };
   const rule: Rule = {
@@ -100,25 +100,19 @@ function CreateSignal({
     version.current++;
     setDraft((d) => ({ ...d, [key]: value }));
     setResult(null);
-    setError("");
+    setError('');
   }
   async function tryRule(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
     const attempt = ++version.current,
       controller = c.current;
-    setBusy("preview");
+    setBusy('preview');
     setResult(null);
-    setError("");
+    setError('');
     try {
       const value = preview(
-        await api(
-          "/v1/signals/preview",
-          controller.signal,
-          "POST",
-          rule,
-          project,
-        ),
+        await api('/v1/signals/preview', controller.signal, 'POST', rule, project),
         project,
       );
       if (!controller.signal.aborted && attempt === version.current)
@@ -129,13 +123,13 @@ function CreateSignal({
         else if (attempt === version.current) setError(message(e));
       }
     } finally {
-      if (!controller.signal.aborted) setBusy("");
+      if (!controller.signal.aborted) setBusy('');
     }
   }
   async function save() {
     if (busy || !result || result.signature !== signature) return;
-    setBusy("save");
-    setError("");
+    setBusy('save');
+    setError('');
     const controller = c.current;
     try {
       await onSave({
@@ -149,30 +143,29 @@ function CreateSignal({
         setConflict(e instanceof ApiError && e.status === 409);
       }
     } finally {
-      if (!controller.signal.aborted) setBusy("");
+      if (!controller.signal.aborted) setBusy('');
     }
   }
   async function reload() {
-    setBusy("reload");
+    setBusy('reload');
     try {
       await onReload();
       if (!c.current.signal.aborted) {
         setConflict(false);
-        setError("");
+        setError('');
       }
     } catch (e) {
       if (!c.current.signal.aborted) setError(message(e));
     } finally {
-      if (!c.current.signal.aborted) setBusy("");
+      if (!c.current.signal.aborted) setBusy('');
     }
   }
-  const textRule =
-    draft.kind === "prompt_contains" || draft.kind === "response_contains";
+  const textRule = draft.kind === 'prompt_contains' || draft.kind === 'response_contains';
   return (
-    <Dialog title="Create a signal" onClose={onClose} busy={busy !== ""}>
+    <Dialog title="Create a signal" onClose={onClose} busy={busy !== ''}>
       <p>
-        Choose something to notice in received turns. Try it on recent activity
-        before turning it on.
+        Choose something to notice in received turns. Try it on recent activity before turning it
+        on.
       </p>
       <form className="signal-form" onSubmit={tryRule}>
         <label>
@@ -182,8 +175,8 @@ function CreateSignal({
             required
             maxLength={80}
             value={draft.name}
-            disabled={busy === "save"}
-            onChange={(e) => change("name", e.target.value)}
+            disabled={busy === 'save'}
+            onChange={(e) => change('name', e.target.value)}
           />
         </label>
         <label>
@@ -192,28 +185,24 @@ function CreateSignal({
             required
             maxLength={40}
             value={draft.group}
-            disabled={busy === "save"}
-            onChange={(e) => change("group", e.target.value)}
+            disabled={busy === 'save'}
+            onChange={(e) => change('group', e.target.value)}
           />
         </label>
         <label>
           What should this notice?
           <select
             value={draft.kind}
-            disabled={busy === "save"}
-            onChange={(e) => change("kind", e.target.value)}
+            disabled={busy === 'save'}
+            onChange={(e) => change('kind', e.target.value)}
           >
             <option value="tool_errors">Several tools fail in one turn</option>
             <option value="tool_named">A particular tool is used</option>
-            <option value="response_contains">
-              The AI response contains a phrase
-            </option>
-            <option value="prompt_contains">
-              Your message contains a phrase
-            </option>
+            <option value="response_contains">The AI response contains a phrase</option>
+            <option value="prompt_contains">Your message contains a phrase</option>
           </select>
         </label>
-        {draft.kind === "tool_errors" ? (
+        {draft.kind === 'tool_errors' ? (
           <label>
             Number of failed tools
             <input
@@ -223,39 +212,39 @@ function CreateSignal({
               max={100}
               step={1}
               value={draft.number}
-              disabled={busy === "save"}
-              onChange={(e) => change("number", e.target.value)}
+              disabled={busy === 'save'}
+              onChange={(e) => change('number', e.target.value)}
             />
           </label>
         ) : (
           <label>
-            {draft.kind === "tool_named" ? "Tool name" : "Phrase to match"}
+            {draft.kind === 'tool_named' ? 'Tool name' : 'Phrase to match'}
             <input
               required
               maxLength={160}
               value={draft.text}
-              disabled={busy === "save"}
-              onChange={(e) => change("text", e.target.value)}
+              disabled={busy === 'save'}
+              onChange={(e) => change('text', e.target.value)}
             />
           </label>
         )}
         <p className="muted">
           {textRule
-            ? "Needs opted-in uploaded text. Turns without that text are counted as unavailable, not as non-matches."
-            : "Uses completed tool names or statuses. Prompt and response text are not required."}
+            ? 'Needs opted-in uploaded text. Turns without that text are counted as unavailable, not as non-matches.'
+            : 'Uses completed tool names or statuses. Prompt and response text are not required.'}
         </p>
         <details>
           <summary>Optional: limit the source activity</summary>
           <p>
-            This rule belongs to this member project. These filters narrow the
-            agent and source project label inside its captured turns.
+            This rule belongs to this member project. These filters narrow the agent and source
+            project label inside its captured turns.
           </p>
           <label>
             Agent
             <select
               value={draft.agent}
-              disabled={busy === "save"}
-              onChange={(e) => change("agent", e.target.value)}
+              disabled={busy === 'save'}
+              onChange={(e) => change('agent', e.target.value)}
             >
               <option value="">All captured agents</option>
               {data.agents.map((a) => (
@@ -269,8 +258,8 @@ function CreateSignal({
             Source project label
             <select
               value={draft.sourceProject}
-              disabled={busy === "save"}
-              onChange={(e) => change("sourceProject", e.target.value)}
+              disabled={busy === 'save'}
+              onChange={(e) => change('sourceProject', e.target.value)}
             >
               <option value="">All source project labels</option>
               {data.projects.map((p) => (
@@ -281,33 +270,27 @@ function CreateSignal({
             </select>
           </label>
         </details>
-        <button className="secondary" disabled={busy !== ""}>
-          {busy === "preview"
-            ? "Checking recent activity..."
-            : "Try on recent activity"}
+        <button type="submit" className="secondary" disabled={busy !== ''}>
+          {busy === 'preview' ? 'Checking recent activity...' : 'Try on recent activity'}
         </button>
       </form>
       {result && (
         <section className="signal-preview" aria-label="Preview results">
           <p role="status">
-            {result.value.matches.length}{" "}
-            {result.value.matches.length === 1 ? "match" : "matches"} in{" "}
-            {result.value.evaluated} checked{" "}
-            {result.value.evaluated === 1 ? "turn" : "turns"}.{" "}
-            {result.value.unavailable} could not be checked because text was not
-            uploaded.
+            {result.value.matches.length} {result.value.matches.length === 1 ? 'match' : 'matches'}{' '}
+            in {result.value.evaluated} checked {result.value.evaluated === 1 ? 'turn' : 'turns'}.{' '}
+            {result.value.unavailable} could not be checked because text was not uploaded.
           </p>
           <p className="muted">
             {result.value.moreHistory
-              ? "More history exists; this preview covers the newest 100 scoped turns. "
-              : ""}
-            This is a preview, not an accuracy score. Saving checks newly
-            received turns; it does not backfill this history.
+              ? 'More history exists; this preview covers the newest 100 scoped turns. '
+              : ''}
+            This is a preview, not an accuracy score. Saving checks newly received turns; it does
+            not backfill this history.
           </p>
           {result.value.matches.length === 0 ? (
             <p>
-              No matches in this preview. You can adjust the rule or save it for
-              future activity.
+              No matches in this preview. You can adjust the rule or save it for future activity.
             </p>
           ) : (
             <ul>
@@ -315,10 +298,7 @@ function CreateSignal({
                 <li key={m.id}>
                   <p>{m.summary}</p>
                   <a
-                    href={monitorLink(
-                      project,
-                      "activity?" + new URLSearchParams({ event: m.id }),
-                    )}
+                    href={monitorLink(project, 'activity?' + new URLSearchParams({ event: m.id }))}
                   >
                     Open captured turn
                   </a>
@@ -334,25 +314,20 @@ function CreateSignal({
         </p>
       )}
       {conflict && (
-        <button
-          className="secondary"
-          disabled={!!busy}
-          onClick={() => void reload()}
-        >
+        <button type="button" className="secondary" disabled={!!busy} onClick={() => void reload()}>
           Reload current settings
         </button>
       )}
       <div className="dialog-actions">
-        <button className="secondary" disabled={!!busy} onClick={onClose}>
+        <button type="button" className="secondary" disabled={!!busy} onClick={onClose}>
           Cancel
         </button>
         <button
-          disabled={
-            !!busy || !result || result.signature !== signature || conflict
-          }
+          type="button"
+          disabled={!!busy || !result || result.signature !== signature || conflict}
           onClick={() => void save()}
         >
-          {busy === "save" ? "Saving..." : "Save and turn on"}
+          {busy === 'save' ? 'Saving...' : 'Save and turn on'}
         </button>
       </div>
     </Dialog>
@@ -380,7 +355,7 @@ function AdjustCheck({
       ),
     ),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
+    [error, setError] = useState(''),
     [conflict, setConflict] = useState(false);
   const alive = useRef(true);
   useEffect(() => {
@@ -393,7 +368,7 @@ function AdjustCheck({
     e.preventDefault();
     if (busy) return;
     setBusy(true);
-    setError("");
+    setError('');
     try {
       await onSave({
         ...settings,
@@ -401,9 +376,7 @@ function AdjustCheck({
           ...settings.options,
           [check.id]: {
             ...settings.options[check.id],
-            ...Object.fromEntries(
-              Object.entries(values).map(([k, v]) => [k, Number(v)]),
-            ),
+            ...Object.fromEntries(Object.entries(values).map(([k, v]) => [k, Number(v)])),
           },
         },
       });
@@ -418,10 +391,10 @@ function AdjustCheck({
     }
   }
   return (
-    <Dialog title={"Adjust " + title(check.id)} onClose={onClose} busy={busy}>
+    <Dialog title={'Adjust ' + title(check.id)} onClose={onClose} busy={busy}>
       <p>
-        Connected collectors use these choices when they next refresh settings.
-        Existing findings and reviews are retained.
+        Connected collectors use these choices when they next refresh settings. Existing findings
+        and reviews are retained.
       </p>
       <form className="signal-form" onSubmit={submit}>
         {check.options.map((o) => (
@@ -435,9 +408,7 @@ function AdjustCheck({
               step="any"
               value={values[o.name]}
               disabled={busy}
-              onChange={(e) =>
-                setValues((v) => ({ ...v, [o.name]: e.target.value }))
-              }
+              onChange={(e) => setValues((v) => ({ ...v, [o.name]: e.target.value }))}
             />
             <small>
               Allowed: {o.min} to {o.max}. Default: {o.default}.
@@ -460,7 +431,7 @@ function AdjustCheck({
                 await onReload();
                 if (alive.current) {
                   setConflict(false);
-                  setError("");
+                  setError('');
                 }
               } catch (e) {
                 if (alive.current) setError(message(e));
@@ -478,17 +449,13 @@ function AdjustCheck({
             className="secondary"
             disabled={busy}
             onClick={() =>
-              setValues(
-                Object.fromEntries(
-                  check.options.map((o) => [o.name, String(o.default)]),
-                ),
-              )
+              setValues(Object.fromEntries(check.options.map((o) => [o.name, String(o.default)])))
             }
           >
             Use defaults
           </button>
-          <button disabled={busy || conflict}>
-            {busy ? "Saving..." : "Save choices"}
+          <button type="submit" disabled={busy || conflict}>
+            {busy ? 'Saving...' : 'Save choices'}
           </button>
         </div>
       </form>
@@ -507,25 +474,22 @@ export function SignalLibrary({
   const [data, setData] = useState<Library | null>(null),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [notice, setNotice] = useState(""),
-    [query, setQuery] = useState(""),
-    [group, setGroup] = useState(""),
-    [kind, setKind] = useState("all"),
-    [dialog, setDialog] = useState<"create" | Check | null>(null);
+    [error, setError] = useState(''),
+    [notice, setNotice] = useState(''),
+    [query, setQuery] = useState(''),
+    [group, setGroup] = useState(''),
+    [kind, setKind] = useState('all'),
+    [dialog, setDialog] = useState<'create' | Check | null>(null);
   const controller = useRef(new AbortController()),
     loadingRequest = useRef<AbortController | null>(null);
-  async function reload() {
+  async function reload(target = project) {
     const c = new AbortController();
     loadingRequest.current?.abort();
     loadingRequest.current = c;
     setLoading(true);
-    setError("");
+    setError('');
     try {
-      const next = library(
-        await api("/v1/summary", c.signal, "GET", undefined, project),
-        project,
-      );
+      const next = library(await api('/v1/summary', c.signal, 'GET', undefined, target), target);
       if (!c.signal.aborted) setData(next);
     } catch (e) {
       if (!c.signal.aborted) {
@@ -537,9 +501,10 @@ export function SignalLibrary({
       if (!c.signal.aborted) setLoading(false);
     }
   }
+  const open = useEffectEvent((target: string) => reload(target));
   useEffect(() => {
     controller.current = new AbortController();
-    void reload().catch(() => {});
+    void open(project).catch(() => {});
     return () => {
       controller.current.abort();
       loadingRequest.current?.abort();
@@ -550,20 +515,20 @@ export function SignalLibrary({
   }, [canWrite]);
   async function save(cfg: Settings) {
     if (!canWrite || busy || loading)
-      throw new Error("Refresh your project access before making changes.");
+      throw new Error('Refresh your project access before making changes.');
     const c = controller.current;
     setBusy(true);
-    setError("");
-    setNotice("");
+    setError('');
+    setNotice('');
     try {
       const settings = saved(
-        await api("/v1/signals/settings", c.signal, "PUT", cfg, project),
+        await api('/v1/signals/settings', c.signal, 'PUT', cfg, project),
         project,
       );
       if (!c.signal.aborted) {
         setData((d) => (d ? { ...d, settings } : d));
         setNotice(
-          "Saved. Existing findings and reviews are retained. Custom rules check newly received turns; collectors refresh built-in choices.",
+          'Saved. Existing findings and reviews are retained. Custom rules check newly received turns; collectors refresh built-in choices.',
         );
       }
     } catch (e) {
@@ -586,7 +551,7 @@ export function SignalLibrary({
             <p role="alert" className="error">
               {error}
             </p>
-            <button onClick={() => void reload().catch(() => {})}>
+            <button type="button" onClick={() => void reload().catch(() => {})}>
               Try again
             </button>
           </>
@@ -604,7 +569,7 @@ export function SignalLibrary({
       group: groupName(s.category),
       detail: s.meaning,
       enabled: !data.settings.disabled.includes(s.id),
-      kind: "built_in",
+      kind: 'built_in',
       rule: null as Rule | null,
       check: s as Check | null,
     })),
@@ -614,7 +579,7 @@ export function SignalLibrary({
       group: s.group,
       detail: description(s),
       enabled: s.enabled,
-      kind: "custom",
+      kind: 'custom',
       rule: s,
       check: null as Check | null,
     })),
@@ -623,11 +588,11 @@ export function SignalLibrary({
       .map((id) => ({
         id,
         name: title(id),
-        group: "Other recorded signals",
+        group: 'Other recorded signals',
         detail:
-          "Received with captured activity. Its definition is unavailable; its evidence is still accessible.",
+          'Received with captured activity. Its definition is unavailable; its evidence is still accessible.',
         enabled: null,
-        kind: "recorded",
+        kind: 'recorded',
         rule: null as Rule | null,
         check: null as Check | null,
       })),
@@ -635,14 +600,11 @@ export function SignalLibrary({
   const matching = rows.filter(
     (r) =>
       (!group || r.group === group) &&
-      (kind === "all" || r.kind === kind) &&
-      (r.name + " " + r.detail).toLowerCase().includes(query.toLowerCase()),
+      (kind === 'all' || r.kind === kind) &&
+      (r.name + ' ' + r.detail).toLowerCase().includes(query.toLowerCase()),
   );
   return (
-    <section
-      className="signal-workspace"
-      aria-labelledby="signal-library-title"
-    >
+    <section className="signal-workspace" aria-labelledby="signal-library-title">
       <div className="section-heading">
         <div>
           <p className="eyebrow">Notice what matters</p>
@@ -653,16 +615,18 @@ export function SignalLibrary({
         </div>
         <div className="signal-actions">
           <button
+            type="button"
             className="secondary"
             disabled={busy || loading}
             onClick={() => void reload().catch(() => {})}
           >
-            {loading ? "Refreshing..." : "Refresh signals"}
+            {loading ? 'Refreshing...' : 'Refresh signals'}
           </button>
           {canWrite && (
             <button
+              type="button"
               disabled={busy || loading || data.settings.custom.length >= 32}
-              onClick={() => setDialog("create")}
+              onClick={() => setDialog('create')}
             >
               <Icon name="plus" />
               Create a signal
@@ -672,40 +636,33 @@ export function SignalLibrary({
       </div>
       {!canWrite && (
         <p className="notice">
-          You can explore signals and evidence. A member, admin or owner can
-          change this project's checks.
+          You can explore signals and evidence. A member, admin or owner can change this project's
+          checks.
         </p>
       )}
       {data.settings.custom.length >= 32 && (
         <p className="notice">
-          This version supports 32 custom signals. Saved definitions remain
-          available so earlier findings keep their meaning.
+          This version supports 32 custom signals. Saved definitions remain available so earlier
+          findings keep their meaning.
         </p>
       )}
       <details className="overview-explainer">
         <summary>How signals become useful evidence</summary>
         <p>
-          A signal points to work worth reviewing. It is not a confirmed
-          failure, a training label or an automatic agent change. Your review
-          stays attached to the captured evidence.
+          A signal points to work worth reviewing. It is not a confirmed failure, a training label
+          or an automatic agent change. Your review stays attached to the captured evidence.
         </p>
         <p>
-          This library manages transcript checks.{" "}
-          <a href={monitorLink(project, "activity?kind=sdk")}>
-            SDK findings and reviews
-          </a>{" "}
-          remain available in SDK activity. Pausing a check keeps earlier
-          findings. To change a saved custom definition, create a new signal.
+          This library manages transcript checks.{' '}
+          <a href={monitorLink(project, 'activity?kind=sdk')}>SDK findings and reviews</a> remain
+          available in SDK activity. Pausing a check keeps earlier findings. To change a saved
+          custom definition, create a new signal.
         </p>
       </details>
       <div className="signal-filters">
         <label>
           Find a signal
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
         <label>
           Group
@@ -741,10 +698,7 @@ export function SignalLibrary({
       {matching.length === 0 ? (
         <div className="panel empty">
           <h3>No matching signals</h3>
-          <p>
-            Try another group or search, or create a signal for something you
-            want to notice.
-          </p>
+          <p>Try another group or search, or create a signal for something you want to notice.</p>
         </div>
       ) : (
         <div className="signal-table-wrap">
@@ -775,77 +729,66 @@ export function SignalLibrary({
                       <p>{r.detail}</p>
                       {r.rule && (
                         <p>
-                          {r.rule.agent || "All captured agents"} /{" "}
-                          {r.rule.project || "All source project labels"}
+                          {r.rule.agent || 'All captured agents'} /{' '}
+                          {r.rule.project || 'All source project labels'}
                         </p>
                       )}
                       {r.check && (
                         <p>
-                          Rule version {r.check.version}. Runs in the collector,
-                          which refreshes your choices. Historical findings are
-                          not recalculated.
+                          Rule version {r.check.version}. Runs in the collector, which refreshes
+                          your choices. Historical findings are not recalculated.
                         </p>
                       )}
                     </details>
                   </td>
                   <td data-label="Source">
-                    {r.kind === "custom"
-                      ? "Your signal"
-                      : r.kind === "recorded"
-                        ? "Recorded"
-                        : "Built-in"}
+                    {r.kind === 'custom'
+                      ? 'Your signal'
+                      : r.kind === 'recorded'
+                        ? 'Recorded'
+                        : 'Built-in'}
                   </td>
                   <td data-label="Status">
-                    {r.enabled === null
-                      ? "Definition unavailable"
-                      : r.enabled
-                        ? "On"
-                        : "Paused"}
+                    {r.enabled === null ? 'Definition unavailable' : r.enabled ? 'On' : 'Paused'}
                   </td>
                   <td data-label="Matches">
                     <span>
-                      {(data.counts[r.id] ?? 0).toLocaleString()} recorded{" "}
-                      {(data.counts[r.id] ?? 0) === 1 ? "match" : "matches"}
+                      {(data.counts[r.id] ?? 0).toLocaleString()} recorded{' '}
+                      {(data.counts[r.id] ?? 0) === 1 ? 'match' : 'matches'}
                     </span>
                   </td>
                   <td data-label="Actions">
                     <div className="signal-actions">
-                      <a href={findings(project, r.id)}>
-                        Open signal dashboard
-                      </a>
+                      <a href={findings(project, r.id)}>Open signal dashboard</a>
                       {canWrite && r.enabled !== null && (
                         <button
+                          type="button"
                           className="secondary"
                           disabled={busy || loading}
-                          aria-label={
-                            (r.enabled ? "Pause " : "Turn on ") + r.name
-                          }
+                          aria-label={(r.enabled ? 'Pause ' : 'Turn on ') + r.name}
                           onClick={() => {
                             const cfg = r.rule
                               ? {
                                   ...data.settings,
                                   custom: data.settings.custom.map((s) =>
-                                    s.id === r.id
-                                      ? { ...s, enabled: !s.enabled }
-                                      : s,
+                                    s.id === r.id ? { ...s, enabled: !s.enabled } : s,
                                   ),
                                 }
                               : {
                                   ...data.settings,
                                   disabled: r.enabled
                                     ? [...data.settings.disabled, r.id]
-                                    : data.settings.disabled.filter(
-                                        (id) => id !== r.id,
-                                      ),
+                                    : data.settings.disabled.filter((id) => id !== r.id),
                                 };
                             void save(cfg).catch(() => {});
                           }}
                         >
-                          {r.enabled ? "Pause" : "Turn on"}
+                          {r.enabled ? 'Pause' : 'Turn on'}
                         </button>
                       )}
                       {canWrite && r.check && r.check.options.length > 0 && (
                         <button
+                          type="button"
                           className="secondary"
                           disabled={busy || loading}
                           onClick={() => setDialog(r.check)}
@@ -862,10 +805,10 @@ export function SignalLibrary({
         </div>
       )}
       <p className="muted">
-        Source: this project's saved signal definitions and received transcript
-        findings. Refresh to load newer counts.
+        Source: this project's saved signal definitions and received transcript findings. Refresh to
+        load newer counts.
       </p>
-      {dialog === "create" && canWrite && (
+      {dialog === 'create' && canWrite && (
         <CreateSignal
           project={project}
           data={data}
@@ -875,7 +818,7 @@ export function SignalLibrary({
           onExpired={onExpired}
         />
       )}
-      {dialog && dialog !== "create" && canWrite && (
+      {dialog && dialog !== 'create' && canWrite && (
         <AdjustCheck
           check={dialog}
           settings={data.settings}

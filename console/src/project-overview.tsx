@@ -1,71 +1,59 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { api, ApiError, monitorLink } from "./api";
+import { type ReactNode, useEffect, useEffectEvent, useState } from 'react';
+import { ApiError, api, monitorLink } from './api';
+import { connectionHealth } from './connection-health';
 import {
-  turns,
+  type Bucket,
+  type Sdk,
+  type Sources,
   sdk,
   sources,
   type Turns,
-  type Sdk,
-  type Sources,
-  type Bucket,
-} from "./monitoring-api";
-import { Icon } from "./ui";
-import { connectionHealth } from "./connection-health";
+  turns,
+} from './monitoring-api';
+import { Icon } from './ui';
 
 type Load<T> =
-  | { state: "loading" }
-  | { state: "error"; message: string }
-  | { state: "ready"; data: T };
-const initial = { state: "loading" } as const;
+  | { state: 'loading' }
+  | { state: 'error'; message: string }
+  | { state: 'ready'; data: T };
+const initial = { state: 'loading' } as const;
 const fmt = (n: number) => n.toLocaleString();
 const labels: Record<string, string> = {
-  blocked_handoff: "Blocked handoff",
-  false_done: "Possible false completion",
-  tool_error_streak: "Repeated tool failures",
-  usage_limit_hit: "Usage limit reached",
-  context_loss: "Context compaction",
-  correction_spiral: "Possible correction spiral",
-  aborted_turn: "Interrupted turn",
-  mood: "Mood shift",
-  sdk_call_failed: "Call failed",
-  sdk_tool_failed: "Tool failed",
-  sdk_stream_cancelled: "Stream cancelled",
-  sdk_incomplete: "Incomplete activity",
+  blocked_handoff: 'Blocked handoff',
+  false_done: 'Possible false completion',
+  tool_error_streak: 'Repeated tool failures',
+  usage_limit_hit: 'Usage limit reached',
+  context_loss: 'Context compaction',
+  correction_spiral: 'Possible correction spiral',
+  aborted_turn: 'Interrupted turn',
+  mood: 'Mood shift',
+  sdk_call_failed: 'Call failed',
+  sdk_tool_failed: 'Tool failed',
+  sdk_stream_cancelled: 'Stream cancelled',
+  sdk_incomplete: 'Incomplete activity',
 };
 const title = (id: string, names: Record<string, string>) =>
   (Object.hasOwn(names, id) ? names[id] : undefined) ||
-  (Object.hasOwn(labels, id) ? labels[id] : undefined) || id.replaceAll("_", " ");
-const agent = (id: string, kind: "turn" | "sdk") => {
+  (Object.hasOwn(labels, id) ? labels[id] : undefined) ||
+  id.replaceAll('_', ' ');
+const agent = (id: string, kind: 'turn' | 'sdk') => {
   const names: Record<string, string> = {
-    "claude-code": "Claude Code",
-    codex: kind === "sdk" ? "Codex SDK" : "Codex",
-    claude: "Claude SDK",
-    grok: "Grok SDK",
-    rrflow: "RRFlow",
-    clyffy: "Clyffy",
+    'claude-code': 'Claude Code',
+    codex: kind === 'sdk' ? 'Codex SDK' : 'Codex',
+    claude: 'Claude SDK',
+    grok: 'Grok SDK',
+    rrflow: 'RRFlow',
+    clyffy: 'Clyffy',
   };
   return Object.hasOwn(names, id) ? names[id] : id;
 };
-function link(
-  project: string,
-  kind: "turn" | "sdk",
-  filter: Record<string, string> = {},
-) {
-  return monitorLink(
-    project,
-    "activity?" + new URLSearchParams({ ...filter, kind }),
-  );
+function link(project: string, kind: 'turn' | 'sdk', filter: Record<string, string> = {}) {
+  return monitorLink(project, 'activity?' + new URLSearchParams({ ...filter, kind }));
 }
-function Status<T>({
-  value,
-  children,
-}: {
-  value: Load<T>;
-  children: (v: T) => ReactNode;
-}) {
-  return value.state === "loading" ? (
+function Status<T>({ value, children }: { value: Load<T>; children: (v: T) => ReactNode }) {
+  return value.state === 'loading' ? (
     <p role="status">Loading saved activity...</p>
-  ) : value.state === "error" ? (
+  ) : value.state === 'error' ? (
     <p role="alert" className="error">
       {value.message}
     </p>
@@ -83,7 +71,7 @@ function Bars({
   rows: Bucket[];
   unit: string;
   project: string;
-  kind: "turn" | "sdk";
+  kind: 'turn' | 'sdk';
   names?: Record<string, string>;
 }) {
   const shown = rows.filter((r) => r.count > 0).slice(0, 6),
@@ -95,27 +83,12 @@ function Bars({
           <a href={link(project, kind, { signal: r.id })}>
             <span>{title(r.id, names)}</span>
             <strong>
-              {fmt(r.count)}{" "}
-              <small>
-                {r.count === 1
-                  ? unit === "matches"
-                    ? "match"
-                    : "activity"
-                  : unit}
-              </small>
+              {fmt(r.count)}{' '}
+              <small>{r.count === 1 ? (unit === 'matches' ? 'match' : 'activity') : unit}</small>
             </strong>
-            <svg
-              viewBox="0 0 100 4"
-              preserveAspectRatio="none"
-              aria-hidden="true"
-            >
+            <svg viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
               <rect className="bar-track" width="100" height="4" rx="2" />
-              <rect
-                className="bar-value"
-                width={(100 * r.count) / max}
-                height="4"
-                rx="2"
-              />
+              <rect className="bar-value" width={(100 * r.count) / max} height="4" rx="2" />
             </svg>
           </a>
         </li>
@@ -131,7 +104,7 @@ function Agents({
   project,
 }: {
   rows: Bucket[];
-  kind: "turn" | "sdk";
+  kind: 'turn' | 'sdk';
   project: string;
 }) {
   return (
@@ -167,6 +140,8 @@ export function ProjectOverview({
     const timer = window.setInterval(() => setTick((t) => t + 1), 15000);
     return () => window.clearInterval(timer);
   }, []);
+  const expired = useEffectEvent(() => onExpired());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: revision is a reload trigger; changing it re-runs this request.
   useEffect(() => {
     const c = new AbortController();
     setTurns(initial);
@@ -179,43 +154,31 @@ export function ProjectOverview({
       set: (v: Load<T>) => void,
     ) {
       try {
-        const v = parse(
-          await api(path, c.signal, "GET", undefined, project),
-          project,
-        );
+        const v = parse(await api(path, c.signal, 'GET', undefined, project), project);
         if (!c.signal.aborted) {
-          set({ state: "ready", data: v });
-          if (path === "/v1/sources/health") setLoadedAt(performance.now());
+          set({ state: 'ready', data: v });
+          if (path === '/v1/sources/health') setLoadedAt(performance.now());
         }
       } catch (e) {
         if (c.signal.aborted) return;
-        if (e instanceof ApiError && e.status === 401) onExpired();
+        if (e instanceof ApiError && e.status === 401) expired();
         else
           set({
-            state: "error",
-            message:
-              e instanceof Error
-                ? e.message
-                : "Monitoring is unavailable. Try refreshing.",
+            state: 'error',
+            message: e instanceof Error ? e.message : 'Monitoring is unavailable. Try refreshing.',
           });
       }
     }
-    void load("/v1/summary", turns, setTurns);
-    void load("/v1/sdk/summary", sdk, setSdk);
-    void load("/v1/sources/health", sources, setHealth);
+    void load('/v1/summary', turns, setTurns);
+    void load('/v1/sdk/summary', sdk, setSdk);
+    void load('/v1/sources/health', sources, setHealth);
     return () => c.abort();
   }, [project, revision]);
-  const pending = [turnData, sdkData, health].some(
-    (v) => v.state === "loading",
-  );
-  const elapsed =
-    loadedAt === null ? 0 : Math.max(0, performance.now() - loadedAt);
-  const connection = health.state === "ready" ? connectionHealth(health.data, elapsed) : null;
+  const pending = [turnData, sdkData, health].some((v) => v.state === 'loading');
+  const elapsed = loadedAt === null ? 0 : Math.max(0, performance.now() - loadedAt);
+  const connection = health.state === 'ready' ? connectionHealth(health.data, elapsed) : null;
   return (
-    <section
-      className="project-overview"
-      aria-labelledby="project-overview-title"
-    >
+    <section className="project-overview" aria-labelledby="project-overview-title">
       <div className="section-heading">
         <div>
           <p className="eyebrow">Your AI, in view</p>
@@ -225,6 +188,7 @@ export function ProjectOverview({
           </p>
         </div>
         <button
+          type="button"
           className="secondary"
           disabled={pending}
           onClick={() => setRevision((r) => r + 1)}
@@ -233,39 +197,39 @@ export function ProjectOverview({
         </button>
       </div>
       <div className="overview-metrics">
-        <a className="panel" href={link(project, "turn")}>
+        <a className="panel" href={link(project, 'turn')}>
           <Icon name="pulse" />
           <span>Captured turns</span>
           <strong data-testid="overview-turn-count">
-            {turnData.state === "ready"
+            {turnData.state === 'ready'
               ? fmt(turnData.data.count)
-              : turnData.state === "loading"
-                ? "Loading..."
-                : "Unavailable"}
+              : turnData.state === 'loading'
+                ? 'Loading...'
+                : 'Unavailable'}
           </strong>
           <small>Claude Code and Codex transcripts</small>
         </a>
-        <a className="panel" href={link(project, "sdk")}>
+        <a className="panel" href={link(project, 'sdk')}>
           <Icon name="grid" />
           <span>SDK activities</span>
           <strong data-testid="overview-sdk-count">
-            {sdkData.state === "ready" && sdkData.data.available
+            {sdkData.state === 'ready' && sdkData.data.available
               ? fmt(sdkData.data.count)
-              : sdkData.state === "loading"
-                ? "Loading..."
-                : "Unavailable"}
+              : sdkData.state === 'loading'
+                ? 'Loading...'
+                : 'Unavailable'}
           </strong>
           <small>Indexed calls, tools and streams</small>
         </a>
-        <a className="panel" href={monitorLink(project, "sources")}>
+        <a className="panel" href={monitorLink(project, 'sources')}>
           <Icon name="team" />
           <span>Collectors seen</span>
           <strong data-testid="overview-source-count">
-            {health.state === "ready"
+            {health.state === 'ready'
               ? fmt(health.data.rows.length)
-              : health.state === "loading"
-                ? "Loading..."
-                : "Unavailable"}
+              : health.state === 'loading'
+                ? 'Loading...'
+                : 'Unavailable'}
           </strong>
           <small>Saved reports, not an online count</small>
         </a>
@@ -273,44 +237,64 @@ export function ProjectOverview({
       <section className="panel" aria-labelledby="connection-attention-title">
         <div className="panel-heading">
           <h3 id="connection-attention-title">Connection bottlenecks</h3>
-          <a href={monitorLink(project, "sources")}>
+          <a href={monitorLink(project, 'sources')}>
             Open connection details <Icon name="arrow" />
           </a>
         </div>
-        {health.state === "loading" || sdkData.state === "loading" ? (
+        {health.state === 'loading' || sdkData.state === 'loading' ? (
           <p role="status">Checking the last saved reports...</p>
-        ) : health.state === "error" || sdkData.state === "error" ? (
-          <p role="alert">Some connection data is unavailable. Refresh the overview or open connection details.</p>
+        ) : health.state === 'error' || sdkData.state === 'error' ? (
+          <p role="alert">
+            Some connection data is unavailable. Refresh the overview or open connection details.
+          </p>
         ) : (
           <>
             {health.data.rows.length === 0 ? (
-              <p>No collector has reported for this project. Open connection details to connect a source.</p>
+              <p>
+                No collector has reported for this project. Open connection details to connect a
+                source.
+              </p>
             ) : (
               <ul>
-                <li>{fmt(connection!.stale)} {connection!.stale === 1 ? "collector has" : "collectors have"} no recent report.</li>
-                <li>{fmt(connection!.problems)} {connection!.problems === 1 ? "collector" : "collectors"} last reported a delivery, capture or SDK queue problem.</li>
-                <li>{fmt(connection!.pendingTurns)} turn revisions were waiting in the last reports.</li>
+                <li>
+                  {fmt(connection!.stale)}{' '}
+                  {connection!.stale === 1 ? 'collector has' : 'collectors have'} no recent report.
+                </li>
+                <li>
+                  {fmt(connection!.problems)}{' '}
+                  {connection!.problems === 1 ? 'collector' : 'collectors'} last reported a
+                  delivery, capture or SDK queue problem.
+                </li>
+                <li>
+                  {fmt(connection!.pendingTurns)} turn revisions were waiting in the last reports.
+                </li>
               </ul>
             )}
             {sdkData.data.available ? (
-              <p>{fmt(sdkData.data.pending)} SDK captures await indexing; {fmt(sdkData.data.errors)} have an indexing error.</p>
-            ) : <p>SDK indexing is unavailable: {sdkData.data.reason}</p>}
-            <p className="muted">These are last-reported values, not live access to a collector's offline queue. Refresh to check again.</p>
+              <p>
+                {fmt(sdkData.data.pending)} SDK captures await indexing; {fmt(sdkData.data.errors)}{' '}
+                have an indexing error.
+              </p>
+            ) : (
+              <p>SDK indexing is unavailable: {sdkData.data.reason}</p>
+            )}
+            <p className="muted">
+              These are last-reported values, not live access to a collector's offline queue.
+              Refresh to check again.
+            </p>
           </>
         )}
       </section>
       <details className="overview-explainer">
         <summary>What do these numbers mean?</summary>
         <p>
-          A turn comes from an agent transcript. SDK activity comes from an
-          instrumented application. The same work can appear in both, so these
-          counts are shown separately. Signals are findings to review, not
-          confirmed failures or training labels.
+          A turn comes from an agent transcript. SDK activity comes from an instrumented
+          application. The same work can appear in both, so these counts are shown separately.
+          Signals are findings to review, not confirmed failures or training labels.
         </p>
         <p>
-          New SDK events may still be waiting to be indexed. Collector reports
-          describe their last upload; a silent collector cannot report the size
-          of its current offline queue.
+          New SDK events may still be waiting to be indexed. Collector reports describe their last
+          upload; a silent collector cannot report the size of its current offline queue.
         </p>
       </details>
       <div className="overview-panels">
@@ -332,16 +316,13 @@ export function ProjectOverview({
                 <Agents rows={v.agents} kind="turn" project={project} />
                 {v.count === 0 ? (
                   <p>
-                    Connect a source to start seeing turns here.{" "}
-                    <a href={monitorLink(project, "sources")}>
-                      Open connection guide
-                    </a>
+                    Connect a source to start seeing turns here.{' '}
+                    <a href={monitorLink(project, 'sources')}>Open connection guide</a>
                   </p>
                 ) : (
                   <p className="muted">
-                    {fmt(v.toolErrors)} tool errors across {fmt(v.toolCalls)}{" "}
-                    recorded tool calls. Usage was not reported for{" "}
-                    {fmt(v.usageMissing)} turns.
+                    {fmt(v.toolErrors)} tool errors across {fmt(v.toolCalls)} recorded tool calls.
+                    Usage was not reported for {fmt(v.usageMissing)} turns.
                   </p>
                 )}
                 <a href={signalLibraryHref}>
@@ -364,27 +345,21 @@ export function ProjectOverview({
                 <>
                   {v.pending > 0 && (
                     <p className="notice">
-                      {fmt(v.pending)} captures need indexing; {fmt(v.errors)}{" "}
-                      have an indexing error. Counts below may be behind
-                      received events.
+                      {fmt(v.pending)} captures need indexing; {fmt(v.errors)} have an indexing
+                      error. Counts below may be behind received events.
                     </p>
                   )}
-                  <Bars
-                    rows={v.signals}
-                    project={project}
-                    kind="sdk"
-                    unit="activities"
-                  />
+                  <Bars rows={v.signals} project={project} kind="sdk" unit="activities" />
                   <Agents rows={v.agents} kind="sdk" project={project} />
                   <p className="muted">
-                    {fmt(v.withFindings)}{" "}
-                    {v.withFindings === 1 ? "activity has" : "activities have"}{" "}
-                    one or more findings.
+                    {fmt(v.withFindings)}{' '}
+                    {v.withFindings === 1 ? 'activity has' : 'activities have'} one or more
+                    findings.
                     {v.otherAgents > 0
                       ? ` ${fmt(v.otherAgents)} activities from other agents are outside this breakdown.`
-                      : ""}
+                      : ''}
                   </p>
-                  <a href={link(project, "sdk")}>
+                  <a href={link(project, 'sdk')}>
                     Open SDK activity and evidence <Icon name="arrow" />
                   </a>
                 </>
@@ -396,7 +371,7 @@ export function ProjectOverview({
       <section className="panel" aria-labelledby="overview-delivery-title">
         <div className="panel-heading">
           <h3 id="overview-delivery-title">Are your collectors reporting?</h3>
-          <a href={monitorLink(project, "sources")}>
+          <a href={monitorLink(project, 'sources')}>
             All delivery details <Icon name="arrow" />
           </a>
         </div>
@@ -405,57 +380,48 @@ export function ProjectOverview({
             <>
               {v.rows.length === 0 ? (
                 <p>
-                  No collector report has arrived for this project.{" "}
-                  <a href={monitorLink(project, "sources")}>
+                  No collector report has arrived for this project.{' '}
+                  <a href={monitorLink(project, 'sources')}>
                     Connect a source and check its first delivery.
                   </a>
                 </p>
               ) : (
                 <ul className="overview-delivery">
                   {v.rows.slice(0, 4).map((r) => {
-                    const age =
-                        Date.parse(v.asOf) - Date.parse(r.receivedAt) + elapsed,
+                    const age = Date.parse(v.asOf) - Date.parse(r.receivedAt) + elapsed,
                       recent = age >= 0 && age <= v.recentFor * 1000;
                     const attention =
                       r.captureErrors > 0 ||
                       r.delivery === false ||
-                      (r.sdk !== null &&
-                        (r.sdk.errors > 0 || r.sdk.retrying > 0));
+                      (r.sdk !== null && (r.sdk.errors > 0 || r.sdk.retrying > 0));
                     const status = !recent
-                      ? "No recent report loaded"
+                      ? 'No recent report loaded'
                       : attention
-                        ? "Reported a problem"
-                        : "Reported recently";
+                        ? 'Reported a problem'
+                        : 'Reported recently';
                     return (
                       <li key={r.id}>
                         <div>
                           <strong>Collector {r.id.slice(0, 8)}</strong>
-                          <p>
-                            Report received{" "}
-                            {new Date(r.receivedAt).toLocaleString()}.
-                          </p>
+                          <p>Report received {new Date(r.receivedAt).toLocaleString()}.</p>
                           <p>
                             {fmt(r.pending)} turn revisions waiting.
                             {r.sdk
                               ? ` ${fmt(r.sdk.pending)} SDK events waiting.`
-                              : " SDK queue counts were not reported."}
+                              : ' SDK queue counts were not reported.'}
                           </p>
                           <p className="muted">
                             {r.delivery === true
-                              ? "Last delivery check succeeded."
+                              ? 'Last delivery check succeeded.'
                               : r.delivery === false
-                                ? "Last delivery check failed. Local records remain queued."
-                                : "No delivery result was reported."}
+                                ? 'Last delivery check failed. Local records remain queued.'
+                                : 'No delivery result was reported.'}
                             {r.captureErrors > 0
                               ? ` ${fmt(r.captureErrors)} capture errors need attention.`
-                              : ""}
+                              : ''}
                           </p>
                         </div>
-                        <span
-                          className={
-                            "badge " + (recent && !attention ? "positive" : "")
-                          }
-                        >
+                        <span className={'badge ' + (recent && !attention ? 'positive' : '')}>
                           {status}
                         </span>
                       </li>
@@ -464,9 +430,8 @@ export function ProjectOverview({
                 </ul>
               )}
               <p className="muted">
-                Last loaded server reports: {new Date(v.asOf).toLocaleString()}.
-                Refresh to check for newer reports. Collector approval alone
-                does not prove activity arrived.
+                Last loaded server reports: {new Date(v.asOf).toLocaleString()}. Refresh to check
+                for newer reports. Collector approval alone does not prove activity arrived.
               </p>
             </>
           )}
