@@ -8,6 +8,9 @@
       // Generated: built by `npm run export` in console/ and site/, verified in CI.
       "!crates/rroflow-ingest/src/member-console",
       "!crates/rroflow-ingest/src/public-site",
+      // Generated: written by `npm run export` in site/ (scripts/export-public-site.mjs), verified in CI.
+      "!crates/rroflow-ingest/src/public.css",
+      "!crates/rroflow-ingest/src/public.js",
       "!site/public",
       // Generated: written by scripts/index-research.mjs, checked with --check in CI.
       "!crates/rroflow-ingest/src/research.json"
