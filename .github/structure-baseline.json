@@ -2,10 +2,8 @@
   "schema": "rroflow.structure-baseline/1",
   "max_lines": 600,
   "oversized": {
-    "console/src/account.tsx": 641,
     "console/src/main.tsx": 1020,
     "console/src/signal-library.tsx": 889,
-    "console/src/styles.css": 1138,
     "crates/rroflow-cli/src/account.rs": 775,
     "crates/rroflow-cli/src/doctor.rs": 754,
     "crates/rroflow-cli/src/raw.rs": 1102,

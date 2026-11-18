@@ -1,6 +1,6 @@
 // Consumer validation: the Rust routes remain the authority. Do not treat unknown
 // response shapes as empty organizations, zero activity or successful mutations.
-export type Role = "viewer" | "member" | "admin" | "owner";
+export type Role = 'viewer' | 'member' | 'admin' | 'owner';
 export type Project = { id: string; name: string; slug: string };
 export type Organization = {
   id: string;
@@ -32,18 +32,16 @@ export class ApiError extends Error {
   }
 }
 function object(v: unknown): Record<string, unknown> {
-  if (!v || typeof v !== "object" || Array.isArray(v))
-    throw new Error("The server returned an unreadable response.");
+  if (!v || typeof v !== 'object' || Array.isArray(v))
+    throw new Error('The server returned an unreadable response.');
   return v as Record<string, unknown>;
 }
 function text(v: unknown): string {
-  if (typeof v !== "string")
-    throw new Error("The server returned an incomplete response.");
+  if (typeof v !== 'string') throw new Error('The server returned an incomplete response.');
   return v;
 }
 function list(v: unknown): unknown[] {
-  if (!Array.isArray(v))
-    throw new Error("The server returned an incomplete list.");
+  if (!Array.isArray(v)) throw new Error('The server returned an incomplete list.');
   return v;
 }
 const optionalText = (v: unknown) => (v === null ? null : text(v));
@@ -57,11 +55,8 @@ export function overview(value: unknown): Overview {
     organizations: list(v.organizations).map((raw) => {
       const o = object(raw),
         role = text(o.role);
-      if (
-        !["viewer", "member", "admin", "owner"].includes(role) ||
-        typeof o.personal !== "boolean"
-      )
-        throw new Error("Your organization access could not be read.");
+      if (!['viewer', 'member', 'admin', 'owner'].includes(role) || typeof o.personal !== 'boolean')
+        throw new Error('Your organization access could not be read.');
       return {
         id: text(o.id),
         name: text(o.name),
@@ -98,37 +93,34 @@ export function createdId(value: unknown): string {
 export async function api(
   path: string,
   signal: AbortSignal,
-  method = "GET",
+  method = 'GET',
   body?: unknown,
   project?: string,
 ): Promise<unknown> {
   const r = await fetch(path, {
     method,
     signal,
-    credentials: "same-origin",
+    credentials: 'same-origin',
     headers: {
-      "Content-Type": "application/json",
-      "X-Rroflow-Request": "dashboard",
-      ...(project ? { "X-Rroflow-Project": project } : {}),
+      'Content-Type': 'application/json',
+      'X-Rroflow-Request': 'dashboard',
+      ...(project ? { 'X-Rroflow-Project': project } : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const data: unknown = await r.json().catch(() => null);
   if (!r.ok) {
     const message =
-      data &&
-      typeof data === "object" &&
-      "error" in data &&
-      typeof data.error === "string"
+      data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
         ? data.error
-        : "Please try again.";
+        : 'Please try again.';
     throw new ApiError(
       r.status,
-      r.status === 401 ? "Your session has ended. Sign in again." : message,
+      r.status === 401 ? 'Your session has ended. Sign in again.' : message,
     );
   }
   return data;
 }
-export function monitorLink(project: string, view = "overview"): string {
-  return "/app?workspace=" + encodeURIComponent(project) + "#" + view;
+export function monitorLink(project: string, view = 'overview'): string {
+  return '/app?workspace=' + encodeURIComponent(project) + '#' + view;
 }

@@ -182,7 +182,7 @@ separately from turn totals. No sample records are inserted in production.
 ```text
 cargo test --workspace --locked
 cargo build --workspace --bins --examples --locked
-node --test sdk/javascript/test.mjs
+node --test sdk/javascript/test.mjs sdk/javascript/test-safety.mjs
 ```
 
 The integration suite runs actual collector and ingest executables with provider

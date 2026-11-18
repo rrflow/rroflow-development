@@ -4,7 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Local MCP setup bridge for an existing RROFLOW collector",
-  "engines": {"node": ">=22"},
-  "scripts": {"test": "node --test test.mjs"},
-  "dependencies": {"@modelcontextprotocol/sdk": "1.32.2", "zod": "4.6.7"}
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  }
 }

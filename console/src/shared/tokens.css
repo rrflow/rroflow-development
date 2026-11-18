@@ -1,0 +1,35 @@
+/* Authored token layers: raw -> semantic -> controls -> feature compositions. */
+:root {
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  --raw-ink: #202d28;
+  --raw-muted: #58665e;
+  --raw-paper: #f5f6f1;
+  --raw-white: #fff;
+  --raw-line: #dce2d9;
+  --raw-danger: #a52d34;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --radius: 18px;
+  --ink: var(--raw-ink);
+  --muted: var(--raw-muted);
+  --surface: var(--raw-white);
+  --canvas: var(--raw-paper);
+  --border: var(--raw-line);
+  --danger: var(--raw-danger);
+  --focus: var(--accent, #36634e);
+  --art-surface: #e9eee4;
+  --art-line: #8b9b8b;
+  --button-bg: var(--accent, #36634e);
+  --button-ink: #fff;
+  color: var(--ink);
+  background: var(--canvas);
+  color-scheme: light;
+  line-height: 1.5;
+}

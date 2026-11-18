@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true, "defaultBranch": "main" },
+  "files": {
+    "includes": [
+      "**/*.{js,mjs,cjs,ts,tsx,json,jsonc,css}",
+      "!**/package-lock.json",
+      // Generated: built by `npm run export` in console/ and site/, verified in CI.
+      "!crates/rroflow-ingest/src/member-console",
+      "!crates/rroflow-ingest/src/public-site",
+      "!site/public",
+      // Generated: written by scripts/index-research.mjs, checked with --check in CI.
+      "!crates/rroflow-ingest/src/research.json"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "linter": { "enabled": true, "rules": { "preset": "recommended" } },
+  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
+  "javascript": { "formatter": { "quoteStyle": "single" } },
+  "overrides": [
+    {
+      // The original dashboard is served byte for byte (site/routes.rs, include_str!) under the
+      // payload budget in scripts/test-dashboard.mjs, and is retired rather than reshaped
+      // (docs/spec/code-structure-v1.md). Linted, not reformatted.
+      // The files load as classic scripts (<script defer src>, createElement('script')), where
+      // 'use strict' is required; Biome parses every .js file as a module and calls it redundant.
+      "includes": [
+        "crates/rroflow-ingest/src/dashboard.js",
+        "crates/rroflow-ingest/src/dashboard.css",
+        "crates/rroflow-ingest/src/dashboard-a2ui.js",
+        "crates/rroflow-ingest/src/dashboard-sdk.js",
+        "crates/rroflow-ingest/src/dashboard-datasets.js"
+      ],
+      "formatter": { "enabled": false },
+      "linter": { "rules": { "suspicious": { "noRedundantUseStrict": "off" } } }
+    }
+  ]
+}

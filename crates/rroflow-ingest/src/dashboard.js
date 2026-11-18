@@ -599,7 +599,7 @@
   $('settings-form').onsubmit = async e => {
     e.preventDefault(); const g = generation, disabled = [], options = {};
     all('[data-toggle]').forEach(el => { if (!el.checked) disabled.push(el.dataset.toggle); });
-    all('[data-option]').forEach(el => { (options[el.dataset.signal] ||= {})[el.dataset.option] = Number(el.value); });
+    all('[data-option]').forEach(el => { options[el.dataset.signal] ||= {}; options[el.dataset.signal][el.dataset.option] = Number(el.value); });
     $('save-settings').disabled = true; $('settings-status').textContent = 'Saving…';
     try {
       const r = await api('/v1/signals/settings',{method:'PUT',body:JSON.stringify({...metadata.settings,disabled,options})});
@@ -636,7 +636,7 @@
     if (button.dataset.uiView) uiAction({kind:'view.select',target_id:'workspace.views',view_id:button.dataset.uiView});
     if (button.dataset.setupKind && ['computer','sdk'].includes(button.dataset.setupKind)) {
       $('setup-computer').hidden = button.dataset.setupKind !== 'computer'; $('setup-sdk').hidden = button.dataset.setupKind !== 'sdk';
-      all('[data-setup-kind]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.setupKind === button.dataset.setupKind)));
+      all('[data-setup-kind]').forEach(b => { b.setAttribute('aria-pressed',String(b.dataset.setupKind === button.dataset.setupKind)); });
     }
     if (button.hasAttribute('data-setup-done')) { $('setup-dialog').close(); uiAction({kind:'view.select',target_id:'workspace.views',view_id:'sources'}); }
     if (button.dataset.datasetOpen || button.dataset.datasetStop) await datasetUI?.handle(button);

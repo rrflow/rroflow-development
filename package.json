@@ -1,0 +1,15 @@
+{
+  "name": "rroflow-workspace-tooling",
+  "private": true,
+  "description": "Repository-wide lint, format and Git hooks. Products keep their own package.json.",
+  "type": "module",
+  "scripts": {
+    "check": "biome ci .",
+    "fix": "biome check --write .",
+    "hooks": "lefthook install"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.4",
+    "lefthook": "2.2.2"
+  }
+}

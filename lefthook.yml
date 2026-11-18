@@ -1,0 +1,21 @@
+# Local Git hooks. Install once with `npm ci && npm run hooks`.
+# The same checks run in CI (.github/workflows/ci.yml); these catch them before a push.
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: '*.{js,mjs,cjs,ts,tsx,json,jsonc,css}'
+      run: npx --no-install biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+    rustfmt:
+      glob: '*.rs'
+      run: cargo fmt --all --check
+    structure:
+      run: node scripts/check-structure.mjs
+
+pre-push:
+  commands:
+    biome:
+      run: npx --no-install biome ci .
+    clippy:
+      glob: '*.rs'
+      run: cargo clippy --workspace --all-targets --locked -- -D warnings

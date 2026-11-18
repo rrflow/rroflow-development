@@ -7,5 +7,7 @@
     "export": "astro build && node ../scripts/export-public-site.mjs",
     "verify": "astro build && node ../scripts/export-public-site.mjs --check"
   },
-  "dependencies": { "astro": "7.4.2" }
+  "dependencies": {
+    "astro": "7.4.2"
+  }
 }

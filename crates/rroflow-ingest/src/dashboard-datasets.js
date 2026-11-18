@@ -14,7 +14,7 @@ window.RroflowDatasetUI = ({$,all,esc,fmt,name,date,empty,api,load,state}) => {
     const projects = [...new Set([...Object.keys(metadata.summary.by_project),...(saved?.projects || [])])].sort();
     $('dataset-all-projects').checked = saved?.all_projects || false;
     $('dataset-projects').innerHTML = projects.map(project => `<label class="setting-label"><input type="checkbox" data-dataset-project="${esc(project)}" ${saved?.projects.includes(project) ? 'checked' : ''}>${esc(project)}</label>`).join('') || '<p>No project records yet.</p>';
-    all('[data-dataset-project]').forEach(el => el.disabled = $('dataset-all-projects').checked);
+    all('[data-dataset-project]').forEach(el => { el.disabled = $('dataset-all-projects').checked; });
     $('dataset-retention').value = saved?.retention_days || 7; $('dataset-consent').checked = false;
     $('dataset-retention-help').textContent = `The service retains up to ${fmt(datasetData?.limits?.max_retained_per_purpose)} recent versions per purpose, within this time limit. Stopping collection removes retained artifacts.`;
   }
@@ -28,7 +28,7 @@ window.RroflowDatasetUI = ({$,all,esc,fmt,name,date,empty,api,load,state}) => {
     if (data?.mode === 'available') datasetFields();
   }
   $('dataset-purpose').onchange = datasetFields;
-  $('dataset-all-projects').onchange = () => all('[data-dataset-project]').forEach(el => el.disabled = $('dataset-all-projects').checked);
+  $('dataset-all-projects').onchange = () => all('[data-dataset-project]').forEach(el => { el.disabled = $('dataset-all-projects').checked; });
   $('dataset-form').onsubmit = async e => {
     e.preventDefault(); if (datasetSaving || !datasetData || !$('dataset-consent').checked) return;
     const purpose = $('dataset-purpose').value || 'signal_reviews';
@@ -72,7 +72,7 @@ window.RroflowDatasetUI = ({$,all,esc,fmt,name,date,empty,api,load,state}) => {
   async function openDataset(id) {
     const g=state().generation, attempt=++inspection; clearInspection();$('dataset-detail-summary').textContent='Loading this saved dataset...';$('dataset-dialog').showModal();
     try {const result=await api('/v1/datasets/jobs/'+encodeURIComponent(id)+'/artifact');if(g!==state().generation || attempt!==inspection)return;renderEvidence(result.artifact,result.sha256);}
-    catch(e){if(g===state().generation && attempt===inspection)$('dataset-detail-summary').textContent='This dataset is unavailable or its permission has changed. Refresh the dataset list.';}
+    catch{if(g===state().generation && attempt===inspection)$('dataset-detail-summary').textContent='This dataset is unavailable or its permission has changed. Refresh the dataset list.';}
   }
   function clear() {
     datasetData=null;datasetSaving=false;inspection++;$('dataset-dialog').close();$('dataset-form').hidden=true;

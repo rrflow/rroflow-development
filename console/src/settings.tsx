@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { type FormEvent, useEffect, useEffectEvent, useRef, useState } from 'react';
 
 type Preset = { value: number; label: string; recommended: boolean };
 type Setting = {
@@ -15,42 +15,35 @@ type Group = { id: string; label: string; settings: Setting[] };
 type Loaded = { revision: number; groups: Group[] };
 
 const headers = {
-  "Content-Type": "application/json",
-  "X-Rroflow-Request": "dashboard",
+  'Content-Type': 'application/json',
+  'X-Rroflow-Request': 'dashboard',
 };
 
 function loaded(value: unknown): Loaded {
   const v = value as Loaded | null;
-  if (!v || typeof v.revision !== "number" || !Array.isArray(v.groups))
-    throw new Error("The server returned an unreadable response.");
+  if (!v || typeof v.revision !== 'number' || !Array.isArray(v.groups))
+    throw new Error('The server returned an unreadable response.');
   return v;
 }
 
 function refusal(status: number, message?: unknown) {
-  if (status === 401) return "Sign in to change settings.";
-  if (status === 403) return "Only an instance admin can change settings.";
-  if (status === 409)
-    return "Someone else changed these settings. Reload to see the latest.";
-  return typeof message === "string" ? message : "Please try again.";
+  if (status === 401) return 'Sign in to change settings.';
+  if (status === 403) return 'Only an instance admin can change settings.';
+  if (status === 409) return 'Someone else changed these settings. Reload to see the latest.';
+  return typeof message === 'string' ? message : 'Please try again.';
 }
 
-async function send(
-  signal: AbortSignal,
-  method: "GET" | "PUT",
-  body?: unknown,
-): Promise<Loaded> {
-  const response = await fetch("/v1/instance/settings", {
+async function send(signal: AbortSignal, method: 'GET' | 'PUT', body?: unknown): Promise<Loaded> {
+  const response = await fetch('/v1/instance/settings', {
     method,
-    credentials: "same-origin",
+    credentials: 'same-origin',
     signal,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok)
-    throw new Error(
-      refusal(response.status, (data as { error?: unknown } | null)?.error),
-    );
+    throw new Error(refusal(response.status, (data as { error?: unknown } | null)?.error));
   return loaded(data);
 }
 
@@ -58,28 +51,26 @@ async function send(
 export function SettingsPage({ name }: { name: string }) {
   const [data, setData] = useState<Loaded | null>(null);
   const [values, setValues] = useState<Record<string, number>>({});
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const controller = useRef(new AbortController());
 
   function accept(next: Loaded) {
     setData(next);
     setValues(
-      Object.fromEntries(
-        next.groups.flatMap((g) => g.settings.map((s) => [s.key, s.value])),
-      ),
+      Object.fromEntries(next.groups.flatMap((g) => g.settings.map((s) => [s.key, s.value]))),
     );
   }
 
+  const acceptLoaded = useEffectEvent((next: Loaded) => accept(next));
   useEffect(() => {
     const c = new AbortController();
     controller.current = c;
-    send(c.signal, "GET")
-      .then(accept)
+    send(c.signal, 'GET')
+      .then(acceptLoaded)
       .catch((e: unknown) => {
-        if (!c.signal.aborted)
-          setError(e instanceof Error ? e.message : "Please try again.");
+        if (!c.signal.aborted) setError(e instanceof Error ? e.message : 'Please try again.');
       });
     return () => c.abort();
   }, []);
@@ -88,19 +79,19 @@ export function SettingsPage({ name }: { name: string }) {
     e.preventDefault();
     if (!data || busy) return;
     setBusy(true);
-    setError("");
-    setNotice("");
+    setError('');
+    setNotice('');
     try {
       accept(
-        await send(controller.current.signal, "PUT", {
+        await send(controller.current.signal, 'PUT', {
           revision: data.revision,
           values,
         }),
       );
-      setNotice("Settings saved.");
+      setNotice('Settings saved.');
     } catch (failure) {
       if (!controller.current.signal.aborted)
-        setError(failure instanceof Error ? failure.message : "Please try again.");
+        setError(failure instanceof Error ? failure.message : 'Please try again.');
     } finally {
       if (!controller.current.signal.aborted) setBusy(false);
     }
@@ -146,9 +137,7 @@ export function SettingsPage({ name }: { name: string }) {
                         <button
                           type="button"
                           key={preset.value}
-                          className={
-                            value === preset.value ? undefined : "secondary"
-                          }
+                          className={value === preset.value ? undefined : 'secondary'}
                           aria-pressed={value === preset.value}
                           disabled={busy}
                           onClick={() =>
@@ -159,7 +148,7 @@ export function SettingsPage({ name }: { name: string }) {
                           }
                         >
                           {preset.label}
-                          {preset.recommended ? " (recommended)" : ""}
+                          {preset.recommended ? ' (recommended)' : ''}
                         </button>
                       ))}
                     </div>
@@ -184,7 +173,7 @@ export function SettingsPage({ name }: { name: string }) {
             </section>
           ))}
           <button type="submit" disabled={busy}>
-            {busy ? "Saving…" : "Save changes"}
+            {busy ? 'Saving…' : 'Save changes'}
           </button>
         </form>
       )}
